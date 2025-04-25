@@ -107,7 +107,7 @@ def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
     if (p1_ErrorLocation not in setOfFunctionsWithErrors):
         errorEmailApi.sendEmailError(p2_ScriptName = scriptName, p2_ScriptPurpose = scriptPurpose, 
                                      p2_ExternalRequirements = externalRequirements, 
-                                     p2_ErrorLocation = p1_ErrorLocation, p2_ErrorInfo = p1_ErrorInfo)
+                                     p2_ErrorLocation = p1_ErrorLocation, p2_ErrorInfo = f"{p1_ErrorInfo}: \n\n {traceback.format_exc()}")
         setOfFunctionsWithErrors.add(p1_ErrorLocation)
         ## Note that an error email was sent
         logger.error (f"     \nError Email Sent")

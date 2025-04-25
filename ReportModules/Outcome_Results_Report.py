@@ -3,7 +3,7 @@
 
 
 from datetime import datetime
-import os, logging, sys, re, threading, shutil, ast, json
+import traceback, os, logging, sys, re, threading, shutil, ast, json
 import pandas as pd, numpy as np, time
 
 
@@ -138,7 +138,7 @@ def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
     if (p1_ErrorLocation not in setOfFunctionsWithErrors):
         errorEmailApi.sendEmailError(p2_ScriptName = scriptName, p2_ScriptPurpose = scriptPurpose, 
                                      p2_ExternalRequirements = externalRequirements, 
-                                     p2_ErrorLocation = p1_ErrorLocation, p2_ErrorInfo = p1_ErrorInfo)
+                                     p2_ErrorLocation = p1_ErrorLocation, p2_ErrorInfo = f"{p1_ErrorInfo}: \n\n {traceback.format_exc()}")
         setOfFunctionsWithErrors.add(p1_ErrorLocation)
         ## Note that an error email was sent
         logger.error (f"     \nError Email Sent")
@@ -1103,7 +1103,7 @@ def targetDesignatorProcessOutcomeResults(
             if os.path.exists(p1_destinationFilePathDict["Second External Output Report File Path and Name"]):
 
                 ## Try to remove it
-                try: ## Irregular #try clause, do not comment out in testing
+                try: ## Irregular try clause, do not comment out in testing
                     
                     ## Remove it
                     os.remove(p1_destinationFilePathDict["Second External Output Report File Path and Name"])
@@ -1209,7 +1209,7 @@ def termProcessOutcomeResults(p1_inputTerm
         ## While the outcomesCsvDf is empty
         while outcomesCsvDf.empty and readOutcomesCsvAttempt < 5:
 
-            try: ## Irregular #try clause, do not comment out in testing
+            try: ## Irregular try clause, do not comment out in testing
             
                 ## Read the outcomes csv into a pandas dataframe
                 outcomesCsvDf = pd.read_csv(outcomesCsvPath, encoding='utf-8')
@@ -1293,14 +1293,45 @@ def termProcessOutcomeResults(p1_inputTerm
                                 , "Outcome_Version" : uniqueOutcome.split("_")[2]
                                 }
                             
+        ## Make a list to retain unique outcome keys that don't have a vendor guid
+        uniqueOutcomesWithoutVendorGuidList = []
+                            
         ## For each unique outcome in the uniqueOutcomeVendorGuidDict
         for uniqueOutcome in uniqueOutcomeInfoDictOfDicts.keys():
             
             ## Find the vendor guid that is associated with the unique outcome within outcomesCsvDf
-            vendorGuid = outcomesCsvDf.loc[outcomesCsvDf["title"] == uniqueOutcome, "vendor_guid"].values[0]
+            vendorGuidValueList = outcomesCsvDf.loc[outcomesCsvDf["title"] == uniqueOutcome, "vendor_guid"].values
+
+            ## If the vendor guid value list is not empty
+            if vendorGuidValueList.size > 0:
+
+                ## Set the vendor guid as the first value in the list
+                vendorGuid = vendorGuidValueList[0]
+
+            ## Otherwise
+            else:
+
+                ## Add the unique outcome to the uniqueOutcomesWithoutVendorGuidList
+                uniqueOutcomesWithoutVendorGuidList.append(uniqueOutcome)
+
+                ## Log that the outcome was not found in the outcomes csv and handle the error
+                logger.warning(f"Outcome {uniqueOutcome} was not found in the Canvas outcomes csv. Skipping it.")
+                error_handler (functionName, p1_ErrorInfo = f"Outcome {uniqueOutcome} was not found in the Canvas outcomes csv. Skipping it.")
+
+                ## Skip the value
+                continue
             
             ## Set the vendor guid as the value for the unique outcome in the uniqueOutcomeVendorGuidDict
             uniqueOutcomeInfoDictOfDicts[uniqueOutcome]["Vendor_Guid"] = vendorGuid
+
+        ## For each unique outcome in the uniqueOutcomesWithoutVendorGuidList
+        for uniqueOutcome in uniqueOutcomesWithoutVendorGuidList:
+
+            ## Remove it from the uniqueOutcomeVendorGuidDict
+            del uniqueOutcomeInfoDictOfDicts[uniqueOutcome]
+
+            ## Replace all instances of it from activeCanvasOutcomeCoursesDf
+            activeCanvasOutcomeCoursesDf.replace(uniqueOutcome, "", inplace=True)
 
         ## Define a api url to get all outcome links for the targetCanvasAccountId
         accountOutcomeLinkApiUrl = f"{CoreCanvasAPIUrl}accounts/{targetCanvasAccountId}/outcome_group_links"

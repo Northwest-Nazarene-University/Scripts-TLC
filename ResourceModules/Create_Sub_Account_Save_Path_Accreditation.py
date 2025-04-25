@@ -3,7 +3,7 @@
 
 ## Import Generic Moduels
 
-import os, sys, logging, os, os.path
+import traceback, os, sys, logging, os, os.path
 import pandas as pd
 
 ## Import local modules
@@ -99,7 +99,7 @@ def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
     if (p1_ErrorLocation not in setOfFunctionsWithErrors):
         errorEmailApi.sendEmailError(p2_ScriptName = scriptName, p2_ScriptPurpose = scriptPurpose, 
                                      p2_ExternalRequirements = externalRequirements, 
-                                     p2_ErrorLocation = p1_ErrorLocation, p2_ErrorInfo = p1_ErrorInfo)
+                                     p2_ErrorLocation = p1_ErrorLocation, p2_ErrorInfo = f"{p1_ErrorInfo}: \n\n {traceback.format_exc()}")
         
         ## Add the function name to the set of functions with errors
         setOfFunctionsWithErrors.add(p1_ErrorLocation)

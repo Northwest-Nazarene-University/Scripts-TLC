@@ -2,17 +2,16 @@
 # Last Updated by: Bryce Miller
 
 import traceback, os, sys, logging, requests, threading, time, pandas as pd
-import pandas as pd
 from datetime import datetime
 
 # Define the script name, purpose, and external requirements for logging and error reporting purposes
-scriptName = "Change_Term_For_Listed_Courses"
+scriptName = "Change_Long_Name_For_Listed_Courses"
 
 scriptPurpose = r"""
-This script reads a CSV file containing Canvas course IDs and changes the term for each course using the Canvas API.
+This script reads a CSV file containing Canvas course IDs and changes the long name for each course using the Canvas API.
 """
 externalRequirements = r"""
-To function properly, this script requires a valid access header and URL, and a CSV file named "courses_to_set_term.csv" located in the Canvas Resources directory.
+To function properly, this script requires a valid access header and URL, and a CSV file named "Target_Canvas_Course_Ids.csv" located in the Canvas Resources directory.
 """
 
 ## Date Variables
@@ -110,31 +109,31 @@ def error_handler(p1_ErrorLocation, p1_ErrorInfo, sendOnce=True):
     else:
         logger.error(f"\nError email already sent")
 
-## This function sets the term for a course given its Canvas course ID and term ID
-def setCourseTerm(p1_header, p1_courseId, p1_termId):
-    functionName = "setCourseTerm"
+## This function sets the long name for a course given its Canvas course ID and long name
+def setCourseLongName(p1_header, p1_courseId, p1_longName):
+    functionName = "setCourseLongName"
     try:
-        set_term_url = f"{CoreCanvasAPIUrl}courses/{p1_courseId}"
-        payload = {"course": {"enrollment_term_id": p1_termId}}
-        response = makeApiCall(p1_header=p1_header, p1_apiUrl=set_term_url, p1_payload=payload, apiCallType="put")
+        setLongNameApiUrl = f"{CoreCanvasAPIUrl}courses/{p1_courseId}"
+        payload = {"course": {"name": p1_longName}}
+        response = makeApiCall(p1_header=p1_header, p1_apiUrl=setLongNameApiUrl, p1_payload=payload, apiCallType="put")
 
         if response.status_code == 200:
-            logger.info(f"Successfully set term for course with ID: {p1_courseId}")
+            logger.info(f"Successfully set long name for course with ID: {p1_courseId}")
         else:
-            logger.warning(f"Failed to set term for course with ID: {p1_courseId}. Status code: {response.status_code}")
+            logger.warning(f"Failed to set long name for course with ID: {p1_courseId}. Status code: {response.status_code}")
 
     except Exception as error:
         error_handler(functionName, error)
 
-## This function reads the CSV file and sets the term for the listed courses
-def setListedCoursesTerm():
-    functionName = "setListedCoursesTerm"
+## This function reads the CSV file and sets the long name for the listed courses
+def setListedCoursesLongName():
+    functionName = "setListedCoursesLongName"
     try:
         targetCoursesCsvFilePath = f"{baseInputPath}Target_Canvas_Course_Ids.csv"
         header = {'Authorization': f"Bearer {canvasAccessToken}"}
         
         ## Define the necessary thread list
-        ongoingSetTermThreads = []
+        ongoingSetLongNameThreads = []
 
         ## Read the CSV file using pandas
         rawTargetCoursesDf = pd.read_csv(targetCoursesCsvFilePath)
@@ -148,23 +147,23 @@ def setListedCoursesTerm():
             ## Get the course id from the row
             courseId = str(row["canvas_course_id"]).replace('.0', '')
 
-            ## Get the term id from the row
-            termId = str(row["canvas_term_id"]).replace('.0', '')
+            ## Get the long name from the row
+            longName = str(row["long_name"])
 
-            ## Create a thread to set the term for the course
-            setTermThread = threading.Thread(target=setCourseTerm, args=(header, courseId, termId))
+            ## Create a thread to set the long name for the course
+            setLongNameThread = threading.Thread(target=setCourseLongName, args=(header, courseId, longName))
 
             ## Start the thread
-            setTermThread.start()
+            setLongNameThread.start()
 
-            ## Add the thread to the ongoing set term threads list
-            ongoingSetTermThreads.append(setTermThread)
+            ## Add the thread to the ongoing set long name threads list
+            ongoingSetLongNameThreads.append(setLongNameThread)
 
             ## Sleep for a short time to avoid overloading the server
             time.sleep(0.1)
 
-        ## Check if all ongoing set term threads have completed
-        for thread in ongoingSetTermThreads:
+        ## Check if all ongoing set long name threads have completed
+        for thread in ongoingSetLongNameThreads:
             thread.join()
 
     except Exception as error:
@@ -174,7 +173,7 @@ if __name__ == "__main__":
     ## Set working directory
     os.chdir(os.path.dirname(__file__))
 
-    ## Set the term for the listed courses
-    setListedCoursesTerm()
+    ## Set the long name for the listed courses
+    setListedCoursesLongName()
 
     input("Press enter to exit")

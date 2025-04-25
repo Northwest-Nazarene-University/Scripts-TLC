@@ -3,7 +3,7 @@
 
 ## Import Generic Moduels
 
-import os, sys, logging, csv, os, os.path, threading, json
+import traceback, os, sys, logging, csv, os, os.path, threading, json
 from datetime import date, datetime
 import pandas as pd
 
@@ -157,7 +157,7 @@ def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
     if (p1_ErrorLocation not in setOfFunctionsWithErrors):
         errorEmailApi.sendEmailError(p2_ScriptName = scriptName, p2_ScriptPurpose = scriptPurpose, 
                                      p2_ExternalRequirements = externalRequirements, 
-                                     p2_ErrorLocation = p1_ErrorLocation, p2_ErrorInfo = p1_ErrorInfo)
+                                     p2_ErrorLocation = p1_ErrorLocation, p2_ErrorInfo = f"{p1_ErrorInfo}: \n\n {traceback.format_exc()}")
         
         ## Add the function name to the set of functions with errors
         setOfFunctionsWithErrors.add(p1_ErrorLocation)
@@ -230,43 +230,46 @@ def createOutcomeEmailBody (p3_relevantEmail
         
         ## Assign the neccessary singular an instructor/instructors string
         singularOrPluralDict["an instructor/instructors"] = "an instructor"
+
+    ## Set the emailbodysignature to Client Email Signature
+    emailBodyDict["signature"] = p1_emailDetails["Client Email Signature"]
     
-    ## If the relevant email is a course start email and GE is in the outcome
-    if "GE" in p1_outcome:
-        emailBodyDict["signature"] = """<p>Sincerely, 
-        <br> The General Education Council</p>
-        <span style="font-weight: bold;">Catherine Becker, Ph.D.</span>
-        <br>General Education Council Chair
-        <br>Associate Professor of English
-        <br>Northwest Nazarene University
-        """
+    # ## If the relevant email is a course start email and GE is in the outcome
+    # if "GE" in p1_outcome:
+    #     emailBodyDict["signature"] = """<p>Sincerely, 
+    #     <br> The General Education Council</p>
+    #     <span style="font-weight: bold;">Catherine Becker, Ph.D.</span>
+    #     <br>General Education Council Chair
+    #     <br>Associate Professor of English
+    #     <br>Northwest Nazarene University
+    #     """
     
-    ## If the relevant email is a course start email and EDUC is in the outcome
-    elif "I-EDUC" in p1_outcome:
+    # ## If the relevant email is a course start email and EDUC is in the outcome
+    # elif "I-EDUC" in p1_outcome:
         
-        emailBodyDict["signature"] = """<p>Sincerely, 
-        <br>Holly Ripley  Ed.S., M.Ed.
-        <br>Chair, Education Department
-        <br>Associate Professor of Education
-        <br>Director, Accelerated Certification in Education (ACE)
-        <br>Northwest Nazarene University
-        <br>208-467-8621
-        <br><br><a href='https://outlook.office.com/bookwithme/user/ab329a6a861642e8929104093bb4d929@nnu.edu?anonymous&ep=signature' target='_blank'>Book time to meet with me</a>
-        </p>
-        """
+    #     emailBodyDict["signature"] = """<p>Sincerely, 
+    #     <br>Holly Ripley  Ed.S., M.Ed.
+    #     <br>Chair, Education Department
+    #     <br>Associate Professor of Education
+    #     <br>Director, Accelerated Certification in Education (ACE)
+    #     <br>Northwest Nazarene University
+    #     <br>208-467-8621
+    #     <br><br><a href='https://outlook.office.com/bookwithme/user/ab329a6a861642e8929104093bb4d929@nnu.edu?anonymous&ep=signature' target='_blank'>Book time to meet with me</a>
+    #     </p>
+    #     """
         
-    ## Else if the outcome is an ENGR
-    elif "ENGR" in p1_outcome:    
+    # ## Else if the outcome is an ENGR
+    # elif "ENGR" in p1_outcome:    
         
-        ## Define the signature
-        emailBodyDict["signature"] = """<p>Duke M Bulanon, PhD, PE
-        <br>Professor
-        <br>Department of Engineering and Physics
-        <br>Northwest Nazarene University
-        <br>Nampa, ID 83686
-        <br>Tel no 208 467 8047
-        </p>
-        """
+    #     ## Define the signature
+    #     emailBodyDict["signature"] = """<p>Duke M Bulanon, PhD, PE
+    #     <br>Professor
+    #     <br>Department of Engineering and Physics
+    #     <br>Northwest Nazarene University
+    #     <br>Nampa, ID 83686
+    #     <br>Tel no 208 467 8047
+    #     </p>
+    #     """
 
     ## If the relevant email is a course start email and GE is in the outcome
     if ("Course Start" in p3_relevantEmail
@@ -443,6 +446,7 @@ def craftAndSendRelevantEmail (
         emailDetails = {"Client Name" : automatedOutcomeToolVariablesDict["Client Name"]
                         , "Client Send/Recieve Email" : automatedOutcomeToolVariablesDict["Client Send/Recieve Email"]
                         , "Relevant Authority Contact Name" : automatedOutcomeToolVariablesDict["Client Contact Name"]
+                        , "Client Email Signature" : f"""{automatedOutcomeToolVariablesDict["Client Email Signature"]}"""
                         , "Input Term": p3_inputTerm
                         , "Course Name": p2_row["Course_name"]
                         , "Relevant Email": p2_relevantEmail
@@ -555,6 +559,7 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
         ## Retrieve the data for determining and sending out relevant communication
         completeActiveCanvasCoursesDF, auxillaryDFDict = retrieveDataForRelevantCommunication(p2_inputTerm = p1_inputTerm
                                                                                               , p3_targetDesignator = p1_targetDesignator
+                                                                                              , p1_header = header
                                                                                               )
                 
         ## Define a list to hold the communication threads
@@ -609,7 +614,7 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
             
                 ## If it is the monday before the courses's week 0 and it is an outcome course
                 if (row['Course Week'] <= 0
-                    and currentDate.weekday() == 3
+                    and currentDate.weekday() == 0
                     and isOutcomeCourse
                     ):                
                     
@@ -636,7 +641,7 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
         
                 ## If it is the Monday of week 0
                 if (row['Course Week'] == 0
-                    and currentDate.weekday() == 3
+                    and currentDate.weekday() == 0
                       ):
 
                     ## If the course is an Outcome course
@@ -661,7 +666,7 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
 
                 ## Otherwise, if it is the Monday of the week before its final week (e.g. week 15 in a 16 week course)
                 elif (row['Course Week'] == (row["Course Final Week"] - 1)
-                      and currentDate.weekday() == 1
+                      and currentDate.weekday() == 0
                       ):
 
                     ## If the course is an Outcome course
@@ -736,7 +741,7 @@ if __name__ == "__main__":
      
     # craftAndSendRelevantEmail (p2_relevantEmail="Associated Course Outcomes: Course Start Information"
     #                            ,p2_row = {'Term': 'FA24'
-    #                                       , 'Outcome Area': 'I-EDUC'
+    #                                       , 'Outcome Area': 'G-EDUC'
     #                                       , 'Course_sis_id': 'SP2024_ENGL4980_01'
     #                                       , 'Course_name': 'SENIOR SEMINAR SP2024_ENGL4980_01'
     #                                       , 'Account_id': 'U_LLIT'

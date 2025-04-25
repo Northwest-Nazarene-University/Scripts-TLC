@@ -5,7 +5,7 @@ from __future__ import print_function
 from Error_Email_API import errorEmailApi
 from datetime import datetime
 from Download_File import downloadFile
-import requests, time, json, os, logging, sys, re
+import requests, time, json, os, logging, sys, re, traceback
 
 # Define the script name, purpose, and external requirements for logging and error reporting purposes
 scriptName = "Get_Courses"
@@ -104,7 +104,7 @@ def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
     if (p1_ErrorLocation not in setOfFunctionsWithErrors):
         errorEmailApi.sendEmailError(p2_ScriptName = scriptName, p2_ScriptPurpose = scriptPurpose, 
                                      p2_ExternalRequirements = externalRequirements, 
-                                     p2_ErrorLocation = p1_ErrorLocation, p2_ErrorInfo = p1_ErrorInfo)
+                                     p2_ErrorLocation = p1_ErrorLocation, p2_ErrorInfo = f"{p1_ErrorInfo}: \n\n {traceback.format_exc()}")
         setOfFunctionsWithErrors.add(p1_ErrorLocation)
         ## Note that an error email was sent
         logger.error (f"     \nError Email Sent")

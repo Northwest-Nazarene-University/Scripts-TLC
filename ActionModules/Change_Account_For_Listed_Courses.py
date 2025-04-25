@@ -1,7 +1,7 @@
 # Author: Bryce Miller - brycezmiller@nnu.edu
 # Last Updated by: Bryce Miller
 
-import os, sys, logging, requests, csv, threading, time, pandas as pd
+import traceback, os, sys, logging, requests, csv, threading, time, pandas as pd
 from datetime import datetime
 
 # Define the script name, purpose, and external requirements for logging and error reporting purposes

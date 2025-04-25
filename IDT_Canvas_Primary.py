@@ -3,7 +3,7 @@
 
 ## Import Generic Moduels
 from datetime import datetime
-import os, sys, logging, threading, time, calendar, json
+import traceback, os, sys, logging, threading, time, calendar, json
 import pandas as pd
 
 ## Set working directory
@@ -58,6 +58,7 @@ lastDayOfCurrentMonth = calendar.monthrange(currentYear, currentMonth)[1]
 
 ## Testing variables
 # currentDay = 1 ## First week of the month testing value
+# currentWeekDay = 0 ## Friday testing value 
 # currentWeekDay = 4 ## Friday testing value 
 # currentHour = 0 ## First run of the day testing value
 # currentHour = 18 ## Last run of the day testing value
@@ -150,7 +151,7 @@ def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
     if (p1_ErrorLocation not in setOfFunctionsWithErrors):
         errorEmailApi.sendEmailError(p2_ScriptName = scriptName, p2_ScriptPurpose = scriptPurpose, 
                                      p2_ExternalRequirements = externalRequirements, 
-                                     p2_ErrorLocation = p1_ErrorLocation, p2_ErrorInfo = p1_ErrorInfo)
+                                     p2_ErrorLocation = p1_ErrorLocation, p2_ErrorInfo = f"{p1_ErrorInfo}: \n\n {traceback.format_exc()}")
         
         ## Add the function name to the set of functions with errors
         setOfFunctionsWithErrors.add(p1_ErrorLocation)

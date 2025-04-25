@@ -13,7 +13,7 @@ externalRequirements = r"""
 
 
 from math import e
-import os, sys, base64, time, sys, asyncio, configparser, getpass, microsoftgraph, requests, mimetypes, logging
+import traceback, os, sys, base64, time, sys, asyncio, configparser, getpass, microsoftgraph, requests, mimetypes, logging
 
 from Download_File import downloadFile
 from azure.identity import AuthenticationRecord

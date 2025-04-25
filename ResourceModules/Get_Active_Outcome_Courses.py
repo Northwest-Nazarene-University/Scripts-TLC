@@ -8,7 +8,7 @@ from Core_Microsoft_Api import downloadSharedMicrosoftFile, uploadSharedMicrosof
 from datetime import datetime
 
 import pandas as pd
-import os, logging, sys, csv, re, asyncio, subprocess, json
+import traceback, os, logging, sys, csv, re, asyncio, subprocess, json
 
 ## Define the script name, purpose, and external requirements for logging and error reporting purposes
 scriptName = "Get Active Outcome Courses"
@@ -49,6 +49,7 @@ sys.path.append(f"{PFAbsolutePath}Scripts TLC\\ActionModules")
 
 ## Import local modules
 from Make_Api_Call import makeApiCall
+from Get_Courses import createCoursesCSV
 
 ## Local Path Variables
 baseLogPath = f"{PFAbsolutePath}Logs\\{scriptName}\\"
@@ -131,7 +132,7 @@ def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
     if (p1_ErrorLocation not in setOfFunctionsWithErrors):
         errorEmailApi.sendEmailError(p2_ScriptName = scriptName, p2_ScriptPurpose = scriptPurpose, 
                                      p2_ExternalRequirements = externalRequirements, 
-                                     p2_ErrorLocation = p1_ErrorLocation, p2_ErrorInfo = p1_ErrorInfo)
+                                     p2_ErrorLocation = p1_ErrorLocation, p2_ErrorInfo = f"{p1_ErrorInfo}: \n\n {traceback.format_exc()}")
         setOfFunctionsWithErrors.add(p1_ErrorLocation)
         ## Note that an error email was sent
         logger.error (f"     \nError Email Sent")
@@ -162,16 +163,16 @@ def get_outcome_course_code_list (p1_termOutputPath
                 
                 ## Return the file as a dataframe
                 return pd.read_excel(dataDestinationPath)
-        
+
         ## Retrieve the Automated Outcome Tool Variables excel file as a df    
         automatedOutcomeToolVariablesDf = pd.read_excel(f"{baseExternalInputPath}Internal Tool Files\\Automated Outcome Tool Variables.xlsx")
 
         ## Find the Outcome Course association list url that is on the same row as the target designator
         outcomeMicrosoftCourseListUrl = automatedOutcomeToolVariablesDf[automatedOutcomeToolVariablesDf["Target Designator"] == p2_targetDesignator]["Outcome Course Association List URL"].values[0]
-        
+
         ## Define a variable to hold the course association's data
         courseOutcomeAssociationsDf = pd.DataFrame() 
-        
+
         ## Download the Outcome Council's Outcome course code alignment file as a worksheet
         outcomeCoursesAssocationFilePath = downloadSharedMicrosoftFile(p1_microsoftUserName = "lmsservice@nnu.edu"
                                                                             , p1_fileShareUrl = outcomeMicrosoftCourseListUrl
@@ -193,18 +194,18 @@ def get_outcome_course_code_list (p1_termOutputPath
                     
                 ## Set the fileDownloaded variable to True
                 fileDownloaded = True        
-        
+
         ## If the file wasn't downloaded log an error
         if not fileDownloaded:
             logger.error (f"     \nFailed to download the {p2_inputTerm}_{p2_targetDesignator} course association file.")
             return
-        
+
         # ## Make a variable to hold the file lines
         # downloadedFileLines = []
-        
+
         # ## While the list is empty
         # while not downloadedFileLines:
-        
+
         #     ## Open the CSV file as a text file
         #     with open(outcomeCoursesAssocationFilePath, 'r', encoding='utf-8') as file:
         #         downloadedFileLines = file.readlines()
@@ -218,7 +219,7 @@ def get_outcome_course_code_list (p1_termOutputPath
 
         # ## Use io.StringIO to read the CSV data into a df, using csv.QUOTE_MINIMAL to turing commas within the strings into their own columns
         # downloadedFileDf = pd.read_csv(io.StringIO(downloadedFileAsSingleString), quoting=csv.QUOTE_MINIMAL, encoding='utf-8')
-        
+
 
         # ## While there are any instances of 'â€‹' in downloadedFileDf
         # if downloadedFileDf['title'].str.contains(r'Ã¢â‚¬â€¹').any():
@@ -240,29 +241,73 @@ def get_outcome_course_code_list (p1_termOutputPath
             
         ## If the excel file has sheets
         if len(excelFile.sheet_names) > 0:
-                
-            ## If it has a by course sheet
-            if "By Course" in excelFile.sheet_names:
+
+            ## Define a value to retain the designator's target sheet value
+            designatedTargetSheetValueList = automatedOutcomeToolVariablesDf[automatedOutcomeToolVariablesDf["Target Designator"] == p2_targetDesignator]["Outcome Course Association Target Sheet Name"].values
+
+
+            ## If the designatedTargetSheetValueList is not empty and if the first value is neither empty nor nan
+            if (designatedTargetSheetValueList 
+                and str(designatedTargetSheetValueList[0]) not in ["nan", ""]
+                ):
+
+                ## Read in the sheet name from the automatedOutcomeToolVariablesDf
+                fileDF = pd.read_excel (outcomeCoursesAssocationFilePath, sheet_name = designatedTargetSheetValueList[0])
+
+            ## Otherwise if the file has a sheet named "By Course"
+            elif "By Course" in excelFile.sheet_names:
                 
                 ## Read in the by course sheet
                 fileDF = pd.read_excel (outcomeCoursesAssocationFilePath, sheet_name = "By Course")
                 
-        ## If there is no file data
+        ## If there is no file data from looking for the sheet names
         if fileDF is None:
                 
             ## Read the excel file normally
             fileDF = pd.read_excel (outcomeCoursesAssocationFilePath)
 
-        ## If the first column is not named "Prefix"
-        if fileDF.columns[0] != "Prefix":
+        ## If there is a column which in lowercase is "course number" replace it with "Number"
+        if "course number" in fileDF.columns.str.lower():
+            fileDF.rename(columns={col: "Number" for col in fileDF.columns if col.lower() == "course number"}, inplace=True)
+
+
+        ## If the first column in lowercase is not named "prefix"
+        if fileDF.columns[0].lower() != "prefix":
                 
             ## Then the first row is the header so replace the header file with the first row
             new_header_row = fileDF.iloc[0]
             fileDF = fileDF[1:]
             fileDF.columns = new_header_row
-                
+
+        ## If the first column in lowercase is named "prefix" but is not equal to "Prefix"
+        if fileDF.columns[0].lower() == "prefix" and fileDF.columns[0] != "Prefix":
+
+            ## For each column
+            for column in fileDF.columns:
+
+                ## Make the first letter of the column name upper case and the rest lower case
+                fileDF.rename(columns={column: column.capitalize()}, inplace=True)
+
+        ## If any of the values in the Prefix column are equal to the outcome area
+        if p2_targetDesignator != "GE" and fileDF["Prefix"].str.contains(p2_targetDesignator).any():
+
+            ## Remove the first two characters from the Prefix column
+            fileDF["Prefix"] = fileDF["Prefix"].str[2:]
+
+        ## Change all columns that, when all lowercase, matches 'outcome' to capitalized first letter of words
+        for column in fileDF.columns[fileDF.columns.str.lower().str.contains("outcome")]:
+
+            ## Make the first letter of the column name upper case and the rest lower case
+            fileDF.rename(columns={column: column.capitalize()}, inplace=True)
+
         ## Add Department as a new first column with the key as the value
         fileDF.insert(0, "Outcome Area", p2_targetDesignator)
+
+        ## Find the first outcome column that isn't outcome area
+        outcomeColumnIndex = fileDF.columns[fileDF.columns.str.contains("Outcome") & ~fileDF.columns.str.contains("Outcome Area")][0]
+
+        ## Remove all rows that have an empty cell in the first column, the second column, or the first outcome column
+        fileDF = fileDF.dropna(subset = [fileDF.columns[0], fileDF.columns[1], outcomeColumnIndex])
                 
         ## IF the key is Outcome
         if p2_targetDesignator == "GE":
@@ -274,6 +319,29 @@ def get_outcome_course_code_list (p1_termOutputPath
             ## Add the prefix and postfix to the Outcome 1 and Outcome 2 columns
             fileDF["Outcome 1"] = OutcomePrefix + fileDF["Outcome 1"] + OutcomePostfix
             fileDF["Outcome 2"] = OutcomePrefix + fileDF["Outcome 2"] + OutcomePostfix
+
+        ## If the target designator is G-EDUC
+        elif p2_targetDesignator == "G-EDUC":
+            
+            ## Define the outcome prefix, postfix, and subDelineator
+            OutcomePrefix = "G-EDUC_"
+            OutcomePostfix = "_1.0"
+            OutcomeSubDelineator = ": "
+
+            ## For each column that has "Outcome" in it but not "Outcome Area"
+            for column in fileDF.columns[fileDF.columns.str.contains("Outcome") & ~fileDF.columns.str.contains("Outcome Area")]:
+
+                ## Make the column values that are not nan all caps
+                fileDF[column] = fileDF[column].astype(str).str.upper()
+
+                ## Add the prefix. postfix, and replace the first space to the subdelineator to the column
+                fileDF[column] = OutcomePrefix + fileDF[column] + OutcomePostfix
+                fileDF[column] = fileDF[column].str.replace(" ", OutcomeSubDelineator, n=1)
+
+                ## Replace all column values that contain "NAN" with ""
+                fileDF = fileDF.applymap(lambda cellValue: "" if isinstance(cellValue, str) and "NAN" in cellValue else cellValue)
+
+
                 
         ## If the courseOutcomeAssociationsDf is empty
         if courseOutcomeAssociationsDf.empty:
@@ -285,20 +353,24 @@ def get_outcome_course_code_list (p1_termOutputPath
         else:
                 
             courseOutcomeAssociationsDf = pd.concat([courseOutcomeAssociationsDf, fileDF], ignore_index=True)
-        
-        ## replace any "​" characters with an empty string
+
+        ## replace any '"' characters with an empty string
         courseOutcomeAssociationsDf = courseOutcomeAssociationsDf.replace('"', "", regex=True)
-        
-        ## Remove any rows that have an empty cell in column 1, 2, or 3
-        courseOutcomeAssociationsDf = courseOutcomeAssociationsDf.dropna(subset = [courseOutcomeAssociationsDf.columns[0]
-                                                                                   , courseOutcomeAssociationsDf.columns[1]
-                                                                                   , courseOutcomeAssociationsDf.columns[2]
-                                                                                   ]
-                                                                         , how = "any")
-        
+
+        ## Remove any rows that have an empty cell in column 1, 2, or the first column with outcome but not outcome area in the column name
+        courseOutcomeAssociationsDf = courseOutcomeAssociationsDf.dropna(
+            subset = [
+                      courseOutcomeAssociationsDf.columns[0]
+                      , courseOutcomeAssociationsDf.columns[1]
+                      , courseOutcomeAssociationsDf.columns[
+                          courseOutcomeAssociationsDf.columns.str.contains("Outcome") 
+                          & ~courseOutcomeAssociationsDf.columns.str.contains("Outcome Area")][0]
+                      ]
+            )
+
         ## Add a course code column after the outcome area column of the courseOutcomeAssociationsDf
         courseOutcomeAssociationsDf.insert(1, "Course Code", courseOutcomeAssociationsDf["Prefix"] + courseOutcomeAssociationsDf["Number"].astype(str))
-        
+
         ## Remove the Prefix and Number columns
         courseOutcomeAssociationsDf = courseOutcomeAssociationsDf.drop(columns = ["Prefix", "Number"])
                 
@@ -307,22 +379,21 @@ def get_outcome_course_code_list (p1_termOutputPath
 
         return courseOutcomeAssociationsDf
 
-    except Exception as error:
+    except exception as error:
         error_handler (functionName, p1_ErrorInfo = error)
         
 ## This function gets the crosslisted course ids
-def getCrosslistedCourseIds (p1_courseId):
+def getCrosslistedCourseIds (p1_header, p1_courseId):
     functionName = "getCrosslistedCourseIds"
     
     try:
-        ## Define the API Call header using the retreived Canvas Token
-        header = {'Authorization' : f"Bearer {canvasAccessToken}"}
+        
 
         ## Define the list course sections api url
         courseSectionsApiUrl = f"{CoreCanvasAPIUrl}courses/sis_course_id:{p1_courseId}/sections"
 
         ## Make an api call to get a list of the course's sections
-        courseSectionsApiObject = makeApiCall(p1_header = header, p1_apiUrl = courseSectionsApiUrl)
+        courseSectionsApiObject = makeApiCall(p1_header = p1_header, p1_apiUrl = courseSectionsApiUrl)
         
         ## Save the primary body of information retrieved by the API call
         courseSectionsApiText = courseSectionsApiObject.text
@@ -358,7 +429,7 @@ def getCrosslistedCourseIds (p1_courseId):
         
 
         
-    except Exception as error:
+    except exception as error:
         error_handler (functionName, p1_ErrorInfo = error)
 
 ## This function creates a csv of the active Canvas courses for the user inputed year that match the Outcome Course Codes
@@ -366,6 +437,10 @@ def create_csv_of_active_Outcome_courses (p1_inputTerm, p1_targetDesignator):
     functionName = "create_csv_of_active_Outcome_courses"
 
     try:
+            
+        ## Define the API Call header using the retreived Canvas Token
+        header = {'Authorization' : f"Bearer {canvasAccessToken}"}
+
         ## Determine and save the term's school year
         schoolYear = None
         if re.search("AF|FA|GF", p1_inputTerm):
@@ -447,7 +522,7 @@ def create_csv_of_active_Outcome_courses (p1_inputTerm, p1_targetDesignator):
         canvasTermSectionsDf = pd.read_csv(f"{termInputPath}{p1_inputTerm}_Canvas_Sections.csv")
 
         ## Open the all courses csv as a df
-        canvasAllCoursesDf = pd.read_csv(f"{baseInputPath}All_Canvas_Courses.csv")
+        canvasAllCoursesDf = pd.read_csv(createCoursesCSV(header, p1_inputTerm = "All"))
 
         ## Open the all sections csv as a df
         canvasAllSectionsDf = pd.read_csv(f"{baseInputPath}All_Canvas_Sections.csv")
@@ -500,8 +575,12 @@ def create_csv_of_active_Outcome_courses (p1_inputTerm, p1_targetDesignator):
                                     ## Make a DF of the sections with the row canvas course id
                                     targetCourseSectionsDf = canvasAllSectionsDf[canvasAllSectionsDf["canvas_course_id"] == row["canvas_course_id"]]
 
-                                    ## Get the index of the long name from the name column of the canvasAllSectionsDf
-                                    primarySectionIndex = canvasAllSectionsDf[canvasAllSectionsDf["name"] == row["long_name"]].index[0]
+                                    ## Get the index where the name column of the canvasAllSectionsDf contains the course_id
+                                    primarySectionIndex = canvasAllSectionsDf[
+                                        canvasAllSectionsDf["name"].fillna("").str.contains(
+                                            row["course_id"]
+                                            )
+                                        ].index[0]
 
                                     ## Add the section id that matches the course name to the active Outcome Courses Dict
                                     activeOutcomeCoursesDict["Section_id"].append(canvasAllSectionsDf.loc[primarySectionIndex, "canvas_section_id"])
@@ -828,7 +907,7 @@ def create_csv_of_active_Outcome_courses (p1_inputTerm, p1_targetDesignator):
         ## Record the completion of the function
         logger.info (f"     \nSucessfully created {p1_inputTerm} Active Outcome Courses Excel File")
 
-    except Exception as error:
+    except exception as error:
         error_handler (functionName, p1_ErrorInfo = error)
   
 def termGetActiveOutcomeCourses(inputTerm, targetDesignator):
@@ -839,7 +918,7 @@ def termGetActiveOutcomeCourses(inputTerm, targetDesignator):
         ## Start and download the Canvas report
         create_csv_of_active_Outcome_courses(p1_inputTerm = inputTerm, p1_targetDesignator = targetDesignator)
 
-    except Exception as error:
+    except exception as error:
         error_handler (functionName, p1_ErrorInfo = error)
 
 if __name__ == "__main__":

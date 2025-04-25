@@ -4,7 +4,7 @@
 
 from Error_Email_API import errorEmailApi
 from datetime import datetime
-import paramiko, os, logging, json, re ## External Installation: paramiko: https://www.paramiko.org/installing.html, 
+import traceback, paramiko, os, logging, json, re, time ## External Installation: paramiko: https://www.paramiko.org/installing.html, 
 
 ## Define the script name, purpose, and external requirements for logging and error reporting purposes
 scriptName = "Get Slate Info"
@@ -92,7 +92,7 @@ def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
     if (p1_ErrorLocation not in setOfFunctionsWithErrors):
         errorEmailApi.sendEmailError(p2_ScriptName = scriptName, p2_ScriptPurpose = scriptPurpose, 
                                      p2_ExternalRequirements = externalRequirements, 
-                                     p2_ErrorLocation = p1_ErrorLocation, p2_ErrorInfo = p1_ErrorInfo)
+                                     p2_ErrorLocation = p1_ErrorLocation, p2_ErrorInfo = f"{p1_ErrorInfo}: \n\n {traceback.format_exc()}")
         setOfFunctionsWithErrors.add(p1_ErrorLocation)
         ## Note that an error email was sent
         logger.error (f"     \nError Email Sent")
@@ -142,22 +142,34 @@ def getSlateInfo (p1_inputTerm):
                                    , key_filename=ASPublicKeyPath
                                    , banner_timeout=60
                                    )
-                break  ## Exit the loop if connection is successful
+
+                ## Create an SFTP client from the SSH client
+                sftp_client = ssh_client.open_sftp()
+
+                ## If the connection is successful, log the success and break out of the loop
+                break
+
+            ## If the connection fails
             except Exception as error:
+
+                ## Increment the attempt counter
                 attempt += 1
+
+                ## If the maximum number of retries has not been reached, log the error and retry
                 if attempt < retries:
                     logger.warning(f"Attempt {attempt} failed: {error}. Retrying in 1 minute...")
                     time.sleep(60)
+
+                ## Otherwise, log the error and return None
                 else:
                     logger.error(f"Attempt {attempt} failed: {error}. No more retries.")
-                    #error_handler(#functionName, p1_ErrorInfo=error)
+                    error_handler(functionName, p1_ErrorInfo=error)
                     return None
 
         ## Connect to the SFTP server
-        ssh_client.connect(hostname=ASHost, port=ASPort, username=ASUsername, password=ASPassword, key_filename=ASPublicKeyPath)#, command=ASCommandLine)
+        #ssh_client.connect(hostname=ASHost, port=ASPort, username=ASUsername, password=ASPassword, key_filename=ASPublicKeyPath)#, command=ASCommandLine)
 
-        ## Create an SFTP client from the SSH client
-        sftp_client = ssh_client.open_sftp()
+        
 
         ## List the contents of the remote directory
         fileList = sftp_client.listdir("./Outgoing//canvas")

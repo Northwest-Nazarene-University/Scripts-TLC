@@ -3,7 +3,7 @@
 
 ## Import Generic Moduels
 from __future__ import print_function
-import os, sys, logging, requests, re, os, os.path, threading, math, json
+import traceback, os, sys, logging, requests, re, os, os.path, threading, math, json
 from datetime import datetime, date, timedelta
 from dateutil import parser
 import pandas as pd
@@ -64,6 +64,7 @@ sys.path.append(f"{PFAbsolutePath}Scripts TLC\\ActionModules")
 ## Import local modules
 from Error_Email_API import errorEmailApi
 from Make_Api_Call import makeApiCall
+from Get_Courses import createCoursesCSV
 
 ## Local Path Variables
 baseLogPath = f"{PFAbsolutePath}Logs\\{scriptName}\\"
@@ -142,7 +143,7 @@ def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
     if (p1_ErrorLocation not in setOfFunctionsWithErrors):
         errorEmailApi.sendEmailError(p2_ScriptName = scriptName, p2_ScriptPurpose = scriptPurpose, 
                                      p2_ExternalRequirements = externalRequirements, 
-                                     p2_ErrorLocation = p1_ErrorLocation, p2_ErrorInfo = p1_ErrorInfo)
+                                     p2_ErrorLocation = p1_ErrorLocation, p2_ErrorInfo = f"{p1_ErrorInfo}: \n\n {traceback.format_exc()}")
         
         ## Add the function name to the set of functions with errors
         setOfFunctionsWithErrors.add(p1_ErrorLocation)
@@ -176,6 +177,7 @@ def determineCourseWeek (p1_startDate, p2_endDate):
 ## This function retrieves the data neccessary for determining and sending out relevent communication
 def retrieveDataForRelevantCommunication (p2_inputTerm
                                           , p3_targetDesignator
+                                          , p1_header
                                           ):
     
     functionName = "Retrieve Data For Relevant Communication"
@@ -214,7 +216,7 @@ def retrieveDataForRelevantCommunication (p2_inputTerm
         
         ## Make a list of the unique outcomes that are not blank 
         ## and a dict to hold the course id of the course named after each outcome
-        auxillaryDFDict["Unique Outcomes"], auxillaryDFDict["Outcome Course Dict"] = getUniqueOutcomesAndOutcomeCoursesDict(rawActiveOutcomeCourseDf)
+        auxillaryDFDict["Unique Outcomes"], auxillaryDFDict["Outcome Course Dict"] = getUniqueOutcomesAndOutcomeCoursesDict(rawActiveOutcomeCourseDf, p1_header)
         
         ## Remove any outcomes that don't have corresponding courses
         auxillaryDFDict["Active Outcome Courses DF"] = removeMissingOutcomes (
@@ -234,13 +236,13 @@ def retrieveDataForRelevantCommunication (p2_inputTerm
         reducedActiveSisCoursesDF = activeSisCoursesDF[["course_id", "start_date", "end_date"]]
 
         ## Retrieve the Undg csv of term related Canvas courses from the term path
-        rawTermUndgCanvasCoursesDF = pd.read_csv(f"{termPath}{p2_inputTerm}_Canvas_Courses.csv")
+        rawTermUndgCanvasCoursesDF = pd.read_csv(createCoursesCSV(p1_header, p2_inputTerm))
 
         ## Determine the grad term
         relevantGradTerm = p2_inputTerm.replace("FA", "GF").replace("SP", "GS").replace("SU", "SG")
 
         ## Retrieve the grad csv of term related Canvas courses from the term path
-        rawTermGradCanvasCoursesDF = pd.read_csv(f"{termPath.replace(p2_inputTerm, relevantGradTerm)}{relevantGradTerm}_Canvas_Courses.csv")
+        rawTermGradCanvasCoursesDF = pd.read_csv(createCoursesCSV(p1_header, relevantGradTerm))
 
         ## Combine the Undg and Grad csvs of related canvas courses
         rawTermCanvasCoursesDF = pd.concat([rawTermUndgCanvasCoursesDF, rawTermGradCanvasCoursesDF])
@@ -420,13 +422,11 @@ def retrieveDataForRelevantCommunication (p2_inputTerm
 ## This function processes the rows of the CSV file and sends on the relavent data to process_course
 def addOutcomeToCourse (targetCourseDataDict
                         , auxillaryDFDict
+                        , p1_header
                         ):
     functionName = "Add Outcome/s to courses"
 
     try:
-    
-        ## Define the API Call header using the retreived Canvas Token
-        header = {'Authorization' : f"Bearer {canvasAccessToken}"}
         
         ## If the targetCourseDataDict's course_sis_id is not in the aux df dict's active outcome course df, or if it is empty, skip it
         if (targetCourseDataDict['course_id'] not in auxillaryDFDict["Active Outcome Courses DF"]["Course_sis_id"].values 
@@ -474,7 +474,7 @@ def addOutcomeToCourse (targetCourseDataDict
         contentMigrationApiUrl = baseCourseApiUrl + "/content_migrations"
         
         ## Make a content migration API call to find out what content has already been copied to the course
-        courseMigrationsObject = makeApiCall (p1_header = header, p1_apiUrl = contentMigrationApiUrl)
+        courseMigrationsObject = makeApiCall (p1_header = p1_header, p1_apiUrl = contentMigrationApiUrl)
         
         ## If the API status code is anything other than 200 it is an error, so log it and skip
         if (courseMigrationsObject.status_code != 200):
@@ -516,7 +516,7 @@ def addOutcomeToCourse (targetCourseDataDict
                 
             ## Make the API call and save the result as course_object
             #courseCopyObject = requests.post(contentMigrationApiUrl, headers = header, params = payload)
-            courseCopyObject = makeApiCall (p1_header = header, p1_apiUrl = contentMigrationApiUrl, p1_payload = payload, apiCallType = "post")
+            courseCopyObject = makeApiCall (p1_header = p1_header, p1_apiUrl = contentMigrationApiUrl, p1_payload = payload, apiCallType = "post")
             
             ## Turn the text of the API call into a json object
             courseCopy = courseCopyObject.json()
@@ -525,7 +525,7 @@ def addOutcomeToCourse (targetCourseDataDict
             listSelectiveImportItemsApiUrl = f"{contentMigrationApiUrl}/{courseCopy['id']}/selective_data"
 
             ## Make a get request to the list items endpoint
-            listSelectiveImportItemsObject = requests.get(listSelectiveImportItemsApiUrl, headers = header)
+            listSelectiveImportItemsObject = requests.get(listSelectiveImportItemsApiUrl, headers = p1_header)
 
             ## If the API status code is anything other than 200 it is an error, so log it and skip
             if (listSelectiveImportItemsObject.status_code != 200):
@@ -550,7 +550,7 @@ def addOutcomeToCourse (targetCourseDataDict
             updateContentMigrationApiUrl = f"{contentMigrationApiUrl}/{courseCopy['id']}"
 
             ## Make a put request to the update content migration api url with the update content migration api payload
-            updateContentMigrationObject = requests.put(updateContentMigrationApiUrl, headers = header, params = updateContentMigrationApiPayload)
+            updateContentMigrationObject = requests.put(updateContentMigrationApiUrl, headers = p1_header, params = updateContentMigrationApiPayload)
 
             ## If the API status code is anything other than 200 it is an error, so log it and skip
             if (updateContentMigrationObject.status_code != 200):
@@ -610,7 +610,7 @@ def removeMissingOutcomes (p1_activeOutcomeCourseDf, p1_uniqueOutcomes, p1_outco
         error_handler (functionName, error)
 
 ## This function returns a dict with the course id of the course named after each outcome
-def getUniqueOutcomesAndOutcomeCoursesDict (p1_activeOutcomeCourseDf):
+def getUniqueOutcomesAndOutcomeCoursesDict (p1_activeOutcomeCourseDf, p2_header):
     functionName = "Get Unique Outcomes And Outcome Courses Dict"
     
     try:
@@ -622,7 +622,7 @@ def getUniqueOutcomesAndOutcomeCoursesDict (p1_activeOutcomeCourseDf):
         uniqueOutcomes = [outcome for outcome in outcomesDF.unique() if outcome]
 
         ## Open the relevant All_Canvas_Courses.csv as a df
-        allCanvasCoursesDF = pd.read_csv(f"{baseLocalInputPath}All_Canvas_Courses.csv")
+        allCanvasCoursesDF = pd.read_csv(createCoursesCSV(p2_header, p1_inputTerm = "All"))
         
         ## Replace all '​' in the long_name column with ''
         allCanvasCoursesDF['long_name'] = allCanvasCoursesDF['long_name'].str.replace('​', '')
@@ -680,6 +680,9 @@ def termOutcomeExporter(p1_inputTerm, p1_targetDesignator):
 
     try:    
 
+        ## Define the API Call header using the retreived Canvas Token
+        header = {'Authorization' : f"Bearer {canvasAccessToken}"}
+
         ## Define the target school year
         targetSchoolYear = None
 
@@ -699,6 +702,7 @@ def termOutcomeExporter(p1_inputTerm, p1_targetDesignator):
             retrieveDataForRelevantCommunication(
                 p2_inputTerm = p1_inputTerm
                 , p3_targetDesignator = p1_targetDesignator
+                , p1_header = header
                 )
             )
 
@@ -720,6 +724,7 @@ def termOutcomeExporter(p1_inputTerm, p1_targetDesignator):
             addOutcomeThread = threading.Thread(target=addOutcomeToCourse
                                                 , args=(row
                                                         , auxillaryDFDict
+                                                        , header
                                                         )
                                                 )
             

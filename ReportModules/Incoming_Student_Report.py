@@ -2,7 +2,7 @@
 # Last Updated by: Bryce Miller
 
 from datetime import datetime
-import paramiko, os, logging, sys, requests, json, re, threading, time
+import paramiko, traceback,  os, logging, sys, requests, json, re, threading, time
 import pandas as pd #External Download from https://pypi.org/project/pandas/
 import numpy as np
 
@@ -116,7 +116,7 @@ def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
     if (p1_ErrorLocation not in setOfFunctionsWithErrors):
         errorEmailApi.sendEmailError(p2_ScriptName = scriptName, p2_ScriptPurpose = scriptPurpose, 
                                      p2_ExternalRequirements = externalRequirements, 
-                                     p2_ErrorLocation = p1_ErrorLocation, p2_ErrorInfo = p1_ErrorInfo)
+                                     p2_ErrorLocation = p1_ErrorLocation, p2_ErrorInfo = f"{p1_ErrorInfo}: \n\n {traceback.format_exc()}")
         setOfFunctionsWithErrors.add(p1_ErrorLocation)
         ## Note that an error email was sent
         logger.error (f"     \nError Email Sent")
@@ -570,7 +570,7 @@ def studentTypeGetIncomingStudentsInfo(p1_targetOrientation, p1_slateFile, p1_in
                 if user["sis_user_id"]:
 
                     ## attempt to save the user's sis_user_id and the submission's submitted_at date
-                    try: ## Irregular #try clause, do not comment out in testing
+                    try: ## Irregular try clause, do not comment out in testing
                 
                         p1_targetOrientationFinalQuizSubmissionDatesAndIds[int(user["sis_user_id"])] = submission['finished_at']
                     
@@ -722,7 +722,7 @@ def studentTypeGetIncomingStudentsInfo(p1_targetOrientation, p1_slateFile, p1_in
         else:
             updatedSlateDataFile_remote_file_path = f'./Incoming//Canvas//Undergrad_canvas_data.csv'
 
-        try: ## Irregular #try clause, do not comment out in testing
+        try: ## Irregular try clause, do not comment out in testing
             # Upload the file
             sftp_client.put(updatedSlateFilePathWithName, updatedSlateDataFile_remote_file_path)
             logger.info("File uploaded successfully.")
