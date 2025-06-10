@@ -85,13 +85,13 @@ logError.setLevel(logging.ERROR)
 logError.setFormatter(FORMAT)
 logger.addHandler(logError)
 
-## The variable below holds a set of the functions that have had errors. This enables the error_handler function to only send
+## The variable below holds a set of the functions that have had errors. This enables the except function to only send
 ## an error email the first time the function triggers an error
 setOfFunctionsWithErrors = set()
 
 ## This function handles function errors
-def error_handler(p1_ErrorLocation, p1_ErrorInfo, sendOnce=True):
-    functionName = "error_handler"
+def  except(p1_ErrorLocation, p1_ErrorInfo, sendOnce=True):
+    functionName = "except"
     logger.error(f"\nA script error occurred while running {p1_ErrorLocation}. Error: {str(p1_ErrorInfo)}")
 
     ## If the function with the error has not already been processed send an email alert
@@ -123,7 +123,7 @@ def deleteCourse(p1_header, courseId):
             logger.warning(f"Failed to delete course with ID: {courseId}. Status code: {response.status_code}")
 
     except Exception as error:
-        error_handler(functionName, error)
+        except(functionName, error)
 
 ## This function reads the CSV file and deletes the listed courses
 def deleteListedCourses():
@@ -160,7 +160,7 @@ def deleteListedCourses():
             time.sleep(0.1)
 
     except Exception as error:
-        error_handler(functionName, error)
+        except(functionName, error)
 
 if __name__ == "__main__":
     ## Set working directory

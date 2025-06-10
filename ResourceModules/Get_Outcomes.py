@@ -1,11 +1,9 @@
 # Author: Bryce Miller - brycezmiller@nnu.edu
 # Last Updated by: Bryce Miller
 
-
-from Error_Email_API import errorEmailApi
 from datetime import datetime
 from Download_File import downloadFile
-import requests, time, json, os, logging, csv, re, io, pandas as pd
+import requests, time, json, os, logging, csv, re, io, sys, pandas as pd
 
 # Define the script name, purpose, and external requirements for logging and error reporting purposes
 scriptName = "Get_Outcomes"
@@ -38,6 +36,15 @@ while "Scripts TLC" not in os.listdir(PFRelativePath):
 
 ## Change the relative path to an absolute path
 PFAbsolutePath = f"{os.path.abspath(PFRelativePath)}\\"
+
+## Add Input Modules to the sys path
+sys.path.append(f"{PFAbsolutePath}Scripts TLC\\ResourceModules")
+sys.path.append(f"{PFAbsolutePath}Scripts TLC\\ActionModules")
+
+## Import local modules
+from Error_Email_API import errorEmailApi
+from Make_Api_Call import makeApiCall
+from Get_Accounts import termGetAccounts
 
 ## Local Path Variables
 baseLogPath = f"{PFAbsolutePath}Logs\\{scriptName}\\"
@@ -91,13 +98,13 @@ logError.setLevel(logging.ERROR)
 logError.setFormatter(FORMAT)
 logger.addHandler(logError)
 
-## The variable below holds a set of the functions that have had errors. This enables the error_handler function to only send
+## The variable below holds a set of the functions that have had errors. This enables the except function to only send
 ## an error email the first time the function triggeres an error
 setOfFunctionsWithErrors = set()
 
 ## This function handles function errors
 def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
-    functionName = "error_handler"
+    functionName = "except"
     logger.error (f"     \nA script error occured while running {p1_ErrorLocation}. " +
                      f"Error: {str(p1_ErrorInfo)}")
     ## If the function with the error has not already been processed send an email alert
@@ -123,8 +130,9 @@ def createOutcomeCSV(p1_header
     try:
         logger.info (f"     \n\nStarting {p1_inputAccount} Outcomes report")
         
-        ## Open the Canvas_Accounts.csv as a df
-        canvasAccountsDF = pd.read_csv(f"{outputPath}Canvas_Accounts.csv")
+        ## Retrieve the current Canvas accounts report as a DataFrame
+        canvasAccountsDF = pd.read_csv(termGetAccounts(p1_inputTerm))
+        #canvasAccountsDF = pd.read_csv(f"{outputPath}Canvas_Accounts.csv")
         
         ## Get the account ID of the desired account
         accountCanvasID = (1 if p1_inputAccount == "NNU"
@@ -197,7 +205,10 @@ def createOutcomeCSV(p1_header
         #payload = {"parameters[enrollment_term_id]":f"sis_term_id:{p1_inputTerm}"}
 
         ## Make the API call
-        report_object = requests.post(start_report_API_URL, headers = p1_header)#, params = payload)
+        #report_object = requests.post(start_report_API_URL, headers = p1_header)#, params = payload)
+
+        ## Make the api call using makeApiCall
+        report_object = makeApiCall(p1_header = p1_header, p1_apiUrl = start_report_API_URL, apiCallType = "post")
 
         ## Convert report_text_jsonObject recieved through the API call in json to a Python Dictionary
         report_text_jsonObject = json.loads(report_object.text)

@@ -115,14 +115,14 @@ logError.setLevel(logging.ERROR)
 logError.setFormatter(FORMAT)
 logger.addHandler(logError)
 
-## This variable enables the error_handler function to only send
+## This variable enables the except function to only send
 ## an error email the first time the function triggeres an error
 ## by tracking what functions have already been recorded as having errors
 setOfFunctionsWithErrors = set()
 
 ## This function handles function errors
 def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
-    functionName = "error_handler"
+    functionName = "except"
 
     ## Log the error
     logger.error (f"     \nA script error occured while running {p1_ErrorLocation}. " +
@@ -174,7 +174,7 @@ def makeApiCall (p1_header = {'Authorization' : f"Bearer {canvasAccessToken}"}
                 time.sleep(2)
                     
             ## If the api call type is a get
-            if apiCallType == "get":
+            if apiCallType.lower() == "get":
                     
                 ## If there is a p1_payload
                 if p1_payload:
@@ -196,7 +196,7 @@ def makeApiCall (p1_header = {'Authorization' : f"Bearer {canvasAccessToken}"}
                         )
                         
             ## If the api call type is a post
-            elif apiCallType == "post":
+            elif apiCallType.lower() == "post":
                     
                 ## If there is a p1_payload
                 if p1_payload:
@@ -212,7 +212,7 @@ def makeApiCall (p1_header = {'Authorization' : f"Bearer {canvasAccessToken}"}
                         )   
                         
             ## If the api call type is a put
-            elif apiCallType == "put":
+            elif apiCallType.lower() == "put":
 
                 ## If there is a p1_payload
                 if p1_payload:
@@ -223,7 +223,7 @@ def makeApiCall (p1_header = {'Authorization' : f"Bearer {canvasAccessToken}"}
                     apiObject = requests.put(url=p1_apiUrl, headers=p1_header)
 
             ## If the api call type is a delete
-            elif apiCallType == "delete":
+            elif apiCallType.lower() == "delete":
 
                 ## If there is a p1_payload
                 if p1_payload:
@@ -241,7 +241,7 @@ def makeApiCall (p1_header = {'Authorization' : f"Bearer {canvasAccessToken}"}
                         )   
                 
             ## If there is a next page and the current page has content
-            if "next" in apiObject.links and apiObject.json():
+            if hasattr(apiObject, 'links') and 'next' in getattr(apiObject, 'links', {}):
                     
                 ## Add the current page to the api object list
                 apiObjectList = [apiObject]
@@ -257,6 +257,8 @@ def makeApiCall (p1_header = {'Authorization' : f"Bearer {canvasAccessToken}"}
                                         
         except Exception as error: ## Irregular except clause, do not comment out in testing
             logger.warning(f"Error: {error} \n Occured when calling {p1_apiUrl}")
+
+
                             
         ## Increment the number of attempts
         outcomeViewApiAttempts += 1

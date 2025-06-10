@@ -103,13 +103,13 @@ logError.setLevel(logging.ERROR)
 logError.setFormatter(FORMAT)
 logger.addHandler(logError)
 
-## The variable below holds a set of the functions that have had errors. This enables the error_handler function to only send
+## The variable below holds a set of the functions that have had errors. This enables the except function to only send
 ## an error email the first time the function triggeres an error
 setOfFunctionsWithErrors = set()
 
 ## This function handles function errors
 def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
-    functionName = "error_handler"
+    functionName = "except"
     logger.error (f"     \nA script error occured while running {p1_ErrorLocation}. " +
                      f"Error: {str(p1_ErrorInfo)}")
     ## If the function with the error has not already been processed send an email alert
@@ -408,17 +408,18 @@ def studentTypeGetIncomingStudentsInfo(p1_targetOrientation, p1_slateFile, p1_in
                ## Change the relavent Canvas input path to the ongoing Grad Fall Term
                relaventCanvasInputPath = relaventCanvasInputPath.replace(p1_inputTerm[:2], f"GF")
 
-        ## Canvas input term
+        ## Define the default relevant canvas input term
         relaventCanvasInputTerm = relaventCanvasInputPath.split('\\')[5]
 
-        ## Get the path for the target orientation's canvas course file, updating the file if it is more than 3 hours old, by using termGetCourses
-        termRelaventCanvasCoursesFilePath = termGetCourses(relaventCanvasInputTerm)
+        ## Redefine the relevant canvas term as "Default Term" if "Graduate" in the target orientation as their orientation is not specific to a term
+        if "Graduate" in p1_targetOrientation or "GPS" in p1_targetOrientation:
+            relaventCanvasInputTerm = "Default Term"
 
-        ## Open the term relavent canvas courses file
-        termRelaventCanvasCoursesDF = pd.read_csv(termRelaventCanvasCoursesFilePath)
+        ## Retrieve (and update if neccessary) the term relavent canvas courses file path
+        orientationCourseTermLocationDf = pd.read_csv(termGetCourses(relaventCanvasInputTerm))
 
         ## Find the "canvas_course_id" by looking for the target orientation sis id in "course_id"
-        p1_targetOrientationCanvasCourseId = termRelaventCanvasCoursesDF.loc[termRelaventCanvasCoursesDF['course_id'] == p1_targetOrientation, 'canvas_course_id'].values[0]
+        p1_targetOrientationCanvasCourseId = orientationCourseTermLocationDf.loc[orientationCourseTermLocationDf['short_name'] == p1_targetOrientation, 'canvas_course_id'].values[0]
          
         ## Define the orientation course's base api url
         orientationCourseApiUrl = f"{CoreCanvasAPIUrl}courses/{p1_targetOrientationCanvasCourseId}"
@@ -750,10 +751,19 @@ def termGetIncomingStudentsInfo(inputTerm = ""):
 
         ## Define the incoming School Year input path
         incomingSchoolYearInputPath = f"{baseLocalInputPath}{targetSchoolYear}\\"
+
+        ## Define the fall, spring, or summer term word (fall if fa in input term)
+        termWord = "Fall" if "FA" in inputTerm else "Spring" if "SP" in inputTerm else "Summer"
                 
         ## Define the generic undergrad target orientation course
-        targetUndgOrientation = f"{inputTerm[:2]}{century}{inputTerm[2:]}_TUG_Orientation"
-        targetGradOrientation = f"{targetSchoolYear[:5]}{targetSchoolYear[:2]}{targetSchoolYear[5:]}_GPS_Orientation"
+        targetUndgOrientation = f"{termWord} {currentYear} - NNU Pre-Launch Orientation"
+        targetGradOrientation = targetGradOrientation = f"Graduate & Professional Student Hub"
+        
+        ## If the input term is in ["FA25", "GF25"] or is =< GS26 or SP26
+        if inputTerm in ["SP25", "GS25", "SU25", "SG25"]:
+
+            ## Set the targetUndgOrientation to the old Graduate & Professional Student Hub title
+            targetGradOrientation = f"{targetSchoolYear[:5]}{targetSchoolYear[:2]}{targetSchoolYear[5:]}_GPS_Orientation"
 
         ## Define the term specific output path
         incomingTermInputPath = f"{incomingSchoolYearInputPath}{inputTerm}\\Incoming\\"

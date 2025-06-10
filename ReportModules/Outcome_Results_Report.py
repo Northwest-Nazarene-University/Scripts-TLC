@@ -54,6 +54,8 @@ from Create_Sub_Account_Save_Path import determineDepartmentSavePath
 from Get_Outcomes import termGetOutcomes
 from Get_Outcome_Results import termGetOutcomeResults
 from Make_Api_Call import makeApiCall
+from Get_Active_Outcome_Courses import termGetActiveOutcomeCourses
+from Get_Enrollments import termGetEnrollments
 
 
 ## Local Path Variables
@@ -125,13 +127,13 @@ logError.setLevel(logging.ERROR)
 logError.setFormatter(FORMAT)
 logger.addHandler(logError)
 
-## The variable below holds a set of the functions that have had errors. This enables the error_handler function to only send
+## The variable below holds a set of the functions that have had errors. This enables the except function to only send
 ## an error email the first time the function triggeres an error
 setOfFunctionsWithErrors = set()
 
 ## This function handles function errors
 def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
-    functionName = "error_handler"
+    functionName = "except"
     logger.error (f"     \nA script error occured while running {p1_ErrorLocation}. " +
                      f"Error: {str(p1_ErrorInfo)}")
     ## If the function with the error has not already been processed send an email alert
@@ -161,7 +163,7 @@ def termCreateOutcomeComplianceReport(
 
     try:
 
-        ## If the p1_combinedTermOutcomeResultDf is not empty
+        ## If the p1_combinedTermoutcomeResultDF is not empty
         if not p2_outcomeResultDF.empty:
             
             ## Define a dict to hold the outcome result report
@@ -335,7 +337,7 @@ def termCreateOutcomeComplianceReport(
                                     | (p2_outcomeResultDF["learning outcome id"] == outcomeInfoDict["Outcome_Id"])
                                     )
                                 ]
-                            #targetCourseOutcomeResults = p1_combinedTermOutcomeResultDf[p1_combinedTermOutcomeResultDf["course name"] == course["Course_name"]]
+                            #targetCourseOutcomeResults = p1_combinedTermoutcomeResultDF[p1_combinedTermoutcomeResultDF["course name"] == course["Course_name"]]
 
                             ## Find the number of students with an outcome result after filtering to only contain rows that have a "learning outcome rating points" value
                             numOfStuWithOutcomeResults = targetCourseOutcomeResults.dropna(
@@ -1228,11 +1230,14 @@ def termProcessOutcomeResults(p1_inputTerm
         ## Remove the unicode character from the title column
         outcomesCsvDf['title'] = outcomesCsvDf['title'].str.replace('\u200b', '')
 
-        ## Define the path to the the active target designator outcome courses file
-        activeCanvasOutcomeCoursesPath = f"{localTermInputPath}{p1_inputTerm}_{p1_targetDesignator}_Active_Outcome_Courses.xlsx"
+        ## Retrieve the active Canvas Outcome Courses excel file as a df, updating it if necessary
+        activeCanvasOutcomeCoursesDf = pd.read_excel(termGetActiveOutcomeCourses(p1_inputTerm, p1_targetDesignator))
 
-        ## Open the target active target designator outcome courses file
-        activeCanvasOutcomeCoursesDf = pd.read_excel(activeCanvasOutcomeCoursesPath)
+        # ## Define the path to the the active target designator outcome courses file
+        # activeCanvasOutcomeCoursesPath = f"{localTermInputPath}{p1_inputTerm}_{p1_targetDesignator}_Active_Outcome_Courses.xlsx"
+
+        # ## Open the target active target designator outcome courses file
+        # activeCanvasOutcomeCoursesDf = pd.read_excel(activeCanvasOutcomeCoursesPath)
         
         ## Open the accounts csv as a df
         accountInfoDF = pd.read_csv(f"{baseLocalInputPath}Canvas_Accounts.csv")
@@ -1378,14 +1383,23 @@ def termProcessOutcomeResults(p1_inputTerm
                 ## Set the canvas id as the value for the outcome title in the uniqueOutcomeInfoDictOfDicts
                 uniqueOutcomeInfoDictOfDicts[outcomeTitle]["Outcome_Id"] = responseOjbect["outcome"]["id"]
 
-        ## Get the path to the current results from the account where the outcomes are stored
-        targetOutcomeResultsPathAndName = termGetOutcomeResults (p1_inputTerm, targetAccountName, p1_targetDesignator)
-        
-        ## Open the outcome result input path
-        outcomeResultDF = pd.read_csv(targetOutcomeResultsPathAndName)
+        ## Get the undergrad outcome results as a df
+        undgOutcomeResultsPathAndName = termGetOutcomeResults (p1_inputTerm, targetAccountName, p1_targetDesignator)
+
+        ## Read the undergrad outcome result input path as a df
+        undgOutcomeResultDF = pd.read_csv(undgOutcomeResultsPathAndName)
+
+        ## Get the grad term outcome results path and name
+        gradOutcomeResultsPathAndName = termGetOutcomeResults (relevantGradTerm, targetAccountName, p1_targetDesignator)
+
+        ## Read the grad outcome result input path as a df
+        gradOutcomeResultDF = pd.read_csv(gradOutcomeResultsPathAndName)
+
+        ## Combine the undg and grad outcome result dfs
+        targetOutcomeResultsDf = pd.concat([undgOutcomeResultDF, gradOutcomeResultDF], ignore_index=True)
         
         # Fill NA/NaN values with an empty string
-        outcomeResultDF["learning outcome name"].fillna("", inplace=True)
+        targetOutcomeResultsDf["learning outcome name"].fillna("", inplace=True)
 
         ## If the course's Outcome Area is GE
         if p1_targetDesignator == "GE":
@@ -1437,7 +1451,7 @@ def termProcessOutcomeResults(p1_inputTerm
             }
             
             ## Iterate through the outcome descriptions and add the descriptor word if applicable
-            for index, row in outcomeResultDF.iterrows():
+            for index, row in targetOutcomeResultsDf.iterrows():
 
                 ## Skip rows where the learning outcome rating is NaN
                 if pd.isna(row["learning outcome rating"]):
@@ -1450,7 +1464,7 @@ def termProcessOutcomeResults(p1_inputTerm
 
             ## Iterate through each row in the filtered term report df
             ## The contents of the following for was generated by Chat GPT as a clean up of my original code
-            for index, row in outcomeResultDF.iterrows():
+            for index, row in targetOutcomeResultsDf.iterrows():
                 
                 ## If there is no learning outcome rating points
                 ## Determine the rating points based on the rating
@@ -1477,17 +1491,17 @@ def termProcessOutcomeResults(p1_inputTerm
                         outcome_mastered = 0
         
                     ## Set the learning outcome rating points and mastered
-                    outcomeResultDF.at[index, "learning outcome rating points"] = rating_points
-                    outcomeResultDF.at[index, "learning outcome mastered"] = outcome_mastered
+                    targetOutcomeResultsDf.at[index, "learning outcome rating points"] = rating_points
+                    targetOutcomeResultsDf.at[index, "learning outcome mastered"] = outcome_mastered
                     
                     ## Fix any outcome name spelling errors
-                    outcomeResultDF.at[index, "learning outcome name"] = outcomeResultDF.at[index, "learning outcome name"].replace("S1", "SC1").replace("S2", "SC2").replace("S3", "SC3").replace("H1", "HU1").replace("H3", "HU3").replace("H4", "HU4").replace("H5", "HU5")
+                    targetOutcomeResultsDf.at[index, "learning outcome name"] = targetOutcomeResultsDf.at[index, "learning outcome name"].replace("S1", "SC1").replace("S2", "SC2").replace("S3", "SC3").replace("H1", "HU1").replace("H3", "HU3").replace("H4", "HU4").replace("H5", "HU5")
 
         ## If the course's Outcome Area is I-EDUC
         elif p1_targetDesignator == "I-EDUC":
             
             ## Iterate through each row in the filtered term report df
-            for index, row in outcomeResultDF.iterrows():
+            for index, row in targetOutcomeResultsDf.iterrows():
                 
                 ## If there is a rating points value
                 if pd.isna(row["learning outcome rating points"]):
@@ -1516,8 +1530,8 @@ def termProcessOutcomeResults(p1_inputTerm
                         outcome_mastered = 0
         
                     ## Set the learning outcome rating points and mastered
-                    outcomeResultDF.at[index, "learning outcome rating points"] = rating_points
-                    outcomeResultDF.at[index, "learning outcome mastered"] = outcome_mastered
+                    targetOutcomeResultsDf.at[index, "learning outcome rating points"] = rating_points
+                    targetOutcomeResultsDf.at[index, "learning outcome mastered"] = outcome_mastered
                     
                     ## Create a variable to hold the target unique outcome info dict
                     targetUniqueOutcomeInfoDict = None
@@ -1533,7 +1547,7 @@ def termProcessOutcomeResults(p1_inputTerm
                             break
 
                     ## Set the name of the outcome to the title paired with the id in the unique outcome info dict
-                    outcomeResultDF.at[
+                    targetOutcomeResultsDf.at[
                         index
                         , "learning outcome name"
                         ] = targetUniqueOutcomeInfoDict[
@@ -1541,10 +1555,10 @@ def termProcessOutcomeResults(p1_inputTerm
                             ]
 
         ## Open the term relevant enrollment file as a df
-        rawUndgEnrollmentDf = pd.read_csv(f"{localTermInputPath}{p1_inputTerm}_Canvas_Enrollments.csv")
+        rawUndgEnrollmentDf = pd.read_csv(termGetEnrollments(p1_inputTerm))
 
         ## Open the Grad relevent enrollment file as a df
-        rawGradEnrollmentDf = pd.read_csv(f"{localGradTermInputPath}{relevantGradTerm}_Canvas_Enrollments.csv")
+        rawGradEnrollmentDf = pd.read_csv(termGetEnrollments(relevantGradTerm))
         
         ## Define a rawTermEnrollmentDf by combining the rawUndgEnrollmentDf and rawGradEnrollmentDf
         rawTermEnrollmentDf = pd.concat([rawUndgEnrollmentDf, rawGradEnrollmentDf])
@@ -1569,7 +1583,7 @@ def termProcessOutcomeResults(p1_inputTerm
              , p1_schoolYear = schoolYear
              , p1_destinationFilePathDict = destinationFilePathDict
              , p1_uniqueOutcomeInfoDictOfDicts = uniqueOutcomeInfoDictOfDicts
-             , p1_outcomeResultDF = outcomeResultDF
+             , p1_outcomeResultDF = targetOutcomeResultsDf
              , p1_activeCanvasOutcomeCoursesDf = activeCanvasOutcomeCoursesDf
              , p1_accountInfoDF = accountInfoDF
              , p1_termEnrollmentDf = termEnrollmentDf

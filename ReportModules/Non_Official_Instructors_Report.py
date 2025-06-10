@@ -143,14 +143,14 @@ logError.setLevel(logging.ERROR)
 logError.setFormatter(FORMAT)
 logger.addHandler(logError)
 
-## This variable enables the error_handler function to only send
+## This variable enables the except function to only send
 ## an error email the first time the function triggeres an error
 ## by tracking what functions have already been recorded as having errors
 setOfFunctionsWithErrors = set()
 
 ## This function handles function errors
 def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
-    functionName = "error_handler"
+    functionName = "except"
 
     ## Log the error
     logger.error (f"     \nA script error occured while running {p1_ErrorLocation}. " +

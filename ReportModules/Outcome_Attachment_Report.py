@@ -126,14 +126,14 @@ logError.setLevel(logging.ERROR)
 logError.setFormatter(FORMAT)
 logger.addHandler(logError)
 
-## This variable enables the error_handler function to only send
+## This variable enables the except function to only send
 ## an error email the first time the function triggeres an error
 ## by tracking what functions have already been recorded as having errors
 setOfFunctionsWithErrors = set()
 
 ## This function handles function errors
 def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
-    functionName = "error_handler"
+    functionName = "except"
 
     ## Log the error
     logger.error (f"     \nA script error occured while running {p1_ErrorLocation}. " +
@@ -331,6 +331,105 @@ def rubricIsAttachedToAPublishedAssignmentCheck(p1_courseRubricApiUrl, p1_rubric
 
     return attachedToPublishedAssignment
 
+## This function 
+
+## This function Checks a course's rubrics for outcome alignments
+## and checks to see if the rubric is attached to a published assignment
+## Updating the p1_uniqueAttachedOutcomes dict to be true for the outcome
+## if the rubric is attached to a published assignment
+def checkRubricOutcomeAlignment(p1_row, p1_targetCourseSisId, p1_uniqueAttachedOutcomes, p1_uniqueAttachedOutcomesVendorGuidDict):
+    functionName = "Check Rubric Outcome Alignment"
+
+    try:
+        ## Define a dict to hold the rubric ids of rubrics with the desired outcomes with values of the outcomes that are attached
+        rubricsWithOutcomes = {}
+            
+        ## Define the course's API rubric call url
+        courseRubricApiUlr = CoreCanvasAPIUrl + "courses/sis_course_id:" + p1_targetCourseSisId + "/rubrics" + "?per_page=100"
+            
+        ## Make a variable to hold the course's rubric api object
+        courseRubricApiObject = makeApiCall(p1_header = header, p1_apiUrl = courseRubricApiUlr)
+            
+        ## Save the primary body of information retrieved by the API call
+        course_rubrics_api_call_text_jsonString = courseRubricApiObject.text
+        
+        ## Convert the json body of information into a Python Dictionary
+        course_rubrics_api_call_text_dict = json.loads(course_rubrics_api_call_text_jsonString)
+            
+        ## Go through each rubric in the text dict
+        for rubric in course_rubrics_api_call_text_dict:
+                
+            ## Go through each of the rubrics criterion
+            for criterion in rubric["data"]:
+
+                ## Define a refined criterion title and variable by replacing the unicode character
+                criterionTitle = criterion["title"].replace('\u200b', '') if "title" in criterion.keys() \
+                    else ""
+                criterionDescription = criterion["description"].replace('\u200b', '') if "description" in criterion.keys() \
+                    else ""
+
+                ## Define the target identifier for the outcome as the title if it exists and contains the outcome area, otherwise the description
+                targetOutcomeIdentifier = (criterionTitle 
+                                           if (criterionTitle 
+                                               and p1_row['Outcome Area'] in criterionTitle
+                                               ) 
+                                           else criterionDescription
+                                           )
+                
+                ## If the criterion is an outcome
+                if 'learning_outcome_id' in criterion.keys():
+
+                    ## If the title of the outcome is in uniqueAttachedOutcomes
+                    if targetOutcomeIdentifier in p1_uniqueAttachedOutcomes.keys():
+
+                        ## Add the rubric id as a key and the outcome as a value in a list to the rubrics with outcomes dict, appending the outcome if the key already exists
+                        rubricsWithOutcomes.setdefault(rubric["id"], []).append(targetOutcomeIdentifier)
+
+                        
+                    ## Otherwise check to see if the vendor id matches
+                    else:    
+
+                        ## Define a Get outcome api url
+                        outcomeApiUrl = f"{CoreCanvasAPIUrl}outcomes/{criterion['learning_outcome_id']}"
+
+                        ## Make a variable to hold the outcome api object
+                        outcomeApiObject = makeApiCall(p1_header = header, p1_apiUrl = outcomeApiUrl)
+                        
+                        ## Save the primary body of information retrieved by the API call
+                        outcomeApiText = outcomeApiObject.text
+                        
+                        ## Convert the json body of information into a Python Dictionary  
+                        outcomeApiDict = json.loads(outcomeApiText)
+
+                        ## Define a refined outcome title variable by replacing the unicode character
+                        outcomeTitle = outcomeApiDict["title"].replace('\u200b', '')
+                
+                        ## If the vendor_guid of the outcome is in the keys of the uniqueAttachedOutcomesVendorGuidDict or if the title of the outcome is in uniqueAttachedOutcomes
+                        if outcomeApiDict["vendor_guid"] in p1_uniqueAttachedOutcomesVendorGuidDict.values():
+
+                            ## Add the rubric id as a key and the outcome as a value in a list to the rubrics with outcomes dict, appending the outcome if the key already exists
+                            rubricsWithOutcomes.setdefault(rubric["id"], []).append(outcomeTitle)
+
+                    
+        ## For each rubric in the rubrics with outcomes list 
+        for rubric_id in rubricsWithOutcomes:
+            
+            ## If the rubric is attached to a published assignment
+            if rubricIsAttachedToAPublishedAssignmentCheck(courseRubricApiUlr, rubric_id):
+
+                ## For each outcome in the list of outcomes attached to the rubric
+                for outcome in rubricsWithOutcomes[rubric_id]:
+
+                    ## If the outcome's value in the unique outcomes attached dict is still false
+                    if p1_uniqueAttachedOutcomes[outcome] == False:
+
+                        ## Set the value to true
+                        p1_uniqueAttachedOutcomes[outcome] = True
+
+    ## If there is an error
+    except Exception as error:
+        error_handler (functionName, error)
+
 ## This function checks the rubrics in each course on the list to see which, if any, have the required outcome/s 
 ## and if those rubrics are attached to a published assignment. It adds the course to the naughty list if any of 
 ## these checks come back false
@@ -412,92 +511,16 @@ def outcomeAttachmentReport(row, p1_termLocalOutputPath, p1_outcomesLocationPath
         ## Make a dict with the outcome titles as keys and the vendor_guids as values
         uniqueAttachedOutcomesVendorGuidDict = {row['title']: row['vendor_guid'] for index, row in outcomesDF.iterrows()}
         
-        ## Define a dict to hold the rubric ids of rubrics with the desired outcomes with values of the outcomes that are attached
-        rubricsWithOutcomes = {}
-            
-        ## Define the course's API rubric call url
-        courseRubricApiUlr = CoreCanvasAPIUrl + "courses/sis_course_id:" + targetCourseSisId + "/rubrics" + "?per_page=100"
-            
-        ## Make a variable to hold the course's rubric api object
-        courseRubricApiObject = makeApiCall(p1_header = header, p1_apiUrl = courseRubricApiUlr)
-            
-        ## Save the primary body of information retrieved by the API call
-        course_rubrics_api_call_text_jsonString = courseRubricApiObject.text
-        
-        ## Convert the json body of information into a Python Dictionary
-        course_rubrics_api_call_text_dict = json.loads(course_rubrics_api_call_text_jsonString)
-            
-        ## Go through each rubric in the text dict
-        for rubric in course_rubrics_api_call_text_dict:
-                
-            ## Go through each of the rubrics criterion
-            for criterion in rubric["data"]:
-
-                ## Define a refined criterion title and variable by replacing the unicode character
-                criterionTitle = criterion["title"].replace('\u200b', '') if "title" in criterion.keys() \
-                    else ""
-                criterionDescription = criterion["description"].replace('\u200b', '') if "description" in criterion.keys() \
-                    else ""
-
-                ## Define the target identifier for the outcome as the title if it exists and contains the outcome area, otherwise the description
-                targetOutcomeIdentifier = (criterionTitle 
-                                           if (criterionTitle 
-                                               and row['Outcome Area'] in criterionTitle
-                                               ) 
-                                           else criterionDescription
-                                           )
-                
-                ## If the criterion is an outcome
-                if 'learning_outcome_id' in criterion.keys():
-
-                    ## If the title of the outcome is in uniqueAttachedOutcomes
-                    if targetOutcomeIdentifier in uniqueAttachedOutcomes.keys():
-
-                        ## Add the rubric id as a key and the outcome as a value in a list to the rubrics with outcomes dict, appending the outcome if the key already exists
-                        rubricsWithOutcomes.setdefault(rubric["id"], []).append(targetOutcomeIdentifier)
-
-                        
-                    ## Otherwise check to see if the vendor id matches
-                    else:    
-
-                        ## Define a Get outcome api url
-                        outcomeApiUrl = f"{CoreCanvasAPIUrl}outcomes/{criterion['learning_outcome_id']}"
-
-                        ## Make a variable to hold the outcome api object
-                        outcomeApiObject = makeApiCall(p1_header = header, p1_apiUrl = outcomeApiUrl)
-                        
-                        ## Save the primary body of information retrieved by the API call
-                        outcomeApiText = outcomeApiObject.text
-                        
-                        ## Convert the json body of information into a Python Dictionary  
-                        outcomeApiDict = json.loads(outcomeApiText)
-
-                        ## Define a refined outcome title variable by replacing the unicode character
-                        outcomeTitle = outcomeApiDict["title"].replace('\u200b', '')
-                
-                        ## If the vendor_guid of the outcome is in the keys of the uniqueAttachedOutcomesVendorGuidDict or if the title of the outcome is in uniqueAttachedOutcomes
-                        if outcomeApiDict["vendor_guid"] in uniqueAttachedOutcomesVendorGuidDict.values():
-
-                            ## Add the rubric id as a key and the outcome as a value in a list to the rubrics with outcomes dict, appending the outcome if the key already exists
-                            rubricsWithOutcomes.setdefault(rubric["id"], []).append(outcomeTitle)
-
-                    
-        ## For each rubric in the rubrics with outcomes list 
-        for rubric_id in rubricsWithOutcomes:
-            
-            ## If the rubric is attached to a published assignment
-            if rubricIsAttachedToAPublishedAssignmentCheck(courseRubricApiUlr, rubric_id):
-
-                ## For each outcome in the list of outcomes attached to the rubric
-                for outcome in rubricsWithOutcomes[rubric_id]:
-
-                    ## If the outcome's value in the unique outcomes attached dict is still false
-                    if uniqueAttachedOutcomes[outcome] == False:
-
-                        ## Set the value to true
-                        uniqueAttachedOutcomes[outcome] = True
+        ## Check the rubrics in the course for the desired outcomes
+        checkRubricOutcomeAlignment(row, targetCourseSisId, uniqueAttachedOutcomes, uniqueAttachedOutcomesVendorGuidDict)
 
         ## If any of the unique outcomes attached to the course are still false
+        #if False in uniqueAttachedOutcomes.values():
+
+            ## Check the new quizzes in the course for the desired outcomes
+
+
+        ## If any of the unique outcomes attached to the course are continue to be false after checking the rubrics and quizz
         if False in uniqueAttachedOutcomes.values():
             
             ## Make a list of the outcomes that are still false

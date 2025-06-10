@@ -140,14 +140,14 @@ logError.setLevel(logging.ERROR)
 logError.setFormatter(FORMAT)
 logger.addHandler(logError)
 
-## This variable enables the error_handler function to only send
+## This variable enables the except function to only send
 ## an error email the first time the function triggeres an error
 ## by tracking what functions have already been recorded as having errors
 setOfFunctionsWithErrors = set()
 
 ## This function handles function errors
 def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
-    functionName = "error_handler"
+    functionName = "except"
 
     ## Log the error
     logger.error (f"     \nA script error occured while running {p1_ErrorLocation}. " +
@@ -233,43 +233,6 @@ def createOutcomeEmailBody (p3_relevantEmail
 
     ## Set the emailbodysignature to Client Email Signature
     emailBodyDict["signature"] = p1_emailDetails["Client Email Signature"]
-    
-    # ## If the relevant email is a course start email and GE is in the outcome
-    # if "GE" in p1_outcome:
-    #     emailBodyDict["signature"] = """<p>Sincerely, 
-    #     <br> The General Education Council</p>
-    #     <span style="font-weight: bold;">Catherine Becker, Ph.D.</span>
-    #     <br>General Education Council Chair
-    #     <br>Associate Professor of English
-    #     <br>Northwest Nazarene University
-    #     """
-    
-    # ## If the relevant email is a course start email and EDUC is in the outcome
-    # elif "I-EDUC" in p1_outcome:
-        
-    #     emailBodyDict["signature"] = """<p>Sincerely, 
-    #     <br>Holly Ripley  Ed.S., M.Ed.
-    #     <br>Chair, Education Department
-    #     <br>Associate Professor of Education
-    #     <br>Director, Accelerated Certification in Education (ACE)
-    #     <br>Northwest Nazarene University
-    #     <br>208-467-8621
-    #     <br><br><a href='https://outlook.office.com/bookwithme/user/ab329a6a861642e8929104093bb4d929@nnu.edu?anonymous&ep=signature' target='_blank'>Book time to meet with me</a>
-    #     </p>
-    #     """
-        
-    # ## Else if the outcome is an ENGR
-    # elif "ENGR" in p1_outcome:    
-        
-    #     ## Define the signature
-    #     emailBodyDict["signature"] = """<p>Duke M Bulanon, PhD, PE
-    #     <br>Professor
-    #     <br>Department of Engineering and Physics
-    #     <br>Northwest Nazarene University
-    #     <br>Nampa, ID 83686
-    #     <br>Tel no 208 467 8047
-    #     </p>
-    #     """
 
     ## If the relevant email is a course start email and GE is in the outcome
     if ("Course Start" in p3_relevantEmail
@@ -620,7 +583,7 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
                     
                         ## Make a list of the unique outcomes that are not blank 
                         ## and a dict to hold the course id of the course named after each outcome
-                        uniqueOutcomes, outcomeCourseDict = getUniqueOutcomesAndOutcomeCoursesDict(completeActiveCanvasCoursesDF)
+                        uniqueOutcomes, outcomeCourseDict = getUniqueOutcomesAndOutcomeCoursesDict(completeActiveCanvasCoursesDF, header)
 
                         ## Remove any outcomes that don't have corresponding courses
                         auxillaryDFDict["Active Outcome Courses DF"] = removeMissingOutcomes (auxillaryDFDict["Active Outcome Courses DF"], uniqueOutcomes, outcomeCourseDict)
@@ -665,7 +628,7 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
                             relevantEmailList.append("Associated Course Outcomes: Midterm Reminder")
 
                 ## Otherwise, if it is the Monday of the week before its final week (e.g. week 15 in a 16 week course)
-                elif (row['Course Week'] == (row["Course Final Week"] - 1)
+                elif (row['Course Week'] == (row["Course Final Week"] -1)
                       and currentDate.weekday() == 0
                       ):
 
@@ -739,26 +702,26 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
 ## For testing
 if __name__ == "__main__":
      
-    # craftAndSendRelevantEmail (p2_relevantEmail="Associated Course Outcomes: Course Start Information"
-    #                            ,p2_row = {'Term': 'FA24'
-    #                                       , 'Outcome Area': 'G-EDUC'
-    #                                       , 'Course_sis_id': 'SP2024_ENGL4980_01'
-    #                                       , 'Course_name': 'SENIOR SEMINAR SP2024_ENGL4980_01'
-    #                                       , 'Account_id': 'U_LLIT'
-    #                                       , 'Number_of_students': 7
-    #                                       , 'Outcome 1': 'I-EDUC_HU2_U2024'
-    #                                       , 'Outcome 2': None
-    #                                       , 'Instructor_#1_ID': 70009
-    #                                       , 'Instructor_#1_name': 'Catherine Becker'
-    #                                       , 'Instructor_#1_email': 'brycezmiller@nnu.edu'
-    #                                       #, 'Instructor_#2_name': 'Dale Hamilton'
-    #                                       },
-    #                             p3_inputTerm="FA24")
+    craftAndSendRelevantEmail (p2_relevantEmail="Associated Course Outcomes: Course Start Information"
+                               ,p2_row = {'Term': 'FA24'
+                                          , 'Outcome Area': 'GE'
+                                          , 'Course_sis_id': 'SP2025_ENGL3070W_01'
+                                          , 'Course_name': 'PROFESSIONL/TECHNICAL WRITING SP2025_ENGL3070W_01'
+                                          , 'Account_id': 'NNU'
+                                          , 'Number_of_students': 7
+                                          , 'Outcome 1': 'GE_IP2_V2.0'
+                                          , 'Outcome 2': None
+                                          , 'Instructor_#1_ID': 63232
+                                          , 'Instructor_#1_name': 'Jane Doe'
+                                          , 'Instructor_#1_email': 'tlc@nnu.edu'
+                                          #, 'Instructor_#2_name': 'John Doe'
+                                          },
+                                p3_inputTerm="FA24")
     
     ## Get an input term and start the term outcome email function
-    termDetermineAndPerformRelevantActions (
-        p1_inputTerm = input("Enter the desired term in four character format (FA20, SU20, SP20): ")
-        , p1_targetDesignator = input("Enter the desired target designator (GE, I-EDUC, U-ENGR): ")
-        )
+    # termDetermineAndPerformRelevantActions (
+    #     p1_inputTerm = input("Enter the desired term in four character format (FA20, SU20, SP20): ")
+    #     , p1_targetDesignator = input("Enter the desired target designator (GE, I-EDUC, U-ENGR): ")
+    #     )
 
     input("Press enter to exit")

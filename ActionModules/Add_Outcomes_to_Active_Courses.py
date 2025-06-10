@@ -65,6 +65,8 @@ sys.path.append(f"{PFAbsolutePath}Scripts TLC\\ActionModules")
 from Error_Email_API import errorEmailApi
 from Make_Api_Call import makeApiCall
 from Get_Courses import createCoursesCSV
+from Get_Active_Outcome_Courses import create_csv_of_active_Outcome_courses
+from Get_Terms import termGetTerms
 
 ## Local Path Variables
 baseLogPath = f"{PFAbsolutePath}Logs\\{scriptName}\\"
@@ -126,14 +128,14 @@ logError.setLevel(logging.ERROR)
 logError.setFormatter(FORMAT)
 logger.addHandler(logError)
 
-## This variable enables the error_handler function to only send
+## This variable enables the except function to only send
 ## an error email the first time the function triggeres an error
 ## by tracking what functions have already been recorded as having errors
 setOfFunctionsWithErrors = set()
 
 ## This function handles function errors
 def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
-    functionName = "error_handler"
+    functionName = "except"
 
     ## Log the error
     logger.error (f"     \nA script error occured while running {p1_ErrorLocation}. " +
@@ -198,15 +200,16 @@ def retrieveDataForRelevantCommunication (p2_inputTerm
             
         ## Define a school year related path
         schoolYearPath = f"{baseLocalInputPath}{auxillaryDataDict['Target School Year']}\\"
-        
-        ## Define a term related path
-        termPath = f"{schoolYearPath}{p2_inputTerm}\\"
 
-        ## Define the active outcome courses path
-        activeOutcomeCoursesPath = f"{termPath}{p2_inputTerm}_{p3_targetDesignator}_Active_Outcome_Courses.xlsx"
+        ## Define the relevant grad term
+        relevantGradTerm = p2_inputTerm.replace("FA", "GF").replace("SP", "GS").replace("SU", "SG")
+        
+        ## Define the term related paths
+        undgTermPath = f"{schoolYearPath}{p2_inputTerm}\\"
+        gradTermPath = f"{schoolYearPath}{relevantGradTerm}\\"
 
         ## Retrieve the csv of Active GE courses which includes course code, required outcome/s, and the relevant instructor name/s, id/s, and email/s
-        rawActiveOutcomeCourseDf = pd.read_excel(activeOutcomeCoursesPath)
+        rawActiveOutcomeCourseDf = pd.read_excel(create_csv_of_active_Outcome_courses(p2_inputTerm, p3_targetDesignator))
 
         ## If the raw active outcome course df is empty
         if rawActiveOutcomeCourseDf.empty:
@@ -237,9 +240,6 @@ def retrieveDataForRelevantCommunication (p2_inputTerm
 
         ## Retrieve the Undg csv of term related Canvas courses from the term path
         rawTermUndgCanvasCoursesDF = pd.read_csv(createCoursesCSV(p1_header, p2_inputTerm))
-
-        ## Determine the grad term
-        relevantGradTerm = p2_inputTerm.replace("FA", "GF").replace("SP", "GS").replace("SU", "SG")
 
         ## Retrieve the grad csv of term related Canvas courses from the term path
         rawTermGradCanvasCoursesDF = pd.read_csv(createCoursesCSV(p1_header, relevantGradTerm))
@@ -297,7 +297,7 @@ def retrieveDataForRelevantCommunication (p2_inputTerm
             rawCompleteActiveCanvasCoursesDF.at[index, "Parent_Course_sis_id"] = row["Parent_Course_sis_id"]
 
         ## Retrieve the all terms file
-        allCanvasTermsDf = pd.read_csv(f"{baseLocalInputPath}Canvas_Terms.csv")
+        allCanvasTermsDf = pd.read_csv(termGetTerms(p2_inputTerm))
 
         ## Drop the temporary columns
         rawCompleteActiveCanvasCoursesDF.drop(columns=['start_date_sis', 'end_date_sis'], inplace=True)
@@ -370,7 +370,7 @@ def retrieveDataForRelevantCommunication (p2_inputTerm
             return completeActiveCanvasCoursesDF, auxillaryDFDict
         
         ## Define the term related path to the courses without attached outcomes report 
-        outcomeCoursesWithoutAttachmentPath = f"{termPath}{p2_inputTerm}_{p3_targetDesignator}_Courses_Without_Required_Outcome_Attached.csv"
+        outcomeCoursesWithoutAttachmentPath = f"{undgTermPath}{p2_inputTerm}_{p3_targetDesignator}_Courses_Without_Required_Outcome_Attached.csv"
 
         ## If there is a courses without attached outcomes report for this term
         if os.path.exists(outcomeCoursesWithoutAttachmentPath):
@@ -385,7 +385,7 @@ def retrieveDataForRelevantCommunication (p2_inputTerm
             auxillaryDFDict["Outcome Courses Without Attachments DF"] = pd.DataFrame()
 
         ## Define the term related path to the courses without outcome data report
-        outcomeCoursesWithoutDataPath = f"{termPath}{p2_inputTerm}_{p3_targetDesignator}_Outcome_Results_Course_Data.xlsx"
+        outcomeCoursesWithoutDataPath = f"{undgTermPath}{p2_inputTerm}_{p3_targetDesignator}_Outcome_Results_Course_Data.xlsx"
 
         ## If there is a file at f"{baseLocalInputPath}{targetSchoolYear}\\{p2_inputTerm}\\{p2_inputTerm}_Courses_Without_Required_Outcome_Attached.csv"
         if os.path.exists(outcomeCoursesWithoutDataPath):

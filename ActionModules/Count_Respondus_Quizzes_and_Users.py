@@ -2,17 +2,16 @@
 # Last Updated by: Bryce Miller
 
 import traceback, os, sys, logging, requests, threading, time, pandas as pd
-import pandas as pd
 from datetime import datetime
 
 # Define the script name, purpose, and external requirements for logging and error reporting purposes
-scriptName = "Change_Term_For_Listed_Courses"
+scriptName = "Count_Respondus_Quizzes"
 
 scriptPurpose = r"""
-This script reads a CSV file containing Canvas course IDs and changes the term for each course using the Canvas API.
+This script counts the number of Respondus quizzes and the number of unique students who have submitted to these quizzes in Canvas courses.
 """
 externalRequirements = r"""
-To function properly, this script requires a valid access header and URL, and a CSV file named "courses_to_set_term.csv" located in the Canvas Resources directory.
+To function properly, this script requires a valid access header and URL, and a CSV file named "courses_to_check.csv" located in the Canvas Resources directory.
 """
 
 ## Date Variables
@@ -110,31 +109,98 @@ def  except(p1_ErrorLocation, p1_ErrorInfo, sendOnce=True):
     else:
         logger.error(f"\nError email already sent")
 
-## This function sets the term for a course given its Canvas course ID and term ID
-def setCourseTerm(p1_header, p1_courseId, p1_termId):
-    functionName = "setCourseTerm"
+## This function counts Respondus quizzes and students for a given course
+def countRespondusQuizzes(p1_header, p1_courseId, result_dict):
+    functionName = "countRespondusQuizzes"
     try:
-        set_term_url = f"{CoreCanvasAPIUrl}courses/{p1_courseId}"
-        payload = {"course": {"enrollment_term_id": p1_termId}}
-        response = makeApiCall(p1_header=p1_header, p1_apiUrl=set_term_url, p1_payload=payload, apiCallType="put")
+        quizzes_count = 0
+        students_count = set()
 
+        ## Get the assignments for the course
+        assignments_url = f"{CoreCanvasAPIUrl}courses/{p1_courseId}/assignments"
+        courseAssignmentsParams = {'search_term': 'Respondus', 'include[]': 'submission'}
+        response = makeApiCall(p1_header=p1_header, p1_apiUrl=assignments_url, p1_payload=courseAssignmentsParams, apiCallType="get")
+
+        ## If the response is successful
         if response.status_code == 200:
-            logger.info(f"Successfully set term for course with ID: {p1_courseId}")
+
+            ## Convert the response to JSON
+            assignments = response.json()
+
+            ## For each assignment in the course
+            for assignment in assignments:
+
+                ## If the assignment name contains "Respondus"
+                if "Respondus" in assignment['name']:
+
+                    ## Save the assignment ID
+                    assignment_id = assignment['id']
+
+                    ## Save the assignment URL
+                    assignment_details_url = f"{CoreCanvasAPIUrl}courses/{p1_courseId}/assignments/{assignment_id}"
+
+                    ## Make an API call to get the assignment details
+                    assignment_response = makeApiCall(p1_header=p1_header, p1_apiUrl=assignment_details_url, apiCallType="get")
+
+                    ## If the response is successful
+                    if assignment_response.status_code == 200:
+
+                        ## Convert the response to JSON
+                        assignment_details = assignment_response.json()
+
+                        ## If the assignment is published and has submitted submissions
+                        if assignment_details['published'] and assignment_details['has_submitted_submissions']:
+                            quizzes_count += 1
+
+                            ## If the length of students_count is 0
+                            if len(students_count) == 0:
+
+                                ## Define an api url to get the course's enrollments
+                                enrollments_url = f"{CoreCanvasAPIUrl}courses/{p1_courseId}/enrollments"
+
+                                 ## Define a payload to get only student enrollments
+                                enrollments_params = {'type[]': 'StudentEnrollment'}
+
+                                ## Make an API call to get the course's enrollments
+                                enrollments_response = makeApiCall(p1_header=p1_header, p1_apiUrl=enrollments_url, p1_payload=enrollments_params, apiCallType="get")
+
+                                ## If the response is successful
+                                if enrollments_response.status_code == 200:
+
+                                    ## Convert the response to JSON
+                                    enrollments = enrollments_response.json()
+
+                                    ## For each enrollment in the course
+                                    for enrollment in enrollments:
+
+                                        ## If the enrollment is active
+                                        if enrollment['enrollment_state'] == 'active':
+
+                                            ## Get the user ID from the enrollment
+                                            user_id = enrollment['user_id']
+
+                                            ## Add the user ID to the students_count set
+                                            students_count.add(user_id)
+
         else:
-            logger.warning(f"Failed to set term for course with ID: {p1_courseId}. Status code: {response.status_code}")
+            logger.warning(f"Failed to get assignments for course with ID: {p1_courseId}. Status code: {response.status_code}")
+
+        result_dict[p1_courseId] = (quizzes_count, students_count)
 
     except Exception as error:
         except(functionName, error)
+        #result_dict[p1_courseId] = (0, 0)
 
-## This function reads the CSV file and sets the term for the listed courses
-def setListedCoursesTerm():
-    functionName = "setListedCoursesTerm"
+## This function reads the CSV file and counts Respondus quizzes and students for the listed courses
+def countListedCoursesRespondusQuizzes():
+    functionName = "countListedCoursesRespondusQuizzes"
     try:
         targetCoursesCsvFilePath = f"{baseInputPath}Target_Canvas_Course_Ids.csv"
         header = {'Authorization': f"Bearer {canvasAccessToken}"}
         
         ## Define the necessary thread list
-        ongoingSetTermThreads = []
+        ongoingCountThreads = []
+        result_dict = {}
 
         ## Read the CSV file using pandas
         rawTargetCoursesDf = pd.read_csv(targetCoursesCsvFilePath)
@@ -148,24 +214,29 @@ def setListedCoursesTerm():
             ## Get the course id from the row
             courseId = str(row["canvas_course_id"]).replace('.0', '')
 
-            ## Get the term id from the row
-            termId = str(row["canvas_term_id"]).replace('.0', '')
-
-            ## Create a thread to set the term for the course
-            setTermThread = threading.Thread(target=setCourseTerm, args=(header, courseId, termId))
+            ## Create a thread to count Respondus quizzes for the course
+            countThread = threading.Thread(target=countRespondusQuizzes, args=(header, courseId, result_dict))
 
             ## Start the thread
-            setTermThread.start()
+            countThread.start()
 
-            ## Add the thread to the ongoing set term threads list
-            ongoingSetTermThreads.append(setTermThread)
+            ## Add the thread to the ongoing count threads list
+            ongoingCountThreads.append(countThread)
 
             ## Sleep for a short time to avoid overloading the server
             time.sleep(0.1)
 
-        ## Check if all ongoing set term threads have completed
-        for thread in ongoingSetTermThreads:
+        ## Check if all ongoing count threads have completed
+        for thread in ongoingCountThreads:
             thread.join()
+
+        total_quizzes = sum(result[0] for result in result_dict.values())
+        total_students = set()
+        for result in result_dict.values():
+            total_students.update(result[1])
+
+        logger.info(f"Total Respondus quizzes: {total_quizzes}")
+        logger.info(f"Total unique students: {len(total_students)}")
 
     except Exception as error:
         except(functionName, error)
@@ -174,7 +245,7 @@ if __name__ == "__main__":
     ## Set working directory
     os.chdir(os.path.dirname(__file__))
 
-    ## Set the term for the listed courses
-    setListedCoursesTerm()
+    ## Count Respondus quizzes for the listed courses
+    countListedCoursesRespondusQuizzes()
 
     input("Press enter to exit")

@@ -2,7 +2,6 @@
 # Last Updated by: Bryce Miller
 
 
-from Error_Email_API import errorEmailApi
 from datetime import datetime
 from Download_File import downloadFile
 import requests, time, json, os, logging, sys
@@ -38,6 +37,14 @@ while "Scripts TLC" not in os.listdir(PFRelativePath):
 
 ## Change the relative path to an absolute path
 PFAbsolutePath = f"{os.path.abspath(PFRelativePath)}\\"
+
+## Add Input Modules to the sys path
+sys.path.append(f"{PFAbsolutePath}Scripts TLC\\ResourceModules")
+sys.path.append(f"{PFAbsolutePath}Scripts TLC\\ActionModules")
+
+## Import local modules
+from Error_Email_API import errorEmailApi
+from Make_Api_Call import makeApiCall
 
 ## Local Path Variables
 baseLogPath = f"{PFAbsolutePath}Logs\\{scriptName}\\"
@@ -94,13 +101,13 @@ logError.setLevel(logging.ERROR)
 logError.setFormatter(FORMAT)
 logger.addHandler(logError)
 
-## The variable below holds a set of the functions that have had errors. This enables the error_handler function to only send
+## The variable below holds a set of the functions that have had errors. This enables the except function to only send
 ## an error email the first time the function triggeres an error
 setOfFunctionsWithErrors = set()
 
 ## This function handles function errors
 def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
-    functionName = "error_handler"
+    functionName = "except"
     logger.error (f"     \nA script error occured while running {p1_ErrorLocation}. " +
                      f"Error: {str(p1_ErrorInfo)}")
     ## If the function with the error has not already been processed send an email alert
@@ -121,12 +128,15 @@ def createAccountsCSV(p1_header, attempt = 0):
     functionName = "createAccountsCSV"
     try:
         logger.info (f"     \nStarting  Account report")
+
+        ## Define the target destination for the .csv file
+        targetDestination = f"{outputPath}\\Canvas_Accounts.csv"
         
         ## If the account file exists
-        if os.path.exists(f"{outputPath}\\Canvas_Accounts.csv"):
+        if os.path.exists(targetDestination):
             
             ## Get its last moddifed timestamp
-            targetFileTimestamp = os.path.getmtime(f"{outputPath}\\Canvas_Accounts.csv")
+            targetFileTimestamp = os.path.getmtime(targetDestination)
 
             ## Convert the timestamp to datetime
             targetFileDateTime = datetime.fromtimestamp(targetFileTimestamp)
@@ -139,7 +149,7 @@ def createAccountsCSV(p1_header, attempt = 0):
 
                 ## logger.info that the file is up to date and return
                 logger.info (f"     \n Account CSV is up to date")
-                return
+                return targetDestination
         
         ## Define and initialize the api url for starting reports
         start_report_API_URL = CoreCanvasAPIUrl + "accounts/1/reports/provisioning_csv"
@@ -150,8 +160,11 @@ def createAccountsCSV(p1_header, attempt = 0):
         ## Initilize payload with one of the relavent accounts
         payload = {'parameters[accounts]':'true'}
 
+        ## Make the api call using makeApiCall
+        report_object = makeApiCall(p1_header = p1_header, p1_apiUrl = start_report_API_URL, p1_payload = payload, apiCallType = "post")
+
         ## Make the API call
-        report_object = requests.post(start_report_API_URL, headers = p1_header, params = payload)
+        #report_object = requests.post(start_report_API_URL, headers = p1_header, params = payload)
 
         ## Convert report_text_jsonObject recieved through the API call in json to a Python Dictionary
         report_text_jsonObject = json.loads(report_object.text)
@@ -163,8 +176,11 @@ def createAccountsCSV(p1_header, attempt = 0):
         ## Define the status check api url
         status_report_API_URL = CoreCanvasAPIUrl + "accounts/1/reports/provisioning_csv/" + str(report_ID)
 
-        ## Make the status api call
-        status_object = requests.get(status_report_API_URL, headers = p1_header)
+        ## Make the status api call using makeApiCall
+        status_object = makeApiCall(p1_header = p1_header, p1_apiUrl = status_report_API_URL, apiCallType = "get",)
+
+        ## Make the API call
+        #status_object = requests.get(status_report_API_URL, headers = p1_header)
 
         ## Convert status_text_jsonObject from json to a Python Dictionary
         status_text_jsonObject = json.loads(status_object.text)
@@ -175,9 +191,12 @@ def createAccountsCSV(p1_header, attempt = 0):
             ## Wait 10 seconds
             logger.info ("\n" + f" Accounts report is incomplete. Waiting 10 seconds")
             time.sleep(10)
+
+            ## Make the status api call using makeApiCall
+            status_object = makeApiCall(p1_header = p1_header, p1_apiUrl = status_report_API_URL, apiCallType = "get",)
             
             ## Remake the call
-            status_object = requests.get(status_report_API_URL, headers = p1_header)
+            #status_object = requests.get(status_report_API_URL, headers = p1_header)
             
             ## Reinitilize the the status text dictionary so the progress can be checked again
             status_text_jsonObject = json.loads(status_object.text)
@@ -212,9 +231,12 @@ def createAccountsCSV(p1_header, attempt = 0):
         ## Download the .csv file located at the term_report_download_url
         ## Overwrite the file of the same name if it exists
         logger.info ("\nDownloading provisioning accounts report")
-        downloadFile(term_report_download_url, f"{outputPath}\\Canvas_Accounts.csv", "w")
+        downloadFile(term_report_download_url, targetDestination, "w")
 
         logger.info (f"     \nSucessfully downloaded  Account CSV")
+
+        ## Return the target destination
+        return targetDestination
 
     except Exception as error:
         error_handler (functionName, p1_ErrorInfo = error)
@@ -226,7 +248,10 @@ def termGetAccounts(inputTerm = ""):
     header = {'Authorization' : f"Bearer {canvasAccessToken}"}
 
     ## Start and download the Canvas report
-    createAccountsCSV(p1_header = header,)
+    targetDestination = createAccountsCSV(p1_header = header,)
+
+    ## Return the target destination
+    return targetDestination
 
 if __name__ == "__main__":
 

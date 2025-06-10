@@ -1,8 +1,6 @@
 # Author: Bryce Miller - brycezmiller@nnu.edu
 # Last Updated by: Bryce Miller
 
-
-from Error_Email_API import errorEmailApi
 from datetime import datetime
 from Download_File import downloadFile
 import requests, time, json, os, logging, sys
@@ -38,6 +36,14 @@ while "Scripts TLC" not in os.listdir(PFRelativePath):
 
 ## Change the relative path to an absolute path
 PFAbsolutePath = f"{os.path.abspath(PFRelativePath)}\\"
+
+## Add Input Modules to the sys path
+sys.path.append(f"{PFAbsolutePath}Scripts TLC\\ResourceModules")
+sys.path.append(f"{PFAbsolutePath}Scripts TLC\\ActionModules")
+
+## Import local modules
+from Error_Email_API import errorEmailApi
+from Make_Api_Call import makeApiCall
 
 ## Local Path Variables
 baseLogPath = f"{PFAbsolutePath}Logs\\{scriptName}\\"
@@ -94,13 +100,13 @@ logError.setLevel(logging.ERROR)
 logError.setFormatter(FORMAT)
 logger.addHandler(logError)
 
-## The variable below holds a set of the functions that have had errors. This enables the error_handler function to only send
+## The variable below holds a set of the functions that have had errors. This enables the except function to only send
 ## an error email the first time the function triggeres an error
 setOfFunctionsWithErrors = set()
 
 ## This function handles function errors
 def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
-    functionName = "error_handler"
+    functionName = "except"
     logger.error (f"     \nA script error occured while running {p1_ErrorLocation}. " +
                      f"Error: {str(p1_ErrorInfo)}")
     ## If the function with the error has not already been processed send an email alert
@@ -142,7 +148,7 @@ def createUsersCSV(p1_header, attempt = 0):
 
                 ## logger.info that the file is up to date and return
                 logger.info (f"     \nTarget CSV is up to date")
-                return
+                return targetDestination
         
         ## Define and initialize the api url for starting reports
         start_report_API_URL = CoreCanvasAPIUrl + "accounts/1/reports/provisioning_csv"
@@ -155,10 +161,13 @@ def createUsersCSV(p1_header, attempt = 0):
         logger.info ("\n" + "Calling provisioning users reports")
 
         ## Initilize payload with one of the relavent users
-        payload_2 = {'parameters[users]':'true', 'parameters[include_deleted_objects]':'true'}
+        payload = {'parameters[users]':'true', 'parameters[include_deleted_objects]':'true'}
 
         ## Make the API call
-        report_object = requests.post(start_report_API_URL, headers = p1_header, params = payload_2)
+        #report_object = requests.post(start_report_API_URL, headers = p1_header, params = payload_2)
+
+        ## Make the api call using makeApiCall
+        report_object = makeApiCall(p1_header = p1_header, p1_apiUrl = start_report_API_URL, p1_payload = payload, apiCallType = "post")
 
         ## Convert report_text_jsonObject recieved through the API call in json to a Python Dictionary
         report_text_jsonObject = json.loads(report_object.text)
@@ -221,6 +230,9 @@ def createUsersCSV(p1_header, attempt = 0):
 
         logger.info (f"     \nSucessfully downloaded User CSV")
 
+        ## Return the target destination
+        return targetDestination
+
     except Exception as error:
         error_handler (functionName, p1_ErrorInfo = error)
 
@@ -231,7 +243,10 @@ def termGetUsers(inputTerm = ""):
     header = {'Authorization' : f"Bearer {canvasAccessToken}"}
 
     ## Start and download the Canvas report
-    createUsersCSV(p1_header = header)
+    targetDestiniation = createUsersCSV(p1_header = header)
+
+    ## Return the target destination
+    return targetDestiniation
 
 if __name__ == "__main__":
 

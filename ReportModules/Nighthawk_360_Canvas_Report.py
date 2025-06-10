@@ -54,10 +54,14 @@ PFAbsolutePath = f"{os.path.abspath(PFRelativePath)}\\"
 
 ## Add the Resource Modules folder to the sys path
 sys.path.append(f"{PFAbsolutePath}Scripts TLC\\ResourceModules")
+sys.path.append(f"{PFAbsolutePath}Scripts TLC\\ActionModules")
 
 ## Import local modules
 from Error_Email_API import errorEmailApi
 from Get_Canvas_User_Last_Access import termGetCanvasUserLastAccess
+from Get_Enrollments import termGetEnrollments
+from Get_Unpublished_Courses import termGetUnpublishedCourses
+from Make_Api_Call import makeApiCall
 
 ## Local Path Variables
 baseLogPath = f"{PFAbsolutePath}Logs\\{scriptName}\\"
@@ -133,14 +137,14 @@ logError.setLevel(logging.ERROR)
 logError.setFormatter(FORMAT)
 logger.addHandler(logError)
 
-## This variable enables the error_handler function to only send
+## This variable enables the except function to only send
 ## an error email the first time the function triggeres an error
 ## by tracking what functions have already been recorded as having errors
 setOfFunctionsWithErrors = set()
 
 ## This function handles function errors
 def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
-    functionName = "error_handler"
+    functionName = "except"
 
     ## Log the error
     logger.error (f"     \nA script error occured while running {p1_ErrorLocation}. " +
@@ -193,40 +197,7 @@ def getStuMostRecentGradedDiscussionPostDate (p1_stuDiscussionListAPIUrl, p1_stu
     try:
 
         ## Make an analytics api stuDiscussionPostsAPI to get the users activity
-        stuDiscussionListObject = None
-
-        ## Define a variable to track the number of attempts to get the api call
-        stuDiscussionListApiAttempts = 0
-
-        ## If the api call was not sucessful and the number of secondaryCoreCourseApiAttempts is less than 5
-        while (not stuDiscussionListObject 
-               or (stuDiscussionListObject.status_code != 200 
-                   and stuDiscussionListApiAttempts < 5)
-               ):
-
-            try: ## Irregular try clause, do not comment out in testing
-
-                ## If the last api attempt num is greater than 0
-                if stuDiscussionListApiAttempts > 0:
-                    
-                    ## Wait for two seconds if the api call was previously unsucessful
-                    time.sleep(2)
-                    
-                    ## Log that the api call is being tried again
-                    logger.info(f"Retrying api call to {p1_stuDiscussionListAPIUrl} for canvas_id: {p1_stuCanvasId}")
-
-                    ## Close the previous api object
-                    if stuDiscussionListObject:
-                        stuDiscussionListObject.close()
-                
-                ## try the api call again
-                stuDiscussionListObject = requests.get(url=p1_stuDiscussionListAPIUrl, headers = header)
-
-            except Exception as error: ## Irregular except clause, do not comment out in testing
-                logger.warning(f"Error: {error} \n Occured when calling {p1_stuDiscussionListAPIUrl} for canvas_id: {p1_stuCanvasId}")
-
-            ## Increment the number of attempts
-            stuDiscussionListApiAttempts += 1
+        stuDiscussionListObject = makeApiCall(p1_header = header, p1_apiUrl = p1_stuDiscussionListAPIUrl)
 
         ## If the api call was sucessful
         if stuDiscussionListObject.status_code == 200:
@@ -246,40 +217,7 @@ def getStuMostRecentGradedDiscussionPostDate (p1_stuDiscussionListAPIUrl, p1_stu
                                         
                     stuDiscussionViewAPIUrl = f"{p1_stuDiscussionListAPIUrl}//{discussionCanvasId}/view"
 
-                    stuDiscussionViewObject = None
-
-                    ## Define a variable to track the number of attempts to get the api call
-                    stuDiscussionViewApiAttempts = 0
-
-                    ## If the api call was not sucessful and the number of secondaryCoreCourseApiAttempts is less than 5
-                    while (not stuDiscussionViewObject
-                           or (stuDiscussionViewObject.status_code != 200 
-                               and stuDiscussionViewApiAttempts < 5)
-                           ):
-
-                        try: ## Irregular try clause, do not comment out in testing
-                            
-                            ## If the last api attempt num is greater than 0
-                            if stuDiscussionViewApiAttempts > 0:
-                    
-                                ## Wait for two seconds if the api call was previously unsucessful
-                                time.sleep(2)
-                    
-                                ## Log that the api call is being tried again
-                                logger.info(f"Retrying api call to {stuDiscussionViewAPIUrl} for canvas_id: {p1_stuCanvasId}")
-
-                                ## Close the previous api object
-                                if stuDiscussionViewObject:
-                                    stuDiscussionViewObject.close()
-                    
-                            ## try the api call again
-                            stuDiscussionViewObject = requests.get(url=stuDiscussionViewAPIUrl, headers = header)
-                            
-                        except Exception as error: ## Irregular except clause, do not comment out in testing
-                            logger.warning(f"Error: {error} \n Occured when calling {stuDiscussionViewAPIUrl} for canvas_id: {p1_stuCanvasId}")
-                            
-                        ## Increment the number of attempts
-                        stuDiscussionViewApiAttempts += 1
+                    stuDiscussionViewObject = makeApiCall(p1_header = header, p1_apiUrl = stuDiscussionViewAPIUrl)
 
                     if stuDiscussionViewObject.status_code == 200:
 
@@ -342,64 +280,8 @@ def getStuCourseData (p2_stuID
                     secondaryCoreCourseApiUrl = f"{coreCoursesApiUrl}//sis_course_id:{secondaryStuCanvasEnrolledCourseId}//sections"
 
                     ## Make an api call to retrieve a list of a the sections in the course
-                    secondaryCoreCourseApiObject = None
-
-                    ## Define a variable to track the number of attempts to get the api call
-                    secondaryCoreCourseApiAttempts = 0
-
-                    ## If the api call was not sucessful and the number of secondaryCoreCourseApiAttempts is less than 5
-                    while (not secondaryCoreCourseApiObject
-                           or (secondaryCoreCourseApiObject.status_code != 200 
-                               and secondaryCoreCourseApiAttempts < 5)
-                           ):
-                        
-                        try: ## Irregular try clause, do not comment out in testing
-
-                            ## If the last api attempt num is greater than 0
-                            if secondaryCoreCourseApiAttempts > 0:
-                    
-                                ## Wait for two seconds if the api call was previously unsucessful
-                                time.sleep(2)
-                    
-                                ## Log that the api call is being tried again
-                                logger.info(f"Retrying api call to {secondaryCoreCourseApiUrl} for canvas_id: {p1_stuCanvasId}")
-
-                                ## Close the previous api object
-                                if secondaryCoreCourseApiObject:
-                                    secondaryCoreCourseApiObject.close()
-                
-                            ## try the api call again
-                            secondaryCoreCourseApiObject = requests.get(url=secondaryCoreCourseApiUrl, headers = header)
-
-                        except Exception as error: ## Irregular except clause, do not comment out in testing
-                            logger.warning(f"Error: {error} \n Occured when calling {secondaryCoreCourseApiUrl} for canvas_id: {p1_stuCanvasId}")
-
-                        ## Increment the number of attempts
-                        secondaryCoreCourseApiAttempts += 1
-
-                    ## If the api call was sucessful
-                    if secondaryCoreCourseApiObject.status_code == 200:    
-
-                        ## Otherwise save the text response of the api object as a dict
-                        secondaryCoreCourseApiDict = json.loads(secondaryCoreCourseApiObject.text)
-
-                        ## Close the api object
-                        secondaryCoreCourseApiObject.close()
-
-                        ## for each section in the secondary course
-                        for section in secondaryCoreCourseApiDict:
-
-                            ## If the target stu sis enrolled course id is in the name of the section
-                            if targetCourseSisId in section["name"]:
-
-                                ## Save the secondary student canvas enrolled course id as the parent course id
-                                parentStuEnrolledCourseId = secondaryStuCanvasEnrolledCourseId
-
-                                ## Replace the stuCourseEnrollmentDataDF with the studen'ts parent course enrollment data
-                                stuCourseEnrollmentDataDF = p1_stuCanvasEnrolledCourseIds[(p1_stuCanvasEnrolledCourseIds["course_id"] == parentStuEnrolledCourseId)
-                                                                    & (p1_stuCanvasEnrolledCourseIds["user_id"] == p2_stuID)
-                                                                ]
-
+                    secondaryCoreCourseApiObject = makeApiCall(p1_header = header, p1_apiUrl = secondaryCoreCourseApiUrl)
+                                
             ## If stuCourseEnrollmentDataDF is still empty
             if stuCourseEnrollmentDataDF.empty:
 
@@ -412,75 +294,79 @@ def getStuCourseData (p2_stuID
                 ## Skip the course
                 return "Remove"
 
+        ## If there is already a Published key in the p2_stuCoursesData dictionary for the target course sis id
+        if targetCourseSisId in p2_stuCoursesData.keys() and "Published" in p2_stuCoursesData[targetCourseSisId].keys():
+
+            ## Skip the course as it has already been processed
+            return "Completed Unenrolled Entry"
+
         ## Add key value pairs to hold the other neccessary student course data
-        p2_stuCoursesData   [targetCourseSisId]["Published"] = "No"
-        p2_stuCoursesData   [targetCourseSisId]["Current Grade"] = ""
-        p2_stuCoursesData   [targetCourseSisId]["Number of Missing Assignments"] = ""
-        p2_stuCoursesData   [targetCourseSisId]["Number of Assignments graded 0"] = ""
-        p2_stuCoursesData   [targetCourseSisId]["Last Course Activity Date"] = ""
-        p2_stuCoursesData   [targetCourseSisId]["Last Course Participation"] = ""
-        p2_stuCoursesData   [targetCourseSisId]["Number of Missing Assignments"] = ""
-        p2_stuCoursesData   [targetCourseSisId]["Number of Assignments graded 0"] = ""
+        p2_stuCoursesData   [targetCourseSisId]["Published"]                        = "No"
+        p2_stuCoursesData   [targetCourseSisId]["Current Grade"]                    = ""
+        p2_stuCoursesData   [targetCourseSisId]["Number of Missed Assignments"]    = ""
+        p2_stuCoursesData   [targetCourseSisId]["Number of Assignments graded 0"]   = ""
+        p2_stuCoursesData   [targetCourseSisId]["Last Course Activity"]        = ""
+        p2_stuCoursesData   [targetCourseSisId]["Last Course Participation"]        = ""
+        p2_stuCoursesData   [targetCourseSisId]["Number of Missed Assignments"]    = ""
+        p2_stuCoursesData   [targetCourseSisId]["Number of Assignments graded 0"]   = ""
 
-        ## Check if the course is in the unpublished course list
-        if targetCourseSisId not in p2_combinedUnpublishedCanvasCoursesList:
+        ## If the published key is set to the default value of "No"
+        if p2_stuCoursesData[targetCourseSisId]["Published"] == "No":
 
-            ## If not, change the published status to Yes
-            p2_stuCoursesData[targetCourseSisId]["Published"] = "Yes"
+            ## Check if the course is in the unpublished course list
+            if targetCourseSisId not in p2_combinedUnpublishedCanvasCoursesList:
 
-        ## If there is a parent course ID, see if that is in the unpublished list
-        elif parentStuEnrolledCourseId and parentStuEnrolledCourseId not in p2_combinedUnpublishedCanvasCoursesList:
+                ## If not, change the published status to Yes
+                p2_stuCoursesData[targetCourseSisId]["Published"] = "Yes"
 
-            ## If not, still change the published status to Yes due to the parent course being published
-            p2_stuCoursesData[targetCourseSisId]["Published"] = "Yes"
+            ## If there is a parent course ID, see if that is in the unpublished list
+            elif parentStuEnrolledCourseId and parentStuEnrolledCourseId not in p2_combinedUnpublishedCanvasCoursesList:
 
-        ## Otherwise
-        else:
+                ## If not, still change the published status to Yes due to the parent course being published
+                p2_stuCoursesData[targetCourseSisId]["Published"] = "Yes"
 
-            ## Skip the course as it is unpublished and no other data will be found
-            return "Completed"
+            ## Otherwise
+            else:
+
+                ## Skip the course as it is unpublished and no other data will be found
+                return "Completed"
 
         ## Otherwise record the student's enrollment ID for that course in a new sub dictionary of the student ID's dictionary
         p2_stuCoursesData[targetCourseSisId]["canvas_enrollment_id"] = stuCourseEnrollmentDataDF["canvas_enrollment_id"].values[0]
 
+        ## Record whether the enrollment is deleted or not
+        enrollmentDeleted = True if stuCourseEnrollmentDataDF["status"].values[0].lower() == "deleted" else False
+
         ## Use the Canvas enrollment id to define the API url for the related canvas enrollment object
-        stuCourseEnrollmentApiUrl = f"{coreEnrollmentApiUrl}{p2_stuCoursesData[targetCourseSisId]['canvas_enrollment_id']}"
+        stuCourseEnrollmentApiUrl = f"{coreEnrollmentApiUrl}{p2_stuCoursesData[targetCourseSisId]['canvas_enrollment_id']}"  
 
         ## Make an api call with the enrollment ID to get the relevent Canvas enrollment object
         stuCourseEnrollmentObject = None
 
-        ## Define a variable to track the number of attempts to get the api call
-        stuCourseEnrollmentApiAttempts = 0
+        ## If enrollmentDeleted is true
+        if enrollmentDeleted:
 
-        ## If the api call was not sucessful and the number of secondaryCoreCourseApiAttempts is less than 5
-        while (not stuCourseEnrollmentObject
-               or (stuCourseEnrollmentObject.status_code != 200 
-                   and stuCourseEnrollmentApiAttempts < 5)
-               ):
+            ## Set the published status to to Unenrolled
+            p2_stuCoursesData[targetCourseSisId]["Published"] = "Unenrolled"
 
-            try: ## Irregular try clause, do not comment out in testing
+            ## Define a parameter payload dict to hold the enrollment data
+            stuCourseEnrollmentReenrollmentPayload = {
+                "enrollment[user_id]" : f"sis_user_id:{p2_stuID}"
+                , "enrollment[type]" : "StudentEnrollment"
+                , "enrollment[enrollment_state]" : "active"
+            }
 
-                ## If the last api attempt num is greater than 0
-                if stuCourseEnrollmentApiAttempts > 0:
-                    
-                    ## Wait for two seconds if the api call was previously unsucessful
-                    time.sleep(2)
-                    
-                    ## Log that the api call is being tried again
-                    logger.info(f"Retrying api call to {stuCourseEnrollmentApiUrl} for canvas_id: {p1_stuCanvasId}")
+            ## Change the course enrollment url
+            stuCourseEnrollmentApiUrl = f"{coreCoursesApiUrl}sis_course_id:{targetCourseSisId}//enrollments//"
 
-                    ## Close the previous api object
-                    if stuCourseEnrollmentObject:
-                        stuCourseEnrollmentObject.close()
-                
-                ## try the api call again
-                stuCourseEnrollmentObject = requests.get(url=stuCourseEnrollmentApiUrl, headers = header)
-                
-            except Exception as error: ## Irregular except clause, do not comment out in testing
-                logger.warning(f"Error: {error} \n Occured when calling {stuCourseEnrollmentApiUrl} for canvas_id: {p1_stuCanvasId}")
+            ## Make an api call to re-enroll the enrollment
+            stuCourseEnrollmentObject = makeApiCall(p1_header = header, p1_apiUrl = stuCourseEnrollmentApiUrl, p1_payload = stuCourseEnrollmentReenrollmentPayload, apiCallType = "post")
 
-            ## Increment the number of attempts
-            stuCourseEnrollmentApiAttempts += 1
+        ## Otherwise
+        else:
+        
+            ## Make an api call to get the student's course enrollment data
+            stuCourseEnrollmentObject = makeApiCall(p1_header = header, p1_apiUrl = stuCourseEnrollmentApiUrl)
 
         ## If the api call ultimately wasn't sucessful
         if stuCourseEnrollmentObject.status_code != 200:
@@ -505,7 +391,7 @@ def getStuCourseData (p2_stuID
                 ## Record the student's listed current score as their current grade
                 p2_stuCoursesData[targetCourseSisId]["Current Grade"] = f"{stuCurrentScore}"
 
-        ## Create a placeholder for the student's last canvas activity date, course submission date, their number of missing assignments, and their number of assignments graded 0
+        ## Create a placeholder for the student's last canvas activity date, course submission date, their number of missed assignments, and their number of assignments graded 0
         stuLastCourseActivty = ""
         stuLastSubmissionDateTime = ""
         stuNumOfMissedAssignments = 0
@@ -528,44 +414,13 @@ def getStuCourseData (p2_stuID
         else:
             coreTargetCourseApiUrl = f"{coreCoursesApiUrl}//sis_course_id:{targetCourseSisId}//"
 
+        ## If the users's enrollment was not deleted
+
         ## Define the course analystics user assignments url
         stuAssignmentSubmissionAnalyticsUrl = f"{coreTargetCourseApiUrl}analytics//users//sis_user_id:{p2_stuID}//assignments"
 
         ## Make an analytics api call to get the users submissions
-        stuAssignmentSubmissionAnalyticsObject = None
-            
-        ## Define a variable to track the number of attempts to get the api call
-        stuAssignmentSubmissionAnalyticsApiAttempts = 0
-
-        ## If the api call was not sucessful and the number of secondaryCoreCourseApiAttempts is less than 5
-        while (stuAssignmentSubmissionAnalyticsObject == None
-               or (stuAssignmentSubmissionAnalyticsObject.status_code != 200 
-                   and stuAssignmentSubmissionAnalyticsApiAttempts < 5)
-               ):
-
-            try: ## Irregular try clause, do not comment out in testing
-
-                ## If the last api attempt num is greater than 0
-                if stuAssignmentSubmissionAnalyticsApiAttempts > 0:
-                    
-                    ## Wait for two seconds if the api call was previously unsucessful
-                    time.sleep(2)
-                    
-                    ## Log that the api call is being tried again
-                    logger.info(f"Retrying api call to {stuAssignmentSubmissionAnalyticsUrl} for canvas_id: {p1_stuCanvasId} \n attempt #{stuAssignmentSubmissionAnalyticsApiAttempts + 1}")
-
-                    ## Close the previous api object
-                    if stuAssignmentSubmissionAnalyticsObject:
-                        stuAssignmentSubmissionAnalyticsObject.close()
-                
-                ## try the api call again
-                stuAssignmentSubmissionAnalyticsObject = requests.get(url=stuAssignmentSubmissionAnalyticsUrl, headers = header)
-                
-            except Exception as error: ## Irregular except clause, do not comment out in testing
-                logger.warning(f"Error: {error} \n Occured when calling {stuAssignmentSubmissionAnalyticsUrl} for canvas_id: {p1_stuCanvasId}")
-
-            ## Increment the number of attempts
-            stuAssignmentSubmissionAnalyticsApiAttempts += 1
+        stuAssignmentSubmissionAnalyticsObject = makeApiCall(p1_header = header, p1_apiUrl = stuAssignmentSubmissionAnalyticsUrl)
 
         ## If the api call was sucessful
         if stuAssignmentSubmissionAnalyticsObject.status_code == 200:
@@ -587,10 +442,10 @@ def getStuCourseData (p2_stuID
                 if submission["submission"]["submitted_at"]:
                     currentSubmissionSubmittedAtDate = datetime.strptime(submission["submission"]["submitted_at"], "%Y-%m-%dT%H:%M:%SZ")
 
-                ## If the submission status is missing
-                if submission["status"] == "missing":
+                ## If the submission status is missed
+                if submission["status"] == "missed":
 
-                    ## Increment the number of missing assignments i
+                    ## Increment the number of missed assignments i
                     stuNumOfMissedAssignments += 1
 
                 ## If a score has been posted and the score given is 0
@@ -644,40 +499,7 @@ def getStuCourseData (p2_stuID
         stuActivityAnalyticsUrl = f"{coreTargetCourseApiUrl}analytics//users//sis_user_id:{p2_stuID}//activity"
 
         ## Make an analytics api call to get the users activity
-        stuActivityAnalyticsObject = None
-
-        ## Define a variable to track the number of attempts to get the api call
-        stuActivityAnalyticsApiAttempts = 0
-
-        ## If the api call was not sucessful and the number of secondaryCoreCourseApiAttempts is less than 5
-        while (not stuActivityAnalyticsApiAttempts
-               or (stuActivityAnalyticsObject.status_code != 200 
-                   and stuActivityAnalyticsApiAttempts < 5)
-               ):
-
-            try: ## Irregular try clause, do not comment out in testing
-
-                ## If the last api attempt num is greater than 0
-                if stuActivityAnalyticsApiAttempts > 0:
-                    
-                    ## Wait for two seconds if the api call was previously unsucessful
-                    time.sleep(2)
-                    
-                    ## Log that the api call is being tried again
-                    logger.info(f"Retrying api call to {stuActivityAnalyticsUrl} for canvas_id: {p1_stuCanvasId}")
-
-                    ## Close the previous api object
-                    if stuActivityAnalyticsObject:
-                        stuActivityAnalyticsObject.close()
-                
-                ## try the api call again
-                stuActivityAnalyticsObject = requests.get(url=stuActivityAnalyticsUrl, headers = header)
-
-            except Exception as error: ## Irregular except clause, do not comment out in testing
-                logger.warning(f"Error: {error} \n Occured when calling {stuActivityAnalyticsUrl} for canvas_id: {p1_stuCanvasId}")
-
-            ## Increment the number of attempts
-            stuActivityAnalyticsApiAttempts += 1
+        stuActivityAnalyticsObject = makeApiCall(p1_header = header, p1_apiUrl = stuActivityAnalyticsUrl)
 
         ## If the api call was sucessful
         if stuActivityAnalyticsObject.status_code == 200:
@@ -750,10 +572,10 @@ def getStuCourseData (p2_stuID
             ## Record the last participation date as the last course activity date
             convertedStuLastCourseActivty = convertedStuLastParticipationDate
                 
-        ## Record the student's course activity date, last participation date, their number of missing assignments, and their number of assignments graded 0     
-        p2_stuCoursesData   [targetCourseSisId]   ["Last Course Activity Date"]         = f"{convertedStuLastCourseActivty}"
+        ## Record the student's course activity date, last participation date, their number of missed assignments, and their number of assignments graded 0     
+        p2_stuCoursesData   [targetCourseSisId]   ["Last Course Activity"]         = f"{convertedStuLastCourseActivty}"
         p2_stuCoursesData   [targetCourseSisId]   ["Last Course Participation"]         = f"{convertedStuLastParticipationDate}"
-        p2_stuCoursesData   [targetCourseSisId]   ["Number of Missing Assignments"]     = f"{stuNumOfMissedAssignments}"
+        p2_stuCoursesData   [targetCourseSisId]   ["Number of Missed Assignments"]     = f"{stuNumOfMissedAssignments}"
         p2_stuCoursesData   [targetCourseSisId]   ["Number of Assignments graded 0"]    = f"{stuNumOfAssignmentsGradedZero}"
         
         ## If the last course activity date is more recent than the stuCoursesData's last canvas activity date
@@ -761,6 +583,29 @@ def getStuCourseData (p2_stuID
             
             ## Update the stuCoursesData's last canvas activity date
             p2_stuCoursesData["Last Canvas Activity"] = convertedStuLastCourseActivty
+
+        ## If the enrollment was originally deleted, but has been reactivated
+        if enrollmentDeleted:
+
+            ## Create the deletion api url by adding the enrollment id to the end of the stuCourseEnrollmentApiUrl
+            stuCourseEnrollmentDeletionApiUrl = f"{stuCourseEnrollmentApiUrl}/{p2_stuCoursesData[targetCourseSisId]['canvas_enrollment_id']}"
+
+            ## Defeine the parameter to delete the enrollment
+            stuCourseEnrollmentDeleteParams = {
+                "task": "delete"
+            }
+
+            ## Make a delete enrollment api call to remove the reactivated enrollment
+            enrollmentDeletionApiOjbect = makeApiCall(p1_header = header, p1_apiUrl = stuCourseEnrollmentDeletionApiUrl, p1_payload = stuCourseEnrollmentDeleteParams, apiCallType = "delete")
+
+            ## If the enrollment deletion api call was not successful
+            if enrollmentDeletionApiOjbect.status_code != 200:
+
+                ## Log a warning that the enrollment deletion failed
+                logger.warning(f"Enrollment deletion failed for {p2_stuCoursesData[targetCourseSisId]['canvas_enrollment_id']} in course {targetCourseSisId} for student {p2_stuID}")
+
+                ## Call the error handler function
+                error_handler (functionName, p1_ErrorInfo = f"Enrollment deletion failed for {p2_stuCoursesData[targetCourseSisId]['canvas_enrollment_id']} in course {targetCourseSisId} for student {p2_stuID}")
 
     except Exception as error:
         error_handler (functionName, p1_ErrorInfo = error)
@@ -970,7 +815,12 @@ def getStuCoursesData (p1_stuID
             p1_stuCoursesData["stuCanvasId"] = stuCanvasIdDf.values[0]
         
         ## If no canvas ID is found
-        if not p1_stuCoursesData or not p1_stuCoursesData["stuCanvasId"]:
+        if (
+            not p1_stuCoursesData 
+            or "stuCanvasId" not in p1_stuCoursesData.keys() 
+            or not p1_stuCoursesData["stuCanvasId"]
+            ):
+
             return
 
         ## Retreive the student's SIS course enrollment list
@@ -1001,7 +851,7 @@ def getStuCoursesData (p1_stuID
         error_handler (functionName, p1_ErrorInfo = error)       
 
 ## This function takes a list of current NNU enrollments and gets their Canvas enrollment related activity and grade information
-def getNighthawk360Data ():
+def getNighthawk360Data (p1_oldEnrollmentDataDf):
     functionName = "Get Night Hawk 360 Data"
 
     try:
@@ -1013,217 +863,308 @@ def getNighthawk360Data ():
 
         ## January through May makes the current terms the Spring Terms
         if currentMonth >= 1 and currentMonth <= 5:
-            currentTermCodes.append(f"SP{decade}")
-            currentTermCodes.append(f"GS{decade}")
-            currentTerms.append(f"SP{currentYear}")
-            currentTerms.append(f"GS{currentYear}")
 
-        ## June through August makes the current terms the Summer Terms
-        elif currentMonth >= 6 and currentMonth <= 8:
-            currentTermCodes.append(f"SU{decade}")
-            currentTermCodes.append(f"SG{decade}")
-            currentTerms.append(f"SU{currentYear}")
-            currentTerms.append(f"SG{currentYear}")
+            ## Using the current year and decade, define the current terms and add them as tuples to the current terms list
+            currentTermCodes.append((f"SP{decade}", f"GS{decade}"))
+            currentTerms.append((f"SP{currentYear}", f"GS{currentYear}"))
 
-        ## September through December (the rest of the months) makes the current terms the Spring Terms
-        else:
-            currentTermCodes.append(f"FA{decade}")
-            currentTermCodes.append(f"GF{decade}")
-            currentTerms.append(f"FA{currentYear}")
-            currentTerms.append(f"GF{currentYear}")
+        ## December has some spring courses so it is also a spring term
+        if currentMonth == 12:
 
-        ## Deteremine the current schoolyear based off of the current term
-        if currentTermCodes[0] == f"FA{decade}":
-            ## Fall terms are the first terms of a new school year so FA20 is part of the 2020-21 school year.
-            currentSchoolYear = f"{century}{decade}-{int(decade) + 1}"
-        else:
-            ## Spring and Summer terms belong in the same school year as the fall terms before them, so SP21 is part of the same 2020-21 schooal year as FA20.
-            currentSchoolYear = f"{century}{int(decade) - 1}-{decade}"
+            ## Using the current year and decade, define the current terms and add them as tuples to the current terms list
+            currentTermCodes.append((f"SP{str(int(decade) + 1)}", f"GS{str(int(decade) + 1)}"))
+            currentTerms.append((f"SP{str(int(currentYear) + 1)}", f"GS{str(int(currentYear) + 1)}"))
 
-        ## Save the school year based canvas input path
-        schoolYearLocalInputPath = f"{baseLocalInputPath}{currentSchoolYear}\\"
+        ## May through August makes the current terms the Summer Terms
+        if currentMonth >= 5 and currentMonth <= 8:
 
-        ## Canvas Enrollment
+            ## Using the current year and decade, define the current terms and add them as tuples to the current terms list
+            currentTermCodes.append((f"SU{decade}", f"SG{decade}"))
+            currentTerms.append((f"SU{currentYear}", f"SG{currentYear}"))
+
+        ## August through December (the rest of the months) makes the current terms the Spring Terms
+        if currentMonth >= 8 and currentMonth <= 12:
+
+            ## Using the current year and decade, define the current terms and add them as tuples to the current terms list
+            currentTermCodes.append((f"FA{decade}", f"GF{decade}"))
+            currentTerms.append((f"FA{currentYear}", f"GF{currentYear}"))
+
+        ## Define a complete student enrollment data dict
+        completeStudentEnrollmentDataDict = {}
+
+        ## For each term pair in the current terms
+        for termCodePair, termPair in zip(currentTermCodes, currentTerms):
+
+            ## Deteremine the current schoolyear based off of the current term
+            if termCodePair[0] == f"FA{decade}":
+                ## Fall terms are the first terms of a new school year so FA20 is part of the 2020-21 school year.
+                currentSchoolYear = f"{century}{decade}-{int(decade) + 1}"
+            else:
+                ## Spring and Summer terms belong in the same school year as the fall terms before them, so SP21 is part of the same 2020-21 schooal year as FA20.
+                currentSchoolYear = f"{century}{int(decade) - 1}-{decade}"
+
+            ## Save the school year based canvas input path
+            schoolYearLocalInputPath = f"{baseLocalInputPath}{currentSchoolYear}\\"
         
-        ## Get the current undergraduate Canvas enrollment file
-        undgCanvasEnrollmentsDF = pd.read_csv(f"{schoolYearLocalInputPath}{currentTermCodes[0]}\\{currentTermCodes[0]}_Canvas_Enrollments.csv")
+            ## Get the current undergraduate Canvas enrollment file
+            undgCanvasEnrollmentsDF = pd.read_csv(termGetEnrollments(termCodePair[0]))
 
-        ## Get the current graduate Canvas enrollment file
-        gradCanvasEnrollmentsDF = pd.read_csv(f"{schoolYearLocalInputPath}{currentTermCodes[1]}\\{currentTermCodes[1]}_Canvas_Enrollments.csv")
+            ## Get the current graduate Canvas enrollment file
+            gradCanvasEnrollmentsDF = pd.read_csv(termGetEnrollments(termCodePair[1]))
 
-        ## Combine the undergraduate and graduate enrollment files
-        combinedCanvasEnrollmentsDF = pd.concat([undgCanvasEnrollmentsDF, gradCanvasEnrollmentsDF], ignore_index=True)
+            ## Combine the undergraduate and graduate enrollment files
+            combinedCanvasEnrollmentsDF = pd.concat([undgCanvasEnrollmentsDF, gradCanvasEnrollmentsDF], ignore_index=True)
         
-        ## Filter so that only rows that have a student role, are active, and are not in the chapel course are retained
-        filteredCombinedCanvasEnrollmentsDF = combinedCanvasEnrollmentsDF[((combinedCanvasEnrollmentsDF['status'] == 'active')
-                                                                           | (combinedCanvasEnrollmentsDF['status'] == 'concluded')
-                                                                           )
-                                                                          & (combinedCanvasEnrollmentsDF['role'] == 'student')
-                                                                          & (~combinedCanvasEnrollmentsDF['course_id'].str.contains('CHPL1000_01'))
-                                                                          & (combinedCanvasEnrollmentsDF['course_id'].str.contains(currentTerms[0]) 
-                                                                             | combinedCanvasEnrollmentsDF['course_id'].str.contains(currentTerms[1])
-                                                                             )
-                                                                          ]
+            ## Filter so that only rows that have a student role and that are not in the chapel course are retained
+            filteredCombinedCanvasEnrollmentsDF = combinedCanvasEnrollmentsDF[(combinedCanvasEnrollmentsDF['role'] == 'student')
+                                                                              & (~combinedCanvasEnrollmentsDF['course_id'].str.contains('CHPL1000_01'))
+                                                                              & (combinedCanvasEnrollmentsDF['course_id'].str.contains(termPair[0]) 
+                                                                                 | combinedCanvasEnrollmentsDF['course_id'].str.contains(termPair[1])
+                                                                                 )
+                                                                              ]
 
-        ## Get the current undergraduate Canvas unpublished courses file
-        undgUnpublishedCanvasCoursesDF = pd.read_csv(f"{schoolYearLocalInputPath}{currentTermCodes[0]}\\{currentTermCodes[0]}_Canvas_Unpublished_Courses.csv")
+            ## Get the current undergraduate Canvas unpublished courses file
+            undgUnpublishedCanvasCoursesDF = pd.read_csv(termGetUnpublishedCourses(termCodePair[0]))
 
-        ## Get the current graduate Canvas unpublished courses file
-        gradUnpublishedCanvasCoursesDF = pd.read_csv(f"{schoolYearLocalInputPath}{currentTermCodes[1]}\\{currentTermCodes[1]}_Canvas_Unpublished_Courses.csv")
+            ## Get the current graduate Canvas unpublished courses file
+            gradUnpublishedCanvasCoursesDF = pd.read_csv(termGetUnpublishedCourses(termCodePair[1]))
 
-        ## Combine the undergraduate and graduate unpublished courses files
-        combinedUnpublishedCanvasCoursesDF = pd.concat([undgUnpublishedCanvasCoursesDF, gradUnpublishedCanvasCoursesDF], ignore_index=True)
+            ## Combine the undergraduate and graduate unpublished courses files
+            combinedUnpublishedCanvasCoursesDF = pd.concat([undgUnpublishedCanvasCoursesDF, gradUnpublishedCanvasCoursesDF], ignore_index=True)
 
-        ## Make a list of the unpublished courses
-        combinedUnpublishedCanvasCoursesList = combinedUnpublishedCanvasCoursesDF["sis id"].tolist()
+            ## Make a list of the unpublished courses
+            combinedUnpublishedCanvasCoursesList = combinedUnpublishedCanvasCoursesDF["sis id"].tolist()
         
-        ## SIS enrollment
+            ## SIS enrollment
 
-        ## Get the current institution enrollment data
-        sisEnrollmentsDF = pd.read_csv(f"{baseExternalInputPath}canvas_enroll.csv")
+            ## Get the current institution enrollment data
+            sisEnrollmentsDF = pd.read_csv(f"{baseExternalInputPath}canvas_enroll.csv")
         
-        ## Filter the current institution enrollment data to only retain the student enrollments
-        filteredSisEnrollmentsDF = sisEnrollmentsDF[((sisEnrollmentsDF['status'] == 'active')
-                                                     | (sisEnrollmentsDF['status'] == 'concluded')
-                                                     )
-                                                    & (sisEnrollmentsDF['role'] == 'student')
-                                                    & (~sisEnrollmentsDF['course_id'].str.contains('CHPL1000_01'))
-                                                    & (sisEnrollmentsDF['course_id'].str.contains(currentTerms[0])
-                                                       | sisEnrollmentsDF['course_id'].str.contains(currentTerms[1])
-                                                       )
-                                                    ]
+            ## Filter the current institution enrollment data to only retain the student enrollments
+            partiallyFilteredSisEnrollmentsDF = sisEnrollmentsDF[(sisEnrollmentsDF['role'] == 'student')
+                                                        & (~sisEnrollmentsDF['course_id'].str.contains('CHPL1000_01'))
+                                                        & (sisEnrollmentsDF['course_id'].str.contains(termPair[0])
+                                                           | sisEnrollmentsDF['course_id'].str.contains(termPair[1])
+                                                           )
+                                                        ]
+
+            ## Filter out duplicate course id + user id pairs from the SIS enrollments dataframe
+            filteredSisEnrollmentsDF = partiallyFilteredSisEnrollmentsDF.drop_duplicates(subset=['course_id', 'user_id'])
         
-        ## Determine the unique student ids within the SIS enrollment Dataframe
-        uniqueStuIdDF = filteredSisEnrollmentsDF['user_id'].unique()
+            ## Determine the unique student ids within the SIS enrollment Dataframe
+            uniqueStuIdDF = filteredSisEnrollmentsDF['user_id'].unique()
 
-        ## Create a dict of the students' ids and their last Canvas access report data points
-        stuLastCanvasAccessData = retrieveListOfStuLastCanvasAccessReportDataPoints(uniqueStuIdDF.tolist())
+            ## Create a dict of the students' ids and their last Canvas access report data points
+            stuLastCanvasAccessData = retrieveListOfStuLastCanvasAccessReportDataPoints(uniqueStuIdDF.tolist())
 
-        ## Define a dictionary with each unique ID as a key and include the last Canvas access data
-        studentDataDict = {stuID: {'Last Canvas Activity': stuLastCanvasAccessData.get(stuID, '')} for stuID in uniqueStuIdDF}
+            ## Define a dictionary with each unique ID as a key and include the last Canvas access data
+            studentDataDict = {stuID: {'Last Canvas Activity': stuLastCanvasAccessData.get(stuID, '')} for stuID in uniqueStuIdDF}
 
-        ## For each unique student id
-        for stuID, stuCoursesData in studentDataDict.items():
+            ## Extract the sis enrollment data for deleted enrollments
+            deletedSisEnrollments = filteredSisEnrollmentsDF[filteredSisEnrollmentsDF['status'] == 'deleted'].copy()
 
-            getStuCoursesData(stuID
-                              , stuCoursesData
-                              , filteredCombinedCanvasEnrollmentsDF
-                              , filteredSisEnrollmentsDF
-                              )
+            ## Replace underscores with dashes in the course_id column of the deleted sis enrollments
+            deletedSisEnrollments['course_id'] = deletedSisEnrollments['course_id'].str.replace('_', '-')
 
-        ## Define a loop counter
-        loopCounter = 0
+            ## Create a unEnrolledStudentData to hold the unenrolled student data
+            unEnrolledStudentData = pd.DataFrame()
 
-        ## Define a list to hold the enrollment data threads
-        ongoingReportThreads = []
-        
-        ## While the "Published" key is not in every stu courses data dict within each student data dict and the loop counter is less than 100
-        ## (Every stu course pair should at least have published data so this acts as a check to see if all the data has been collected)
-        while (
-            not all(
-                "Published" in stuCourseData
-                for stuData in studentDataDict.values()
-                for stuCourseData in stuData.values()
-                if isinstance(stuCourseData, dict)
-            )
-            and loopCounter < 100
-        ):
+            ## If the p1_oldEnrollmentDataDf is not empty
+            if not p1_oldEnrollmentDataDf.empty:
 
-            if loopCounter == 95:
-                
-                print (1)
+                ## Retain the old enrollment data user ids for only the user id and course ids that are in the deleted sis enrollments
+                unEnrolledStudentData = p1_oldEnrollmentDataDf.merge(
+                    deletedSisEnrollments[['user_id', 'course_id']],
+                    left_on=['Student ID', 'Course Number'],
+                    right_on=['user_id', 'course_id'],
+                    how='inner'
+                ).drop(columns=['user_id', 'course_id'])
 
-            ## For each student data dict
-            # for stuData in studentDataDict.values():
-           
-            #     ## For each stu course data dict
-            #     for stuCourseData in stuData.values():
-                
-            #         ## If the stu course data is a dict and it is empty
-            #         if isinstance(stuCourseData, dict) and not stuCourseData:
-                   
-            #             ## Delete the stu course data dict
-            #             del stuData[stuCourseData]
 
-            ## Increment the loop counter
-            loopCounter += 1
 
-            ## Clear the list of any previous ongoing threads
-            ongoingReportThreads.clear()
             
-            ## Create a variable to hold how many threads have been started
-            threadCounter = 0
-            
-            ## Create a variable to count the number of hundreds of threads that have been completed
-            tensCompletedCounter = 0
+                ## For each student id in the unEnrolledStudentData
+                for stuID in unEnrolledStudentData['Student ID'].astype(int).unique():
 
-            # For each unique student id
+                    ## Retreive the data associated with the student's deleted enrollments
+                    stuDataDf = unEnrolledStudentData[unEnrolledStudentData['Student ID'] == stuID]
+
+                    ## For each course id in the student's data
+                    for courseId in stuDataDf['Course Number'].unique():
+                    
+                        ## Add the course id as a key to the student's data dict
+                        studentDataDict[stuID][courseId] = {}
+
+                        ## Seperate out the course data for the course id
+                        courseData = stuDataDf[stuDataDf['Course Number'] == courseId].iloc[0]
+
+                        ## For each column in the course data
+                        for column in stuDataDf.columns:
+
+                            ## If the column is the published column
+                            if column == "Published":
+
+                                ## Add the key but set the value to "Unenrolled"
+                                studentDataDict[stuID][courseId][column] = "Unenrolled"
+
+                            ## Otherwise, if the column is not the published column
+                            else:
+
+                                ## Add the column as a key and the value as the value to the student's course data dict
+                                studentDataDict[stuID][courseId][column] = courseData[column]
+
+            ## For each unique student id
             for stuID, stuCoursesData in studentDataDict.items():
 
-                #if stuID == 718266:
+                ## If the published key is not in the student's course data dict
+                if "Published" not in stuCoursesData.keys():
+
+                    ## Retrieve the student's courses data
+                    getStuCoursesData(stuID
+                                      , stuCoursesData
+                                      , filteredCombinedCanvasEnrollmentsDF
+                                      , filteredSisEnrollmentsDF
+                                      )
+
+            ## Define a loop counter
+            loopCounter = 0
+
+            ## Define a list to hold the enrollment data threads
+            ongoingReportThreads = []
+        
+            ## While the "Published" key is not in every stu courses data dict within each student data dict and the loop counter is less than 100
+            ## (Every stu course pair should at least have published data so this acts as a check to see if all the data has been collected)
+            while (
+                not all(
+                    "Published" in stuCourseData
+                    for stuData in studentDataDict.values()
+                    for stuCourseData in stuData.values()
+                    if isinstance(stuCourseData, dict)
+                )
+                and loopCounter < 100
+            ):
+
+                if loopCounter == 95:
                 
-                    ## For each 
-                    # If there is not a published key in all of the student's course data dicts
-                    if not all(
-                        "Published" in stuCourseData
-                        for stuCourseData in stuCoursesData.values()
-                        if isinstance(stuCourseData, dict)
-                    ):
-                    
-                        ## Define the stuEnrollmentDataThread as None to ensure a brand new thread is created
-                        stuEnrollmentDataThread = None
+                    print (1)
 
-                        # Define the stuEnrollmentDataThread
-                        stuEnrollmentDataThread = threading.Thread(
-                            target=getStuCurrentCoursesData
-                            , args=(
-                                stuID,
-                                stuCoursesData,
-                                filteredCombinedCanvasEnrollmentsDF,
-                                combinedUnpublishedCanvasCoursesList,
-                                filteredSisEnrollmentsDF,
-                            ),
-                        )
+                ## For each student data dict
+                # for stuData in studentDataDict.values():
+           
+                #     ## For each stu course data dict
+                #     for stuCourseData in stuData.values():
+                
+                #         ## If the stu course data is a dict and it is empty
+                #         if isinstance(stuCourseData, dict) and not stuCourseData:
+                   
+                #             ## Delete the stu course data dict
+                #             del stuData[stuCourseData]
 
-                        # Start the term related syllabi report thread
-                        stuEnrollmentDataThread.start()
+                ## Increment the loop counter
+                loopCounter += 1
 
-                        # Add the term related syllabi report thread to the list of ongoing threads
-                        ongoingReportThreads.append(stuEnrollmentDataThread)
+                ## Clear the list of any previous ongoing threads
+                ongoingReportThreads.clear()
+            
+                ## Create a variable to hold how many threads have been started
+                threadCounter = 0
+            
+                ## Create a variable to count the number of hundreds of threads that have been completed
+                tensCompletedCounter = 0
+
+                # For each unique student id
+                for stuID, stuCoursesData in studentDataDict.items():
+
+                    #if stuID == 718266:
+                
+                        ## For each 
+                        # If there is not a published key in all of the student's course data dicts
+                        if not all(
+                            "Published" in stuCourseData
+                            for stuCourseData in stuCoursesData.values()
+                            if isinstance(stuCourseData, dict)
+                        ):
                     
-                        ## Increment the thread counter
-                        threadCounter += 1
+                            ## Define the stuEnrollmentDataThread as None to ensure a brand new thread is created
+                            stuEnrollmentDataThread = None
+
+                            # Define the stuEnrollmentDataThread
+                            stuEnrollmentDataThread = threading.Thread(
+                                target=getStuCurrentCoursesData
+                                , args=(
+                                    stuID,
+                                    stuCoursesData,
+                                    filteredCombinedCanvasEnrollmentsDF,
+                                    combinedUnpublishedCanvasCoursesList,
+                                    filteredSisEnrollmentsDF,
+                                ),
+                            )
+
+                            # Start the term related syllabi report thread
+                            stuEnrollmentDataThread.start()
+
+                            # Add the term related syllabi report thread to the list of ongoing threads
+                            ongoingReportThreads.append(stuEnrollmentDataThread)
                     
-                        ## If the thread counter is greater than 100
-                        if threadCounter >= 100:
+                            ## Increment the thread counter
+                            threadCounter += 1
+                    
+                            ## If the thread counter is greater than 100
+                            if threadCounter >= 100:
                         
-                            ## For each ongoing thread
-                            for thread in ongoingReportThreads:
+                                ## For each ongoing thread
+                                for thread in ongoingReportThreads:
                             
-                                ## Wait for the thread to finish
-                                thread.join()
+                                    ## Wait for the thread to finish
+                                    thread.join()
 
-                                ## Remove the thread from the ongoing threads list
-                                ongoingReportThreads.remove(thread)
+                                    ## Remove the thread from the ongoing threads list
+                                    ongoingReportThreads.remove(thread)
                             
-                            ## Increment the tens Completed Counter
-                            tensCompletedCounter += 10
+                                ## Increment the tens Completed Counter
+                                tensCompletedCounter += 10
                                 
-                            ## Log the number of threads that have been completed
-                            logger.info(f"{tensCompletedCounter}0 threads have been completed")
+                                ## Log the number of threads that have been completed
+                                logger.info(f"{tensCompletedCounter}0 threads have been completed")
                             
-                            ## Reset the thread counter
-                            threadCounter = 0
+                                ## Reset the thread counter
+                                threadCounter = 0
 
-            # Wait until all ongoing threads have completed
-            for thread in ongoingReportThreads:
-                thread.join()
+                # Wait until all ongoing threads have completed
+                for thread in ongoingReportThreads:
+                    thread.join()
 
-            ## Log the number of threads that have been completed
-            logger.info(f"{tensCompletedCounter * 10 + threadCounter} threads have been completed")    
+                ## Log the number of threads that have been completed
+                logger.info(f"{tensCompletedCounter * 10 + threadCounter} threads have been completed")    
+
+            ## If the completeStudentEnrollmentDataDict is empty
+            if not completeStudentEnrollmentDataDict:
+
+                ## Set it to the student data dict
+                completeStudentEnrollmentDataDict = studentDataDict
+
+            ## Otherwise
+            else:
+
+                ## For each student id and their courses in the student data dict
+                for stuID, stuCoursesData in studentDataDict.items():
+
+                    ## If the student id is not in the complete student enrollment data dict
+                    if stuID not in completeStudentEnrollmentDataDict.keys():
+
+                        ## Add the student id and their courses to the complete student enrollment data dict
+                        completeStudentEnrollmentDataDict[stuID] = stuCoursesData
+
+                    ## Otherwise
+                    else:
+
+                        ## Update the keys and values of the student id's courses in the complete student enrollment data dict
+                        completeStudentEnrollmentDataDict[stuID].update(stuCoursesData)
+
+
         
         ## Return the completed student data dict
-        return studentDataDict
+        return completeStudentEnrollmentDataDict
                     
     except Exception as error:
         error_handler (functionName, p1_ErrorInfo = error)
@@ -1238,9 +1179,6 @@ def Nighthawk360CanvasReport ():
 
     try:
         logger.info (f"     \nBeginning the Nighthawk 360 Canvas Report")
-        
-        ## Get the current institution enrollment data
-        enrollmentDataDict = getNighthawk360Data()
         
         # ## Create a list to hold the flattened enrollment data
         # flattenedEnrollmentData = []
@@ -1268,69 +1206,164 @@ def Nighthawk360CanvasReport ():
         # ## Convert flattenedEnrollmentData to a DataFrame for comparison
         # currentEnrollmentDataDf = pd.DataFrame(flattenedEnrollmentData)
 
-        # ## Open the current enrollment data activity and submission pipe delineated csv files as dataframes
-        # oldEnrollmentDataActivityDf = pd.read_csv(f"{baseLocalOutputPath}Enrollment_Data_Activity.csv", sep="|")
-        # oldEnrollmentDataSubmissionsDf = pd.read_csv(f"{baseLocalOutputPath}Enrollment_Data_Submissions.csv", sep="|")
+        ## Define a variable to contain the oldEnrollmentDataDf
+        oldEnrollmentDataDf = pd.DataFrame()
+
+        ## If previous versions of the enrollment data exist
+        if os.path.exists(f"{baseExternalOutputPath}Enrollment_Data_Activity.csv") and os.path.exists(f"{baseExternalOutputPath}Enrollment_Data_Submissions.csv"):
+
+            ## Open the current enrollment data activity and submission pipe delineated csv files as dataframes
+            oldEnrollmentDataActivityDf = pd.read_csv(f"{baseExternalOutputPath}Enrollment_Data_Activity.csv", sep="|")
+            oldEnrollmentDataSubmissionsDf = pd.read_csv(f"{baseExternalOutputPath}Enrollment_Data_Submissions.csv", sep="|")
         
-        # ## Combine old data into a single DataFrame for comparison
-        # oldEnrollmentDataDf = pd.concat([oldEnrollmentDataActivityDf, oldEnrollmentDataSubmissionsDf])
+            ## Combine old data into a single DataFrame for comparison
+            oldEnrollmentDataDf = pd.merge(oldEnrollmentDataActivityDf, oldEnrollmentDataSubmissionsDf, on=["Student ID", "Course Number"], how="outer")
 
-        # ## Rename the columns to match the current data
-        # oldEnrollmentDataDf.rename(columns={
-        #     'Student ID': 'student_id'
-        #     , 'Course Number': 'course_id'
-        #     , 'Published': 'published'
-        # }, inplace=True)
+        ## Get the current institution enrollment data
+        enrollmentDataDict = getNighthawk360Data(oldEnrollmentDataDf)
 
-        # # Find the differences between the old and current data
-        # rawMissingEnrollmentsDf = oldEnrollmentDataDf[
-        #     ~oldEnrollmentDataDf.apply(
-        #         lambda row: any(
-        #             (currentEnrollmentDataDf['student_id'] == row['student_id']) 
-        #             & (currentEnrollmentDataDf['course_id'] == row['course_id'])
-        #             )
-        #         , axis=1
+        ## Open the local enrollment data activity and submission pipe delineated csv files as dataframes
+        #currentEnrollmentDataActivityDf = pd.read_csv(f"{baseLocalOutputPath}Enrollment_Data_Activity.csv", sep="|")
+        #currentEnrollmentDataSubmissionsDf = pd.read_csv(f"{baseLocalOutputPath}Enrollment_Data_Submissions.csv", sep="|")
+
+        ## Combine the two using the Student ID and Course Number as the join keys
+        #currentEnrollmentDataDf = pd.merge(currentEnrollmentDataActivityDf, currentEnrollmentDataSubmissionsDf, on=["Student ID", "Course Number"], how="outer")
+        
+        # ## Recreate the enrollmentDataDict from the merged DataFrame
+        # enrollmentDataDict = {}
+
+        # for _, row in currentEnrollmentDataDf.iterrows():
+        #     student_id = row['Student ID']
+        #     course_number = row['Course Number']
+
+        #     ## Initialize the student entry if not already present
+        #     if student_id not in enrollmentDataDict:
+                
+        #         enrollmentDataDict[student_id] = {}
+
+        #     ## Create the course-specific data dictionary
+        #     course_data = {
+        #         "Last Canvas Activity": row.get("Last Canvas Activity", ""),
+        #         "Published": row.get("Published", ""),
+        #         "Last Course Activity Date": row.get("Last Course Activity", ""),
+        #         "Last Course Participation": row.get("Last Course Participation", ""),
+        #         "Current Grade": row.get("Current Grade", ""),
+        #         "Number of Missed Assignments": row.get("Number of Missed Assignments", ""),
+        #         "Number of Assignments graded 0": row.get("Number of Assignments graded 0", "")
+        #         }
+
+        #     ## Assign the course data to the appropriate course number
+        #     enrollmentDataDict[student_id][course_number] = course_data
+
+        # ## If previous versions of the enrollment data exist
+        # if os.path.exists(f"{baseExternalOutputPath}Enrollment_Data_Activity.csv") and os.path.exists(f"{baseExternalOutputPath}Enrollment_Data_Submissions.csv"):
+
+        #     ## Open the current enrollment data activity and submission pipe delineated csv files as dataframes
+        #     oldEnrollmentDataActivityDf = pd.read_csv(f"{baseExternalOutputPath}Enrollment_Data_Activity.csv", sep="|")
+        #     oldEnrollmentDataSubmissionsDf = pd.read_csv(f"{baseExternalOutputPath}Enrollment_Data_Submissions.csv", sep="|")
+        
+        #     ## Combine old data into a single DataFrame for comparison
+        #     oldEnrollmentDataDf = pd.merge(oldEnrollmentDataActivityDf, oldEnrollmentDataSubmissionsDf, on=["Student ID", "Course Number"], how="outer")
+
+        #     ## Rename the columns to match the current data
+        #     # oldEnrollmentDataDf.rename(columns={
+        #     #     'Student ID': 'student_id'
+        #     #     , 'Course Number': 'course_id'
+        #     #     , 'Published': 'published'
+        #     # }, inplace=True)
+
+        #     # # Find the differences between the old and current data
+        #     # rawMissedEnrollmentsDf = oldEnrollmentDataDf[
+        #     #     ~oldEnrollmentDataDf.apply(
+        #     #         lambda row: any(
+        #     #             (currentEnrollmentDataDf['student_id'] == row['student_id']) 
+        #     #             & (currentEnrollmentDataDf['course_id'] == row['course_id'])
+        #     #             )
+        #     #         , axis=1
+        #     #         )
+        #     #     ]
+
+        #     # Find the differences between the old and current data
+        #     rawMissedEnrollmentsDf = oldEnrollmentDataDf[
+        #         ~oldEnrollmentDataDf.apply(
+        #             lambda row: (
+        #                 row['Student ID'] in enrollmentDataDict and
+        #                 row['Course Number'] in enrollmentDataDict[row['Student ID']]
+        #             ),
+        #             axis=1
         #         )
         #     ]
-        
-        # ## Open the SIS course feed file from the baseExternalInputPath
-        # sisCourseFeedDF = pd.read_csv(f"{baseExternalInputPath}canvas_course.csv")
 
-        # ## Filter out any missing enrollments that are not in the SIS course feed
-        # filteredMissingEnrollmentsDf = rawMissingEnrollmentsDf[
-        #     rawMissingEnrollmentsDf['course_id'].isin(sisCourseFeedDF['course_id'])
-        #     ]
         
-        # ## Add the missing enrollments to the relevant student IDs' data points
-        # for index, row in filteredMissingEnrollmentsDf.iterrows():
+        #     ## Open the SIS course feed file from the baseExternalInputPath
+        #     sisCourseFeedDF = pd.read_csv(f"{baseExternalInputPath}canvas_course.csv")
+
+        #     ## Replace all _ with - in the sisCourseFeedDF
+        #     sisCourseFeedDF['course_id'] = sisCourseFeedDF['course_id'].str.replace('-', '_')
+
+        #     ## Filter out any missed enrollments that are not in the SIS course feed
+        #     filteredMissedEnrollmentsDf = rawMissedEnrollmentsDf[
+        #         rawMissedEnrollmentsDf['Course Number'].isin(sisCourseFeedDF['course_id'])
+        #         ]
+
+        #     ## Replace any instances of nan with ""
+        #     filteredMissedEnrollmentsDf.fillna("", inplace=True)
+        
+        #     ## Add the missed enrollments to the relevant student IDs' data points
+        #     for index, row in filteredMissedEnrollmentsDf.iterrows():
             
-        #     ## Define the student ID and course ID
-        #     studentId = row['student_id']
-        #     courseId = row['course_id']
+        #         ## Define the student ID and course ID
+        #         studentId = row['Student ID']
+        #         courseId = row['Course Number']
+        #         lastCanvasActivity = enrollmentDataDict[studentId]["Last Canvas Activity"] if studentId in enrollmentDataDict else retrieveStuLastCanvasAccessReportDataPoint(studentId)
     
-        #     ## Check if the student_id exists in the current data dict
-        #     if student_id in enrollmentDataDict.keys():
+        #         ## Check if the student_id exists in the current data dict
+        #         if studentId in enrollmentDataDict:
                 
-        #         ## Set the published status to "Unenrolled"
-        #         row['Published'] = "Student Unenrolled"
+        #             ## Set the published status to "Unenrolled"
+        #             row['Published'] = "Student Un-enrolled"
                 
-        #         ## For each key and value in the row
-        #         for courseDataPoint, courseDataPointValue in row.items():
+        #             ## For each key and value in the row
+        #             for courseDataPoint, courseDataPointValue in row.items():
 
-        #             ## Add the course data point to the student's course data dict
-        #             enrollmentDataDict[studentId][courseId][courseDataPoint] = courseDataPointValue
+        #                 ## If the courseid is a key within the student's course data dict
+        #                 if courseId in enrollmentDataDict[studentId]:
+
+        #                     ## Add the course data point to the student's course data dict
+        #                     enrollmentDataDict[studentId][courseId][courseDataPoint] = courseDataPointValue
+
+        #                 ## Otherwise
+        #                 elif courseDataPoint not in ["Student ID", "Course Number"]:
+
+        #                     ## Create a new course data dict item
+        #                     enrollmentDataDict[studentId][courseId] = {courseDataPoint: courseDataPointValue}
+
+        #                     ## If the course data point is the last canvas activity date and the row's last Canvas activity
+        #                     ## date is more recent than the student's last canvas activity date
+        #                     if (
+        #                         courseDataPoint == "Last Canvas Activity"
+        #                         and lastCanvasActivity < courseDataPointValue
+        #                     ):
+
+        #                         ## Set the last canvas activity date to the student's last canvas activity date
+        #                         enrollmentDataDict[studentId][courseId][courseDataPoint] = row[courseDataPoint]
+
+        #                         ## Also set the last canvas activity date to the student's last canvas activity date
+        #                         enrollmentDataDict[studentId]["Last Canvas Activity"] = row[courseDataPoint]
+        #                         lastCanvasActivity = row[courseDataPoint]
                         
-        #     ## Otherwise  
-        #     else:
+        #         ## Otherwise  
+        #         else:
                 
-        #         ## Create a new student data dict item
-        #         enrollmentDataDict[studentId] = {courseId: row.to_dict()}
+        #             ## Create a new student data dict item
+        #             enrollmentDataDict[studentId] = {courseId: row.to_dict()}
 
-        #         ## Set the published status to "Unenrolled"
-        #         enrollmentDataDict[studentId][courseId]['Published'] = "Student Unenrolled"
+        #             ## Set the published status to "Unenrolled"
+        #             enrollmentDataDict[studentId][courseId]['Published'] = "Student Un-enrolled"
 
-        #         ## Retrieve and record the student's last canvas activity date
-        #         enrollmentDataDict[studentId]["Last Canvas Activity"] = retrieveStuLastCanvasAccessReportDataPoint(studentId)
+        #             ## Record the student's last canvas activity date and set it to both the course and student data dicts
+        #             enrollmentDataDict[studentId][courseId]["Last Canvas Activity"] = lastCanvasActivity
+        #             enrollmentDataDict[studentId]["Last Canvas Activity"] = lastCanvasActivity
 
         with (
             open(fr"{baseLocalOutputPath}Enrollment_Data_Activity.csv"
@@ -1356,14 +1389,10 @@ def Nighthawk360CanvasReport ():
             submissionCsv.write("|\"Course Number\"")                   
             submissionCsv.write("|\"Current Grade\"")                   
             submissionCsv.write("|\"Number of Missed Assignments\"")    
-            submissionCsv.write("|\"Number of 0 Grades\"\n")        
+            submissionCsv.write("|\"Number of Assignments graded 0\"\n")        
             
             ## Iterate through the completed enrollment data and save it in dataframe compatible format
             for stuID, dataPoints in enrollmentDataDict.items():
-                
-                # testList = [132928,
-                #             161968,
-                # ]
 
                 for dataPoint in dataPoints:
                     ## If the target datapoint is the last course activity (as opposed to a course) 
@@ -1390,30 +1419,30 @@ def Nighthawk360CanvasReport ():
                         formattedLastCourseParticipation    = "|\"\"\n"
 
                         formattedCurrentGrade               = "|\"\""
-                        formattedNumberOfMissingAssignments = "|\"\""
+                        formattedNumberOfMissedAssignments = "|\"\""
                         formattedNumberOf0Grades            = "|\"\"\n"
 
                         ## try to format the data points for the csv
                         try: ## Irregular try clause, do not comment out in testing
                         
-                            formattedStuID                      = "\"" + str(stuID)                                                  + "\""
-                            formattedCourseCode                 = "|\"" + dataPoint.replace('_', '-')                                + "\""
+                            formattedStuID                      = "\""  + str(stuID)                                                        + "\""
+                            formattedCourseCode                 = "|\"" + dataPoint.replace('_', '-')                                       + "\""
 
-                            formattedLastCanvasActivity         = "|\"" + dataPoints             ["Last Canvas Activity"]            + "\""
-                            formattedPublished                  = "|\"" + dataPoints [dataPoint] ["Published"]                       + "\""
-                            formattedLastCourseActivity         = "|\"" + dataPoints [dataPoint] ["Last Course Activity Date"]       + "\""
-                            formattedLastCourseParticipation    = "|\"" + dataPoints [dataPoint] ["Last Course Participation"]       + "\"\n"
+                            formattedLastCanvasActivity         = "|\"" + str(dataPoints             ["Last Canvas Activity"])              + "\""
+                            formattedPublished                  = "|\"" + dataPoints [dataPoint]     ["Published"]                          + "\""
+                            formattedLastCourseActivity         = "|\"" + str(dataPoints [dataPoint] ["Last Course Activity"])              + "\""
+                            formattedLastCourseParticipation    = "|\"" + str(dataPoints [dataPoint] ["Last Course Participation"])         + "\"\n"
 
-                            formattedCurrentGrade               = "|\"" + dataPoints [dataPoint] ["Current Grade"]                   + "\""
-                            formattedNumberOfMissingAssignments = "|\"" + dataPoints [dataPoint] ["Number of Missing Assignments"]   + "\""
-                            formattedNumberOf0Grades            = "|\"" + dataPoints [dataPoint] ["Number of Assignments graded 0"]  + "\"\n"
+                            formattedCurrentGrade               = "|\"" + str(dataPoints [dataPoint] ["Current Grade"])                     + "\""
+                            formattedNumberOfMissedAssignments  = "|\"" + str(dataPoints [dataPoint] ["Number of Missed Assignments"])      + "\""
+                            formattedNumberOf0Grades            = "|\"" + str(dataPoints [dataPoint] ["Number of Assignments graded 0"])    + "\"\n"
 
                         except Exception as error: ## Irregular except clause, do not comment out in testing
 
-                            ## Log a warning that an error occured while processing the data point
-                            logger.warning(f"Error: {error} \n Occured while processing {dataPoint}:{dataPoints[dataPoint]} for Student ID: {str(stuID)}")
+                             ## Log a warning that an error occured while processing the data point
+                             logger.warning(f"Error: {error} \n Occured while processing {dataPoint}:{dataPoints[dataPoint]} for Student ID: {str(stuID)}")
 
-                            error_handler (functionName, p1_ErrorInfo = f"{error} \n Occured while processing {dataPoint}:{dataPoints[dataPoint]}")
+                             error_handler ("functionName", p1_ErrorInfo = f"{error} \n Occured while processing {dataPoint}:{dataPoints[dataPoint]}")
 
                         ## Record activity data
                                                   
@@ -1428,7 +1457,7 @@ def Nighthawk360CanvasReport ():
                         submissionCsv.write (formattedStuID)
                         submissionCsv.write (formattedCourseCode)
                         submissionCsv.write (formattedCurrentGrade)
-                        submissionCsv.write (formattedNumberOfMissingAssignments)
+                        submissionCsv.write (formattedNumberOfMissedAssignments)
                         submissionCsv.write (formattedNumberOf0Grades)
 
         ## Copy the converted external csv files to the external output path folder location

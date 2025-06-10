@@ -21,7 +21,7 @@ from ResourceModules.Get_Courses import termGetCourses
 from ResourceModules.Get_Sections import termGetSections
 from ResourceModules.Get_Enrollments import termGetEnrollments
 from ResourceModules.Get_Active_Outcome_Courses import termGetActiveOutcomeCourses
-#from ResourceModules.Get_Slate_Info import getSlateInfo
+# from ResourceModules.Get_Slate_Info import getSlateInfo
 # from ResourceModules.Get_Outcomes import createOutcomeCSV
 # from ResourceModules.Get_Outcome_Results import termGetOutcomeResults
 from ResourceModules.Get_Unpublished_Courses import termGetUnpublishedCourses
@@ -58,10 +58,10 @@ lastDayOfCurrentMonth = calendar.monthrange(currentYear, currentMonth)[1]
 
 ## Testing variables
 # currentDay = 1 ## First week of the month testing value
-# currentWeekDay = 0 ## Friday testing value 
-# currentWeekDay = 4 ## Friday testing value 
+# currentWeekDay = 0 ## Monday testing value 
+# currentWeekDay = 3 ## Friday testing value 
 # currentHour = 0 ## First run of the day testing value
-# currentHour = 18 ## Last run of the day testing value
+# currentHour = 16 ## Last run of the day testing value
 
 ## Set working directory
 os.chdir(os.path.dirname(__file__))
@@ -134,14 +134,14 @@ logError.setLevel(logging.ERROR)
 logError.setFormatter(FORMAT)
 logger.addHandler(logError)
 
-## The variable below holds a set of the functions that have had errors. This enables the error_handler function to only send
+## The variable below holds a set of the functions that have had errors. This enables the except function to only send
 ## an error email the first time the function triggeres an error
 setOfFunctionsWithErrors = set()
 
 
 ## This function handles function errors
 def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
-    functionName = "error_handler"
+    functionName = "except"
 
     ## Log the error
     logger.error (f"     \nA script error occured while running {p1_ErrorLocation}. " +
@@ -213,8 +213,6 @@ def outcomeReportsAndActions (p1_relaventTerm):
             
         ## Define the action threading objects
         ongoingOutcomeActionThreads = []
-
-        ## If the last two 
         
         ## For each Target Designator in the Automated Outcome Tool Variables
         for targetDesignator in automatedOutcomeToolVariablesDf["Target Designator"]:
