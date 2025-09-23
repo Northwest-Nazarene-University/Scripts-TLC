@@ -58,10 +58,10 @@ if not (os.path.exists(baseLogPath)):
 relPathLen = len(PFRelativePath)
 
 ## Canvas Instance Url
-CoreCanvasAPIUrl = None
+coreCanvasApiUrl = None
 ## Open the Core_Canvas_Url.txt from the config path
 with open (f"{configPath}Core_Canvas_Url.txt", "r") as file:
-    CoreCanvasAPIUrl = file.readlines()[0]
+    coreCanvasApiUrl = file.readlines()[0]
 
 ## If the script is run as main the folder with the access token is in the parent directory
 canvasAccessToken = ""
@@ -103,7 +103,7 @@ setOfFunctionsWithErrors = set()
 
 ## This function handles function errors
 def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
-    functionName = "except"
+    functionName = "error_handler"
     logger.error (f"     \nA script error occured while running {p1_ErrorLocation}. " +
                      f"Error: {str(p1_ErrorInfo)}")
     ## If the function with the error has not already been processed send an email alert
@@ -167,7 +167,7 @@ def createLastUserAccesssCSV(p1_header, p1_inputTerm, attempt = 0):
                 return targetDestination
         
         ## Define and initialize the api url for starting reports
-        start_report_API_URL = CoreCanvasAPIUrl + "accounts/1/reports/last_user_access_csv"
+        start_report_API_URL = coreCanvasApiUrl + "accounts/1/reports/last_user_access_csv"
         
         ##Define and initialize the lists of relavent enrollments, the IDs of their related reports, and their download urls
         term_report_ID = ""
@@ -197,7 +197,7 @@ def createLastUserAccesssCSV(p1_header, p1_inputTerm, attempt = 0):
         logger.info ("\nChecking statuses of last_user_access reports")
 
         ## Define the status report the Google api url with the report ID added on the end
-        status_report_API_URL = CoreCanvasAPIUrl + "accounts/1/reports/last_user_access_csv/" + str(term_report_ID)
+        status_report_API_URL = coreCanvasApiUrl + "accounts/1/reports/last_user_access_csv/" + str(term_report_ID)
         ## Make the status api call
         status_object = requests.get(status_report_API_URL, headers = p1_header)
         ## Convert status_text_jsonObject from json to a Python Dictionary

@@ -131,10 +131,10 @@ if not (os.path.exists(baseLogPath)):
 relPathLen = len(PFRelativePath)
 
 ## Canvas Instance Url
-CoreCanvasAPIUrl = None
+coreCanvasApiUrl = None
 ## Open the Core_Canvas_Url.txt from the config path
 with open (f"{configPath}Core_Canvas_Url.txt", "r") as file:
-    CoreCanvasAPIUrl = file.readlines()[0]
+    coreCanvasApiUrl = file.readlines()[0]
 
 ## If the script is run as main the folder with the access token is in the parent directory
 canvasAccessToken = ""
@@ -176,7 +176,7 @@ setOfFunctionsWithErrors = set()
 
 ## This function handles function errors
 def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
-    functionName = "except"
+    functionName = "error_handler"
     logger.error (f"     \nA script error occured while running {p1_ErrorLocation}. " +
                      f"Error: {str(p1_ErrorInfo)}")
     ## If the function with the error has not already been processed send an email alert
@@ -288,7 +288,7 @@ def concludeEnrollments():
         inactiveEnrollmentsDF.to_csv(f"{outputPath}Inactive_Enrollments.csv", index=False)
 
         ## Save the conclude enrollment SIS upload API URL
-        concludeEnrollmentSisUploadApiUrl = f"{CoreCanvasAPIUrl}accounts/1/sis_imports"
+        concludeEnrollmentSisUploadApiUrl = f"{coreCanvasApiUrl}accounts/1/sis_imports"
         
         ##Save the conclude enrollment SIS upload payload
         concludeEnrollmentSisUploadPayload = {"attachment":f"{outputPath}Inactive_Enrollments.csv", "extension":"csv"}
@@ -302,7 +302,7 @@ def concludeEnrollments():
             canvasEnrollmentId = enrollment[1]
 
             ## Save the conclude enrollment API URL
-            concludeEnrollmentApiUrl = f"{CoreCanvasAPIUrl}courses/{canvasCourseId}/enrollments/{canvasEnrollmentId}"
+            concludeEnrollmentApiUrl = f"{coreCanvasApiUrl}courses/{canvasCourseId}/enrollments/{canvasEnrollmentId}"
 
             ## Make an API call to conclude the enrollment
             concludeEnrollmentSectionObject = requests.delete(concludeEnrollmentApiUrl, headers = header)

@@ -15,12 +15,13 @@ sys.path.append(f"{os.getcwd()}\ResourceModules")
 ## Import local modules
 from ResourceModules.Error_Email_API import errorEmailApi
 from ResourceModules.Get_Terms import termGetTerms
-from ResourceModules.Get_Users import termGetUsers
+from ResourceModules.Get_TUG_Students import getUsers
 from ResourceModules.Get_Accounts import termGetAccounts
 from ResourceModules.Get_Courses import termGetCourses
 from ResourceModules.Get_Sections import termGetSections
 from ResourceModules.Get_Enrollments import termGetEnrollments
 from ResourceModules.Get_Active_Outcome_Courses import termGetActiveOutcomeCourses
+from ResourceModules.Get_TUG_Students import termGetTugStudents
 # from ResourceModules.Get_Slate_Info import getSlateInfo
 # from ResourceModules.Get_Outcomes import createOutcomeCSV
 # from ResourceModules.Get_Outcome_Results import termGetOutcomeResults
@@ -33,13 +34,16 @@ from ReportModules.Incoming_Student_Report import termGetIncomingStudentsInfo
 from ReportModules.Outcome_Attachment_Report import termOutcomeAttachmentReport
 from ReportModules.Nighthawk_360_Canvas_Report import Nighthawk360CanvasReport
 from ReportModules.Outcome_Results_Report import termProcessOutcomeResults
+from ActionModules.Enroll_TUG_Students_In_SGA import enrollTugStudentsInSga
+from ActionModules.Enroll_GPS_Students_In_Grad_Hub import enrollGPSStudentsInGrad_Hub
 from ActionModules.Course_Date_Related_Actions import termDetermineAndPerformRelevantActions
+from ActionModules.CX_Data_Sync import importCXData
 
 # Define the script name, purpose, and external requirements for logging and error reporting purposes
 scriptName = "IDT_Canvas_Primary"
 
 scriptPurpose = r"""
-Run all IDT Canvas related scripts. Including but not limited to Get_Terms, Get_Users, Get_Courses, Get_Enrollments, Get_Outcome_Results, Retrieve_University_Syllabi, Check_Syllabi_For_Syllabus_Addendum, List_Gathered_Syllabi, Create_Active_GE_Course_List, Outcome_Exporter, Check_GE_Outcome_Attachment, and GE_Data_SSIS.
+Run all IDT Canvas related scripts. Including but not limited to Get_Terms, Get_TUG_Students, Get_Courses, Get_Enrollments, Get_Outcome_Results, Retrieve_University_Syllabi, Check_Syllabi_For_Syllabus_Addendum, List_Gathered_Syllabi, Create_Active_GE_Course_List, Outcome_Exporter, Check_GE_Outcome_Attachment, and GE_Data_SSIS.
 """
 externalRequirements = r"""
 The full contents of the repository found at https://github.com/NNU-IDT-Scripts/NNU-Canvas-Scripts.
@@ -59,8 +63,8 @@ lastDayOfCurrentMonth = calendar.monthrange(currentYear, currentMonth)[1]
 ## Testing variables
 # currentDay = 1 ## First week of the month testing value
 # currentWeekDay = 0 ## Monday testing value 
-# currentWeekDay = 3 ## Friday testing value 
-# currentHour = 0 ## First run of the day testing value
+# currentWeekDay = 0 ## Monday testing value 
+# currentHour = 1 ## First run of the day testing value
 # currentHour = 16 ## Last run of the day testing value
 
 ## Set working directory
@@ -141,10 +145,10 @@ setOfFunctionsWithErrors = set()
 
 ## This function handles function errors
 def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
-    functionName = "except"
+    functionName = "error_handler"
 
     ## Log the error
-    logger.error (f"     \nA script error occured while running {p1_ErrorLocation}. " +
+    logger.error (f"     \nA script error occured while running {p1_ErrorLocation}. "
                      f"Error: {str(p1_ErrorInfo)}")
 
     ## If the function with the error has not already been processed send an email alert
@@ -175,9 +179,38 @@ def outcomeReportsAndActions (p1_relaventTerm):
         
         ## Define the output threading objects
         ongoingOutcomeOutput1Threads = []
+
+        ## Define a variable to track whether the term is a grad term
+        gradTerm = False
+
+        ## If the term is a grad term
+        if p1_relaventTerm[:2].upper() in ["GS", "SG", "GF"]:
+            gradTerm = True
         
-        ## For each Target Designator in the Automated Outcome Tool Variables
-        for targetDesignator in automatedOutcomeToolVariablesDf["Target Designator"]:
+        ## For each Target Designator and Course Level in the Automated Outcome Tool Variables
+        for targetDesignator, courseLevel in zip(
+            automatedOutcomeToolVariablesDf["Target Designator"],
+            automatedOutcomeToolVariablesDf["Course Level"]
+        ):
+
+
+            ## If the courseLevel is Undergraduate
+            if courseLevel == "Undergraduate":
+
+                ## If the term is a grad term
+                if gradTerm:
+
+                    ## Continue
+                    continue
+
+            ## Otherwise if the courseLevel is Graduate
+            elif courseLevel == "Graduate":
+
+                ## If the term is not a grad term
+                if not gradTerm:
+
+                    ## Continue
+                    continue
 
             ## Define the outcome attachment and outcome result report threads
             threadOutcomeAttachment = threading.Thread(target=termOutcomeAttachmentReport, args=(p1_relaventTerm, targetDesignator))
@@ -196,7 +229,28 @@ def outcomeReportsAndActions (p1_relaventTerm):
         ongoingOutcomeOutput2Threads = []
 
         ## For each Target Designator in the Automated Outcome Tool Variables
-        for targetDesignator in automatedOutcomeToolVariablesDf["Target Designator"]:
+        for targetDesignator, courseLevel in zip(
+            automatedOutcomeToolVariablesDf["Target Designator"],
+            automatedOutcomeToolVariablesDf["Course Level"]
+        ):
+
+            ## If the courseLevel is Undergraduate
+            if courseLevel == "Undergraduate":
+
+                ## If the term is a grad term
+                if gradTerm:
+
+                    ## Continue
+                    continue
+
+            ## Otherwise if the courseLevel is Graduate
+            elif courseLevel == "Graduate":
+
+                ## If the term is not a grad term
+                if not gradTerm:
+
+                    ## Continue
+                    continue
 
             ## Define the outcome attachment and outcome result report threads
             threadOutcomeResult = threading.Thread(target=termProcessOutcomeResults, args=(p1_relaventTerm, targetDesignator))
@@ -215,7 +269,28 @@ def outcomeReportsAndActions (p1_relaventTerm):
         ongoingOutcomeActionThreads = []
         
         ## For each Target Designator in the Automated Outcome Tool Variables
-        for targetDesignator in automatedOutcomeToolVariablesDf["Target Designator"]:
+        for targetDesignator, courseLevel in zip(
+            automatedOutcomeToolVariablesDf["Target Designator"],
+            automatedOutcomeToolVariablesDf["Course Level"]
+        ):
+
+            ## If the courseLevel is Undergraduate
+            if courseLevel == "Undergraduate":
+
+                ## If the term is a grad term
+                if gradTerm:
+
+                    ## Continue
+                    continue
+
+            ## Otherwise if the courseLevel is Graduate
+            elif courseLevel == "Graduate":
+
+                ## If the term is not a grad term
+                if not gradTerm:
+
+                    ## Continue
+                    continue
             
             ## Define the outcome action threads
             threadOutcomeAction = threading.Thread(target=termDetermineAndPerformRelevantActions, args=(p1_relaventTerm, targetDesignator))
@@ -269,8 +344,6 @@ def createPartialCanvasInputs_Threaded (p3_RelaventTerm):
     ## Wait for the threading to complete
     for thread in activeThreads:
         thread.join()    
-
-    ## Copy 
 
     ## Retrieve the Automated Outcome Tool Variables excel file as a df    
     automatedOutcomeToolVariablesDf = pd.read_excel(f"{baseExternalInputPath}Internal Tool Files\\Automated Outcome Tool Variables.xlsx")
@@ -326,7 +399,7 @@ def createCompleteCanvasInputs_Threaded (p2_RelaventTerm):
     activeThreads.append(threading.Thread(target=termGetSections, args=("All",)))
     activeThreads.append(threading.Thread(target=termGetCourses, args=(p2_RelaventTerm,)))
     activeThreads.append(threading.Thread(target=termGetTerms, args=(p2_RelaventTerm,)))
-    activeThreads.append(threading.Thread(target=termGetUsers, args=(p2_RelaventTerm,)))
+    activeThreads.append(threading.Thread(target=getUsers, args=(p2_RelaventTerm,)))
     activeThreads.append(threading.Thread(target=termGetAccounts, args=(p2_RelaventTerm,)))
     activeThreads.append(threading.Thread(target=termGetCanvasUserLastAccess))
     # activeThreads.append(threading.Thread(target=getSlateInfo, args=(p2_RelaventTerm,)))
@@ -408,11 +481,11 @@ def addRelatedTerms (p1_targetTermList, p1_targetTerm):
         ## If Spring
         if p1_targetTerm == "SP":
 
-            ## Add the previous and coming terms if it is Friday
-            if currentWeekDay == 4:
+            ## Add the previous and coming terms if it is Monday
+            if currentWeekDay == 0:
                 addAdditionalRelatedTerms(p2_targetTerm = p1_targetTerm, p2_targetTermList = p1_targetTermList)
 
-                ## If the current day is also the first or third Friday of the month,
+                ## If the current day is also the first or third Monday of the month,
                 ## add the previous school year's terms as well
                 if (currentDay >= 1 and currentDay <= 7) or (currentDay >= lastDayOfCurrentMonth - 6 and currentDay <= lastDayOfCurrentMonth):
                     addPrevYearTerms(p1_targetTermList)
@@ -420,11 +493,11 @@ def addRelatedTerms (p1_targetTermList, p1_targetTerm):
         ## If Summer
         elif p1_targetTerm == "SU":
 
-            ## Add the previous and coming terms if it is Friday
-            if currentWeekDay == 4:
+            ## Add the previous and coming terms if it is Monday
+            if currentWeekDay == 0:
                 addAdditionalRelatedTerms(p2_targetTerm = p1_targetTerm, p2_targetTermList = p1_targetTermList)
 
-                ## If the current day is also the first or third Friday of the month,
+                ## If the current day is also the first or third Monday of the month,
                 ## add the previous school year's terms as well
                 if (currentDay >= 1 and currentDay <= 7) or (currentDay >= lastDayOfCurrentMonth - 6 and currentDay <= lastDayOfCurrentMonth):
                     addPrevYearTerms(p1_targetTermList)
@@ -432,11 +505,11 @@ def addRelatedTerms (p1_targetTermList, p1_targetTerm):
         ## September through December (the rest of the months) is the Fall Term
         else:
 
-            ## Add the previous and coming terms if it is Friday
-            if currentWeekDay == 4:
+            ## Add the previous and coming terms if it is Monday
+            if currentWeekDay == 0:
                 addAdditionalRelatedTerms(p2_targetTerm = p1_targetTerm, p2_targetTermList = p1_targetTermList)
 
-                ## If the current day is also the first or third Friday of the month,
+                ## If the current day is also the first or third Monday of the month,
                 ## add the previous school year's terms as well
                 if (currentDay >= 1 and currentDay <= 7) or (currentDay >= 15 and currentDay <= 21):
                     addPrevYearTerms(p1_targetTermList)
@@ -491,15 +564,50 @@ def fourTimesDaily (p1_relaventTerm):
     functionName = "Four Times Daily"
 
     try:
+
+        ## Run the cx data sync
+        CXDataSyncStatus = importCXData()
+
+        ## If the cx data sync was successful
+        if CXDataSyncStatus:
+            ## Log the successful cx data sync
+            logger.info("CX Data Sync Successful")
+
+        # Otherwise
+        else:
+
+            ## Log the failed cx data sync
+            logger.error("CX Data Sync Failed")
+
+            ## Send an error email
+            error_handler (functionName, p1_ErrorInfo = "The CX Data Sync Failed. Please check the messages at https://nnu.instructure.com/accounts/1/sis_import for more information.")
         
         ## Get the primary term data
         createCompleteCanvasInputs_Threaded(p1_relaventTerm)
 
         ## If relavent term is a summer term
         if p1_relaventTerm[:2].upper() == "SU":
+
+            ## Get the fall future partial canvas inputs
+            createPartialCanvasInputs_Threaded(p1_relaventTerm.replace("SU", "FA"))
             
-            ## Run the get incoming student info for the future fall term
+            ## Run the get incoming student info for the future undg fall term
             termGetIncomingStudentsInfo(p1_relaventTerm.replace("SU", "FA"))
+
+            ## If it is july
+            if currentMonth == 7:
+
+                ## Run the partial on the upcoming undg and grad school year terms
+                createPartialCanvasInputs_Threaded(p1_relaventTerm.replace("SU", "GF"))
+
+                ## Run the incoming student info for the future grad school year
+                termGetIncomingStudentsInfo(p1_relaventTerm.replace("SU", "GF"))
+
+            ## Otherwise
+            else:
+
+                ## Run get incoming student infor for the current grad school year
+                termGetIncomingStudentsInfo(p1_relaventTerm.replace("SU", "SG"))
             
         ## Otherwise
         else:
@@ -507,17 +615,20 @@ def fourTimesDaily (p1_relaventTerm):
             ## If it is december
             if currentMonth == 12:
                 
-                ## Run the partial on the upcoming spring term
+                ## Run the partial on the upcoming undg and grad spring terms
                 createPartialCanvasInputs_Threaded(f"SP{int(decade) + 1}")
+                createPartialCanvasInputs_Threaded(f"GS{int(decade) + 1}")
 
-                ## Run the get incoming student info for the future spring term
+                ## Run the get incoming student info for the future spring terms
                 termGetIncomingStudentsInfo(f"SP{int(decade) + 1}")
+                termGetIncomingStudentsInfo(f"GS{int(decade) + 1}")
                 
             ## Otherwise
             else:    
             
-                ## Run the get incoming student info for the current term
+                ## Run the get incoming student info for the current terms
                 termGetIncomingStudentsInfo(p1_relaventTerm)
+                termGetIncomingStudentsInfo(p1_relaventTerm.replace("SP", "GS").replace("FA", "GF"))
 
     except Exception as error:
         error_handler (functionName, p1_ErrorInfo = error)
@@ -564,24 +675,51 @@ def oneTimeDaily (p1_relaventTerms):
         ## Check if all ongoing input threads have completed
         for thread in ongoingInputThreads:
             thread.join()
+
+        ## Define outcomesTermsList as a list of the relevant term as well as the previous and next terms, starting with the current term
+        outcomesTermsList = [p1_relaventTerms[0]]
+
+        ## Otherwise if the first term is a spring term
+        if p1_relaventTerms[0][:2].upper() == "SP":
+            ## Add the next summer term
+            outcomesTermsList.append(p1_relaventTerms[0].replace("SP", "SU"))
+
+        ## If the first term is a summer term
+        elif p1_relaventTerms[0][:2].upper() == "SU":
+            ## Add the next fall term
+            outcomesTermsList.append(p1_relaventTerms[0].replace("SU", "FA"))
+            
+        ## Otherwise if the first term is a fall term
+        elif p1_relaventTerms[0][:2].upper() == "FA":
+            ## Add the next spring term, adding 1 to the decade
+            outcomesTermsList.append(f"SP{int(p1_relaventTerms[0][2:]) + 1}")
+
+        ## Add the graduate versions of the terms
+        for term in outcomesTermsList.copy():
+            if term[:2].upper() == "SP":
+                outcomesTermsList.append(term.replace("SP", "GS"))
+            elif term[:2].upper() == "SU":
+                outcomesTermsList.append(term.replace("SU", "SG"))
+            elif term[:2].upper() == "FA":
+                outcomesTermsList.append(term.replace("FA", "GF"))
             
         ## For each term in the relavent terms
-        for term in p1_relaventTerms:
+        for term in outcomesTermsList:
             
             ## for each of the first three terms
-            #if p1_relaventTerms.index(term) < 2:
+            # if term == "GF25":
 
-            ## Define a outcome reports and actions thread
-            outcomeReportsAndActionsThread = threading.Thread(target=outcomeReportsAndActions, args=(term,))
+                ## Define a outcome reports and actions thread
+                outcomeReportsAndActionsThread = threading.Thread(target=outcomeReportsAndActions, args=(term,))
                 
-            ## Start the outcome reports and actions thread
-            outcomeReportsAndActionsThread.start()
+                ## Start the outcome reports and actions thread
+                outcomeReportsAndActionsThread.start()
                 
-            ## Add the outcome reports and actions thread to the list of ongoing threads
-            ongoingOutcomeThreads.append(outcomeReportsAndActionsThread)
+                ## Add the outcome reports and actions thread to the list of ongoing threads
+                ongoingOutcomeThreads.append(outcomeReportsAndActionsThread)
                 
-            ## Wait a second to ensure there is a gap before the next thread
-            time.sleep(1)
+                ## Wait a second to ensure there is a gap before the next thread
+                time.sleep(1)
         
         ## Check if all ongoing outcome threads have completed
         for thread in ongoingOutcomeThreads:
@@ -596,6 +734,18 @@ def oneTimeDaily (p1_relaventTerms):
         ## Clear the current term's syllabi folders to ensure that we only have one syllabi
         ## for each course. Only clear the current terms (the first three terms)
         for term in p1_relaventTerms[:3]:
+
+            ## If the term is the first term
+            if term == p1_relaventTerms[0]:
+
+                ## Define a term related termGetTugStudents thread
+                termGetTugStudentsThread = threading.Thread(target=termGetTugStudents, args=(term,))
+
+                ## Start the term related termGetTugStudents thread
+                termGetTugStudentsThread.start()
+
+                ## Add the term related termGetTugStudents thread to the list of ongoing threads
+                ongoingInputThreads.append(termGetTugStudentsThread)
         
             ## Define the term related syallbi report thread
             ClearSyllabiThread = threading.Thread(target=clearRelaventSyllabiFolders, args=(term,))
@@ -624,8 +774,31 @@ def oneTimeDaily (p1_relaventTerms):
             
         ## Define threading objects
         for term in p1_relaventTerms:
+
+            ## If the term is the first term
+            if term == p1_relaventTerms[0]:
+
+                ## Define a term related enrollTugStudentsInSga thread
+                ## If the term is the summer term, change it to fall for the purpose of enrolling TUG students in SGA
+                enrollTugStudentsInSgaThread = threading.Thread(target=enrollTugStudentsInSga, args=(term.replace("SU","FA"),))
+
+                ## Start the term related enrollTugStudentsInSga thread
+                enrollTugStudentsInSgaThread.start()
+
+                ## Add the term related enrollTugStudentsInSga thread to the list of ongoing report threads
+                ongoingReportThreads.append(enrollTugStudentsInSgaThread)
+
+                ## Define a term related enrollGPSStudentsInGrad_Hub thread
+                ## If the term is the summer term, change it to fall for the purpose of enrolling TUG students in SGA
+                enrollGPSStudentsInGrad_HubThread = threading.Thread(target=enrollGPSStudentsInGrad_Hub, args=(term.replace("SG|FA","GF").replace("SP","GS"),))
+
+                ## Start the term related enrollGPSStudentsInGrad_Hub thread
+                enrollGPSStudentsInGrad_HubThread.start()
+
+                ## Add the term related enrollGPSStudentsInGrad_Hub thread to the list of ongoing report threads
+                ongoingReportThreads.append(enrollGPSStudentsInGrad_HubThread)
         
-            ## Define the term related syallbi report thread
+            # ## Define the term related syallbi report thread
             termSyallabiThread = threading.Thread(target=termSyllabiReport, args=(term,))
 
             ## Start the term related syallbi report thread
@@ -634,7 +807,7 @@ def oneTimeDaily (p1_relaventTerms):
             ## Add the term related syallbi report thread to the list of ongoing report threads
             ongoingReportThreads.append(termSyallabiThread)
 
-            ## Wait three seconds to ensure there is a gap before the next thread
+            # Wait three seconds to ensure there is a gap before the next thread
             time.sleep(3)
 
             ## Define the term related syallbi report thread
@@ -702,16 +875,16 @@ if __name__ == "__main__":
     
     # terms = ["FA", "SP", "SU"]
 
-    # # Define the start and end years
+    # Define the start and end years
     # start_year = 14
     # end_year = 25
 
-    # # Initialize an empty list to store the term codes
+    # Initialize an empty list to store the term codes
     # term_codes = []
     
     # targetDesignatorList = ["GE"]
 
-    # # Generate the term codes
+    # Generate the term codes
     # for year in range(start_year, end_year + 1):
     #     for term in terms:
     #         term_codes.append(f"{term}{year:02}")
@@ -747,7 +920,7 @@ if __name__ == "__main__":
         
     
     # currentDay = 1 ## First week of the month testing value
-    # currentWeekDay = 4 ## Friday testing value 
+    # currentWeekDay = 4 ## Monday testing value 
     # currentHour = 3 ## First run of the day testing value
     
     # main()

@@ -64,10 +64,10 @@ if not (os.path.exists(baseLogPath)):
     os.makedirs(baseLogPath, mode=0o777, exist_ok=False)
 
 ## Canvas Instance Url
-CoreCanvasAPIUrl = None
+coreCanvasApiUrl = None
 ## Open the Core_Canvas_Url.txt from the config path
 with open (f"{configPath}Core_Canvas_Url.txt", "r") as file:
-    CoreCanvasAPIUrl = file.readlines()[0]
+    coreCanvasApiUrl = file.readlines()[0]
 
 ## If the script is run as main the folder with the access token is in the parent directory
 canvasAccessToken = ""
@@ -109,7 +109,7 @@ setOfFunctionsWithErrors = set()
 
 ## This function handles function errors
 def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
-    functionName = "except"
+    functionName = "error_handler"
     logger.error (f"     \nA script error occured while running {p1_ErrorLocation}. " +
                      f"Error: {str(p1_ErrorInfo)}")
     ## If the function with the error has not already been processed send an email alert
@@ -128,10 +128,12 @@ def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
 ## This function 
 def getTargetIncomingStudentInfo (row
                             , rowIndex
+                            , p2_inputTerm
                             , p1_targetOrientation
                             , p1_targetOrientationStudents
                             , p1_targetOrientationSections
                             , p1_targetOrientationFinalQuizSubmissionDatesAndIds
+                            , p1_orientationCourseApiUrl
                             , p1_header
                             , targetSlateDataDF
                             , p1_sisFeedCoursesDf
@@ -152,10 +154,13 @@ def getTargetIncomingStudentInfo (row
         studentSisId = row['StudentID']
         studentMajor = row['Major_Name']
         studentSectionSisId = f"{p1_targetOrientation}: {studentMajor}"
+        studentOrientationSectionSisId = f"{p1_targetOrientation}: {p2_inputTerm}"
+
+        ## Define a variable to hold the legacy departmentException
+        departmentException = False
 
         ## Check if the user is has a major that has its own orientation
-        if "GPS" in p1_targetOrientation:
-            departmentException = False
+        if "GPS" in p1_targetOrientation and p2_inputTerm in ["SP25", "GS25", "SU25", "SG25"]:
             for major in indivigualOrientationDepartmentExceptions:
                 if major in studentMajor:
                     departmentException = True
@@ -166,7 +171,7 @@ def getTargetIncomingStudentInfo (row
 
         ## Get the user's username, email, and last login date
         ## Define the url to get the user data
-        userApiUrl = f"{CoreCanvasAPIUrl}users/sis_user_id:{studentSisId}"
+        userApiUrl = f"{coreCanvasApiUrl}users/sis_user_id:{studentSisId}"
 
         ## Define the playload for the user payload
         userPayload = {"include[]":["last_login"]}
@@ -225,36 +230,96 @@ def getTargetIncomingStudentInfo (row
         ## Enroll the student in the relavent orientation if they are not already enrolled in one
         if userEnrolledInOrientation == False:
 
+            ## Define a variable to track whether the section for the student's orientation section already exists
+            orientationSectionExists = False
+
             ## Define a variable to track whether the section for the student's major already exists
             majorSectionExists = False
 
-            ## Look for the major in the names of the existing sections to determine if it 
+            ## For each section in the target orientation sections
             for section in p1_targetOrientationSections:
-                if studentMajor in section["name"]:
+
+                ## If not section["sis_section_id"]
+                if not section["sis_section_id"]:
+
+                    ## Skip to the next section
+                    continue
+
+                ## If the student's major is in the section's name
+                if studentSectionSisId in section["sis_section_id"]:
+
+                    ## If the section's sis_section_id matches the student's section sis id
                     majorSectionExists = True
+
+                ## If the section's sis_section_id matches the student's orientation section sis id
+                if studentOrientationSectionSisId == section["sis_section_id"]:
+
+                    ## Set the orientation section exists variable to true
+                    orientationSectionExists = True
+
+                ## If both the orientation section and the major section already exist, break the loop
+                if orientationSectionExists and majorSectionExists:
                     break
 
-            ##If it a section for that major doesn't already exists
+            ## If the orientation section doesn't already exist
+            if not orientationSectionExists:
+
+                ## Create the api url for creating a new section
+                createOrientationSectionApiUrl = f"{p1_orientationCourseApiUrl}/sections"
+
+                ## Define the payload to create the new section
+                createOrientationSectionPayload = {"course_section[name]": [studentOrientationSectionSisId], "course_section[sis_section_id]": [studentOrientationSectionSisId]}
+
+                ## Make the api call to create the new section
+                createOrientationSectionObject = requests.post(createOrientationSectionApiUrl, headers = p1_header, params = createOrientationSectionPayload)
+                
+            ## If it a section for that major doesn't already exists
             if not majorSectionExists:
-                createSectionApiUrl = f"{CoreCanvasAPIUrl}courses/sis_course_id:{p1_targetOrientation}/sections"
+                createSectionApiUrl = f"{p1_orientationCourseApiUrl}/sections"
 
                 createSectionPayload = {"course_section[name]": [studentMajor], "course_section[sis_section_id]": [studentSectionSisId]}
 
                 createSectionObject = requests.post(createSectionApiUrl, headers = p1_header, params = createSectionPayload)
         
             ## Create the URLs for the API call will be made to
-            enrollApiUrl = f"{CoreCanvasAPIUrl}courses/sis_course_id:{p1_targetOrientation}/enrollments"
-            enrollSectionApiUrl = f"{CoreCanvasAPIUrl}sections/sis_section_id:{studentSectionSisId}/enrollments"
+            enrollApiUrl = f"{p1_orientationCourseApiUrl}/enrollments"
+            enrollOrientationSectionApiUrl = f"{coreCanvasApiUrl}/sections/sis_section_id:{studentOrientationSectionSisId}/enrollments"
+            enrollMajorSectionApiUrl = f"{coreCanvasApiUrl}sections/sis_section_id:{studentSectionSisId}/enrollments"
+
 
             ## Define the canvas api viarables
-        
             enrollPayload = {"enrollment[user_id]":f"sis_user_id:{studentSisId}", "enrollment[type]":"StudentEnrollment", "enrollment[enrollment_state]":"active"}
 
             ## Make the API call to enroll the student Error
             enrollObject = requests.post(enrollApiUrl, headers = p1_header, params = enrollPayload)
-            enrollSectionObject = requests.post(enrollSectionApiUrl, headers = p1_header, params = enrollPayload)
+            enrollOrientationSectionObject = requests.post(enrollOrientationSectionApiUrl, headers = p1_header, params = enrollPayload)
+            enrollMajorSectionObject = requests.post(enrollMajorSectionApiUrl, headers = p1_header, params = enrollPayload)
 
-            logger.info (f"{studentSisId} enrolled in {p1_targetOrientation}")
+            ## If the enrollment was successful
+            if enrollObject.status_code == 200 and enrollOrientationSectionObject.status_code == 200 and enrollMajorSectionObject.status_code == 200:
+
+                ## Log the successful enrollment
+                logger.info (f"{studentSisId} enrolled in {p1_targetOrientation}")
+
+            ## Otherwise, if the enrollment failed
+            else:
+
+                ## If the first enrollment attempt failed, log the error and return
+                if enrollObject.status_code != 200:
+                    logger.error (f"{studentSisId} enrollment in {p1_targetOrientation} failed: {enrollObject.text}")
+
+                ## If the second enrollment attempt failed, log the error and return
+                if enrollOrientationSectionObject.status_code != 200:
+                    logger.error (f"{studentSisId} enrollment in {p1_targetOrientation} failed: {enrollOrientationSectionObject.text}")
+                
+                ## If the third enrollment attempt failed, log the error and return
+                if enrollMajorSectionObject.status_code != 200:
+                    logger.error (f"{studentSisId} enrollment in {p1_targetOrientation} failed: {enrollMajorSectionObject.text}")
+
+                ## Send out an error email
+                error_handler(f"{scriptName} - {functionName}", f"Error enrolling {studentSisId} in {p1_targetOrientation}", sendOnce = True)
+
+                return
 
         ## If the user has been enrolled in their orientation 
         else:
@@ -314,8 +379,8 @@ def getTargetIncomingStudentInfo (row
                     ## Create a target data activity df by filtering by the course id
                     targetDataActivityCourseDF = targetDataActivityDF[targetDataActivityDF['Course Number'] == row['course_id'].replace('_', '-')]
 
-                    ## If the row's activity date is not NaT
-                    if not pd.isnull(targetDataActivityCourseDF['Last Course Participation'].values[0]):
+                    ## If the targetDataActivityCourseDF is not empty and the row's activity date is not NaT
+                    if not targetDataActivityCourseDF.empty and not pd.isnull(targetDataActivityCourseDF['Last Course Participation'].values[0]):
 
                         ## Convert the last course participation date to a date
                         targetCourseLastParticipationDate = datetime.strptime(f"{currentYear}-{targetDataActivityCourseDF['Last Course Participation'].values[0]}", '%Y-%m-%d').date()
@@ -387,42 +452,14 @@ def studentTypeGetIncomingStudentsInfo(p1_targetOrientation, p1_slateFile, p1_in
         ## Define the p1_header for all subsequent canvas api calls
         header = {'Authorization' : 'Bearer ' + canvasAccessToken}
 
-        ## Define the Canvas input path by replacing "Slate Resources" with "Canvas Resources" and removing "Incoming"
-        relaventCanvasInputPath = slateFilePath.replace("Slate Resources", "Canvas Resources").replace("Incoming", "")
-
-        ## If the p1_targetOrientation has "GPS" in it
-        if "GPS" in p1_targetOrientation:
-           
-           ## If the slateFilePath shows that the input term is a spring term
-           if "SP" in slateFilePath:
-               
-               ## Define the relavent fall term year
-               relaventFallTermYear = int(relaventCanvasInputPath.split('\\')[5][2:])-1
-           
-               ## Change SP + ## to GF + (## - 1) because the fall GPS orientation is used again in the spring orientation
-               relaventCanvasInputPath = relaventCanvasInputPath.replace(p1_inputTerm, f"GF{relaventFallTermYear}")
-
-           ## Otherwise
-           else:
-               
-               ## Change the relavent Canvas input path to the ongoing Grad Fall Term
-               relaventCanvasInputPath = relaventCanvasInputPath.replace(p1_inputTerm[:2], f"GF")
-
-        ## Define the default relevant canvas input term
-        relaventCanvasInputTerm = relaventCanvasInputPath.split('\\')[5]
-
-        ## Redefine the relevant canvas term as "Default Term" if "Graduate" in the target orientation as their orientation is not specific to a term
-        if "Graduate" in p1_targetOrientation or "GPS" in p1_targetOrientation:
-            relaventCanvasInputTerm = "Default Term"
-
         ## Retrieve (and update if neccessary) the term relavent canvas courses file path
-        orientationCourseTermLocationDf = pd.read_csv(termGetCourses(relaventCanvasInputTerm))
+        orientationCourseTermLocationDf = pd.read_csv(termGetCourses("All"))
 
         ## Find the "canvas_course_id" by looking for the target orientation sis id in "course_id"
-        p1_targetOrientationCanvasCourseId = orientationCourseTermLocationDf.loc[orientationCourseTermLocationDf['short_name'] == p1_targetOrientation, 'canvas_course_id'].values[0]
+        targetOrientationCanvasCourseId = orientationCourseTermLocationDf.loc[orientationCourseTermLocationDf['short_name'] == p1_targetOrientation, 'canvas_course_id'].values[0]
          
         ## Define the orientation course's base api url
-        orientationCourseApiUrl = f"{CoreCanvasAPIUrl}courses/{p1_targetOrientationCanvasCourseId}"
+        orientationCourseApiUrl = f"{coreCanvasApiUrl}courses/{targetOrientationCanvasCourseId}"
         
         ## Define the url to get the course's students
         orientationCourseUserApiUrl = f"{orientationCourseApiUrl}/users"
@@ -467,10 +504,10 @@ def studentTypeGetIncomingStudentsInfo(p1_targetOrientation, p1_slateFile, p1_in
         p1_targetOrientationFinalQuizSubmissionDatesAndIds ={}
 
         ## Define the core new quiz url to get a list of the courses quizzes
-        newQuizCoreUrl = CoreCanvasAPIUrl.replace("api/v1", "api/quiz/v1")
+        newQuizCoreUrl = coreCanvasApiUrl.replace("api/v1", "api/quiz/v1")
 
         ## Define the course specific api new quiz url
-        quizListApiUrl = f"{CoreCanvasAPIUrl}courses/{p1_targetOrientationCanvasCourseId}/quizzes"
+        quizListApiUrl = f"{coreCanvasApiUrl}courses/{targetOrientationCanvasCourseId}/quizzes"
 
         ## Make the new quiz list api call
         quizzListObject = requests.get(quizListApiUrl, headers = header)
@@ -483,7 +520,7 @@ def studentTypeGetIncomingStudentsInfo(p1_targetOrientation, p1_slateFile, p1_in
         targetQuizID = None
         targetQuizAssignmentId = None
         for quiz in quizzList_jsonObject:
-            if "orientation" in quiz["title"].lower():
+            if "orientation" in quiz["title"].lower() or "student hub" in quiz["title"].lower():
                 targetQuizID = quiz["id"]
                 targetQuizAssignmentId = quiz["assignment_id"] if quiz["assignment_id"] else quiz["id"]
                 break
@@ -492,7 +529,7 @@ def studentTypeGetIncomingStudentsInfo(p1_targetOrientation, p1_slateFile, p1_in
         if not targetQuizID:
     
             ## : again with the new quiz url
-            quizListApiUrl = f"{newQuizCoreUrl}/courses/{p1_targetOrientationCanvasCourseId}/quizzes"
+            quizListApiUrl = f"{newQuizCoreUrl}/courses/{targetOrientationCanvasCourseId}/quizzes"
 
         ## Make the new quiz list api call
         quizzListObject = requests.get(quizListApiUrl, headers = header)
@@ -518,13 +555,13 @@ def studentTypeGetIncomingStudentsInfo(p1_targetOrientation, p1_slateFile, p1_in
             if "api/quiz/v1" in quizListApiUrl:
 
                 ## Set the submissin list api url to use the assignments path
-                quizSubmissionListApiUrl = f"{CoreCanvasAPIUrl}courses/{p1_targetOrientationCanvasCourseId}/assignments/{targetQuizAssignmentId}/submissions"
+                quizSubmissionListApiUrl = f"{coreCanvasApiUrl}courses/{targetOrientationCanvasCourseId}/assignments/{targetQuizAssignmentId}/submissions"
 
             ## Otherwise 
             else:
         
                 ## Use the quizzes path
-                quizSubmissionListApiUrl = f"{CoreCanvasAPIUrl}courses/{p1_targetOrientationCanvasCourseId}/quizzes/{targetQuizID}/submissions"
+                quizSubmissionListApiUrl = f"{coreCanvasApiUrl}courses/{targetOrientationCanvasCourseId}/quizzes/{targetQuizID}/submissions"
 
         ## Define the playload for the submission list
         quizSubmissionPayload = {"include[]":["user"], "per_page": 100}
@@ -636,10 +673,12 @@ def studentTypeGetIncomingStudentsInfo(p1_targetOrientation, p1_slateFile, p1_in
                 newThread = threading.Thread(target=getTargetIncomingStudentInfo
                                              , args=(row
                                                      , index
+                                                     , p1_inputTerm
                                                      , p1_targetOrientation
                                                      , p1_targetOrientationStudents
                                                      , p1_targetOrientationSections
                                                      , p1_targetOrientationFinalQuizSubmissionDatesAndIds
+                                                     , orientationCourseApiUrl
                                                      , header
                                                      , slateDataDF
                                                      , sisFeedCourseDf
@@ -686,7 +725,7 @@ def studentTypeGetIncomingStudentsInfo(p1_targetOrientation, p1_slateFile, p1_in
 
         ## While the connection is not established
         while not connected:
-            ## Try to connect to the SFTP server
+            #try to connect to the SFTP server
             try: ## Irregular except clause, do not comment out in testing
                 ## Connect to the SFTP server
                 ssh_client.connect(hostname=ASHost, port=ASPort, username=ASUsername, password=ASPassword, key_filename=ASPublicKeyPath)#, command=ASCommandLine)
@@ -752,18 +791,35 @@ def termGetIncomingStudentsInfo(inputTerm = ""):
         ## Define the incoming School Year input path
         incomingSchoolYearInputPath = f"{baseLocalInputPath}{targetSchoolYear}\\"
 
+        ## If the term is SU, 
+        if "SU" in inputTerm:
+
+            ## Change it to SP as currently summer students use the spring orientation course
+            inputTerm = inputTerm.replace("SU", "SP")
+
         ## Define the fall, spring, or summer term word (fall if fa in input term)
-        termWord = "Fall" if "FA" in inputTerm else "Spring" if "SP" in inputTerm else "Summer"
+        termWord = "Fall" if ("FA" in inputTerm or "GF" in inputTerm) else "Spring" if ("SP" in inputTerm or "GS" in inputTerm) else "Summer"
                 
-        ## Define the generic undergrad target orientation course
-        targetUndgOrientation = f"{termWord} {currentYear} - NNU Pre-Launch Orientation"
-        targetGradOrientation = targetGradOrientation = f"Graduate & Professional Student Hub"
+        ## Define a variable to hold the target orientation course name
+        targetOrientation = None
+
+        ## If the input term is undg
+        if re.search("FA|SP|SU", inputTerm):
+            
+            ## Set the target orientation to the undergraduate orientation course    
+            targetOrientation = f"{termWord} {currentYear} - NNU Pre-Launch Orientation"
+
+        ## Otherwise
+        else:
+            
+            ## Set the target orientation to the graduate/professional orientation course
+            targetOrientation = f"Graduate & Professional Student Hub"
         
         ## If the input term is in ["FA25", "GF25"] or is =< GS26 or SP26
         if inputTerm in ["SP25", "GS25", "SU25", "SG25"]:
 
             ## Set the targetUndgOrientation to the old Graduate & Professional Student Hub title
-            targetGradOrientation = f"{targetSchoolYear[:5]}{targetSchoolYear[:2]}{targetSchoolYear[5:]}_GPS_Orientation"
+            targetOrientation = f"GPS Online Academic Orientation (2024-25)"
 
         ## Define the term specific output path
         incomingTermInputPath = f"{incomingSchoolYearInputPath}{inputTerm}\\Incoming\\"
@@ -788,27 +844,32 @@ def termGetIncomingStudentsInfo(inputTerm = ""):
 
         ## For each file from slate
         for slateFile in slateFiles:
-            
+
+            #studentTypeGetIncomingStudentsInfo (targetGradOrientation, slateFile, inputTerm)
+           
             ## Define the get student info report thread
             getStudentInfoThread = None
             
-            ## If the target slate file contains graduate students or professional students 
-            if "grad" in slateFile or "prof" in slateFile:
+            ## If the target slate file contains graduate students or professional students and the target orientation is a graduate or professional course
+            if ("grad" in slateFile or "prof" in slateFile) and ("Grad" in targetOrientation or "GPS" in targetOrientation):
                 
                 ## Target the graduate orientation course/s
-                getStudentInfoThread = threading.Thread(target=studentTypeGetIncomingStudentsInfo, args=(targetGradOrientation, slateFile, inputTerm))
+                getStudentInfoThread = threading.Thread(target=studentTypeGetIncomingStudentsInfo, args=(targetOrientation, slateFile, inputTerm))
 
-            ## If the target slate file contains undergraduate students
-            else:
+            ## If the target slate file contains undergraduate students and the target orientation is an undergraduate course
+            elif "conf" in slateFile and "Launch" in targetOrientation:
 
                 ## Target the undergraduate orientation course
-                getStudentInfoThread = threading.Thread(target=studentTypeGetIncomingStudentsInfo, args=(targetUndgOrientation, slateFile, inputTerm))
+                getStudentInfoThread = threading.Thread(target=studentTypeGetIncomingStudentsInfo, args=(targetOrientation, slateFile, inputTerm))
 
-            ## Start the get student info report thread
-            getStudentInfoThread.start()
+            ## If a threading object was created
+            if getStudentInfoThread:
 
-            ## Add the get student info report thread to the ongoingReportThreads list
-            ongoingReportThreads.append(getStudentInfoThread)
+                ## Start the get student info report thread
+                getStudentInfoThread.start()
+
+                ## Add the get student info report thread to the ongoingReportThreads list
+                ongoingReportThreads.append(getStudentInfoThread)
 
         ## Wait for all of the ongoingReportThreads to finish
         for thread in ongoingReportThreads:

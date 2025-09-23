@@ -53,13 +53,13 @@ from Get_Courses import createCoursesCSV
 from Get_Courses import termGetCourses
 from Get_Terms import termGetTerms
 from Get_Sections import termGetSections
-from Get_Users import termGetUsers
+from Get_TUG_Students import getUsers
 from Get_Enrollments import termGetEnrollments
 
 ## Local Path Variables
 baseLogPath = f"{PFAbsolutePath}Logs\\{scriptName}\\"
 outputPath = f"{PFAbsolutePath}Canvas Resources\\"
-baseInputPath = f"{PFAbsolutePath}Canvas Resources\\"
+baseLocalInputPath = f"{PFAbsolutePath}Canvas Resources\\"
 configPath = f"{PFAbsolutePath}Configs TLC\\"
 
 ## External Path Variables
@@ -85,10 +85,10 @@ if not (os.path.exists(outputPath)):
 relPathLen = len(PFRelativePath)
 
 ## Canvas Instance Url
-CoreCanvasAPIUrl = None
+coreCanvasApiUrl = None
 ## Open the Core_Canvas_Url.txt from the config path
 with open (f"{configPath}Core_Canvas_Url.txt", "r") as file:
-    CoreCanvasAPIUrl = file.readlines()[0]
+    coreCanvasApiUrl = file.readlines()[0]
 
 ## If the script is run as main the folder with the access token is in the parent directory
 canvasAccessToken = ""
@@ -130,7 +130,7 @@ setOfFunctionsWithErrors = set()
 
 ## This function handles function errors
 def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
-    functionName = "except"
+    functionName = "error_handler"
     logger.error (f"     \nA script error occured while running {p1_ErrorLocation}. " +
                      f"Error: {str(p1_ErrorInfo)}")
     ## If the function with the error has not already been processed send an email alert
@@ -310,20 +310,9 @@ def get_outcome_course_code_list (p1_termOutputPath
 
         ## Remove all rows that have an empty cell in the first column, the second column, or the first outcome column
         courseOutcomeAssociationsDf = rawCourseOutcomeAssociationsDf.dropna(subset = [rawCourseOutcomeAssociationsDf.columns[0], rawCourseOutcomeAssociationsDf.columns[1], outcomeColumnIndex])
-                
-        ## IF the key is Outcome
-        if p2_targetDesignator == "GE":
-                    
-            ## Define the Outcome pre and postfix
-            OutcomePrefix = "GE_"
-            OutcomePostfix = "_V2.0" 
-
-            ## Add the prefix and postfix to the Outcome 1 and Outcome 2 columns
-            courseOutcomeAssociationsDf["Outcome 1"] = OutcomePrefix + courseOutcomeAssociationsDf["Outcome 1"] + OutcomePostfix
-            courseOutcomeAssociationsDf["Outcome 2"] = OutcomePrefix + courseOutcomeAssociationsDf["Outcome 2"] + OutcomePostfix
 
         ## If the target designator is G-EDUC
-        elif p2_targetDesignator == "G-EDUC":
+        if p2_targetDesignator == "G-EDUC":
             
             ## Define the outcome prefix, postfix, and subDelineator
             OutcomePrefix = "G-EDUC_"
@@ -390,7 +379,7 @@ def getCrosslistedCourseIds (p1_header, p1_courseId):
         
 
         ## Define the list course sections api url
-        courseSectionsApiUrl = f"{CoreCanvasAPIUrl}courses/sis_course_id:{p1_courseId}/sections"
+        courseSectionsApiUrl = f"{coreCanvasApiUrl}courses/sis_course_id:{p1_courseId}/sections"
 
         ## Make an api call to get a list of the course's sections
         courseSectionsApiObject = makeApiCall(p1_header = p1_header, p1_apiUrl = courseSectionsApiUrl)
@@ -533,17 +522,11 @@ def create_csv_of_active_Outcome_courses (p1_inputTerm, p1_targetDesignator):
         ## Combine the undg and grad course lists into one df
         canvasTermCoursesDf = pd.concat([undgCanvasTermCoursesDf, gradCanvasTermCoursesDf], ignore_index=True)
 
-        ## Retrieve the canvas sections for the input term, updating it if necessary
-        canvasTermSectionsDf = pd.read_csv(termGetSections(p1_inputTerm))
+        # ## Retrieve the canvas sections for the input term, updating it if necessary
+        # canvasTermSectionsDf = pd.read_csv(termGetSections(p1_inputTerm))
 
-        # ## Open the relevant section list as a data frame
-        # canvasTermSectionsDf = pd.read_csv(f"{undgTermInputPath}{p1_inputTerm}_Canvas_Sections.csv")
-
-        ## Open the all courses csv as a df
-        canvasAllCoursesDf = pd.read_csv(termGetCourses("All"))
-
-        # ## Open the all sections csv as a df
-        # canvasAllSectionsDf = pd.read_csv(f"{baseInputPath}All_Canvas_Sections.csv")
+        # ## Open the all courses csv as a df
+        # canvasAllCoursesDf = pd.read_csv(termGetCourses("All"))
 
         ## Open the all sections csv as a df
         canvasAllSectionsDf = pd.read_csv(termGetSections("All"))
@@ -596,12 +579,40 @@ def create_csv_of_active_Outcome_courses (p1_inputTerm, p1_targetDesignator):
                                     ## Make a DF of the sections with the row canvas course id
                                     targetCourseSectionsDf = canvasAllSectionsDf[canvasAllSectionsDf["canvas_course_id"] == row["canvas_course_id"]]
 
-                                    ## Get the index where the name column of the canvasAllSectionsDf contains the course_id
-                                    primarySectionIndex = canvasAllSectionsDf[
-                                        canvasAllSectionsDf["name"].fillna("").str.contains(
-                                            row["course_id"]
-                                            )
-                                        ].index[0]
+                                    ## Define a primarySectionIndex
+                                    primarySectionIndex = None
+
+                                    #try to get the index where the name column of the canvasAllSectionsDf contains the course_id
+                                    try: ## Irregular try clause, do not comment out in testing
+                                        primarySectionIndex = canvasAllSectionsDf[
+                                            canvasAllSectionsDf["name"].fillna("").str.contains(
+                                                row["course_id"]
+                                                )
+                                            ].index[0]
+
+                                    except: ## Irregular except clause, do not comment out in testing
+                                        
+                                        ## Grab the section id from the course name in case it is different by splitting the course name by " " and getting the last element
+                                        try: ## Irregular try clause, do not comment out in testing
+                                            primarySectionIndex = canvasAllSectionsDf[
+                                                canvasAllSectionsDf["name"].fillna("").str.contains(
+                                                    row["long_name"].split(" ")[-1]
+                                                    )
+                                                ].index[0]
+                                        except: ## Irregular except clause, do not comment out in testing
+                                            
+                                            ## Otherwise log a warning that no section was found
+                                            logger.warning (f"     \nCould not find a section that matched the course sis id or course name for {row['course_id']}.")
+
+                                            ## Skip to the next course
+                                            continue
+
+                                        ## If the primarySectionIndex is not None
+                                        if primarySectionIndex is not None:
+
+                                            ## Log a warning that no section was found that matched the course sis id but one was found that matched the course name
+                                            logger.warning (f"     \nFound a section that matched the course name but not the course sis id for {row['course_id']}.")
+
 
                                     ## Add the section id that matches the course name to the active Outcome Courses Dict
                                     activeOutcomeCoursesDict["Section_id"].append(canvasAllSectionsDf.loc[primarySectionIndex, "canvas_section_id"])
@@ -720,9 +731,14 @@ def create_csv_of_active_Outcome_courses (p1_inputTerm, p1_targetDesignator):
             elif re.search("SP|GS|SG|SU", p1_inputTerm):
                 ## Spring and Summer terms belong in the same school year as the fall terms before them, so SP21 is part of the same 2020-21 school year as FA20.
                 termSchoolYear = (century + str(int(p1_inputTerm[2:]) - 1) + "-" + p1_inputTerm[2:])
+
+            termEnrollmentsDf = pd.read_csv(termGetEnrollments(p1_inputTerm))
+
+            ## If the termEnrollmentsDf is not empty
+            if not termEnrollmentsDf.empty:
             
-            ## Get the term canvas enrollments file and add it to the activeCanvasEnrollmentsDf
-            activeCanvasEnrollmentsDf = pd.concat([activeCanvasEnrollmentsDf, pd.read_csv(termGetEnrollments(p1_inputTerm))])
+                ## Get the term canvas enrollments file and add it to the activeCanvasEnrollmentsDf
+                activeCanvasEnrollmentsDf = pd.concat([activeCanvasEnrollmentsDf, termEnrollmentsDf])
 
         ## Remove any nan's from the activeCanvasEnrollmentsDf's user_id column and convert them to strings, then remove any "0"
         activeCanvasEnrollmentsDf["user_id"] = activeCanvasEnrollmentsDf["user_id"].fillna(0).astype(int).astype(str).replace("0", "")
@@ -848,7 +864,7 @@ def create_csv_of_active_Outcome_courses (p1_inputTerm, p1_targetDesignator):
                         activeOutcomeCoursesDict[key].pop(courseIndex)
     
         ## Open (and update if neccessary) the canvas_users file and get the name and email that match the instructor Ids
-        with open (termGetUsers(p1_inputTerm), newline='') as active_canvas_users:
+        with open (getUsers(p1_inputTerm), newline='') as active_canvas_users:
             active_canvas_users_reader = csv.DictReader(active_canvas_users, delimiter = ',')
             
             ## Make lists of the user ids, names, and emails

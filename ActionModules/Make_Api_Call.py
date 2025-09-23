@@ -70,10 +70,10 @@ configPath = f"{PFAbsolutePath}\\Configs TLC\\"
 baseLocalInputPath = f"{PFAbsolutePath}Canvas Resources\\"
 
 ## Canvas Instance Url
-CoreCanvasAPIUrl = None
+coreCanvasApiUrl = None
 ## Open the Core_Canvas_Url.txt from the config path
 with open (f"{configPath}Core_Canvas_Url.txt", "r") as file:
-    CoreCanvasAPIUrl = file.readlines()[0]
+    coreCanvasApiUrl = file.readlines()[0]
 
 ## If the script is run as main the folder with the access token is in the parent directory
 canvasAccessToken = ""
@@ -122,7 +122,7 @@ setOfFunctionsWithErrors = set()
 
 ## This function handles function errors
 def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
-    functionName = "except"
+    functionName = "error_handler"
 
     ## Log the error
     logger.error (f"     \nA script error occured while running {p1_ErrorLocation}. " +
@@ -146,10 +146,12 @@ def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
 
 ## This function takes a api header and url and returns the json object of the api call, recursively calling itself in a seperate instance up to 5 times if the call fails
 def makeApiCall (p1_header = {'Authorization' : f"Bearer {canvasAccessToken}"}
-                 , p1_apiUrl = CoreCanvasAPIUrl
+                 , p1_apiUrl = coreCanvasApiUrl
                  , p1_payload = {}
+                 , p1_files = {}
                  , apiCallType = "get"
                  , outcomeViewApiAttempts = 0
+                 , firstPageOnly = False
                  ):
     functionName = "Make API Call"
 
@@ -184,13 +186,13 @@ def makeApiCall (p1_header = {'Authorization' : f"Bearer {canvasAccessToken}"}
                         p1_payload["per_page"] = 100
 
                     apiObject = requests.get(
-                        url=p1_apiUrl
+                        url = p1_apiUrl
                         , headers = p1_header
                         , params = p1_payload
                         )
                 else:
                     apiObject = requests.get(
-                        url=p1_apiUrl
+                        url = p1_apiUrl
                         , headers = p1_header
                         , params = {"per_page": 100}
                         )
@@ -198,16 +200,25 @@ def makeApiCall (p1_header = {'Authorization' : f"Bearer {canvasAccessToken}"}
             ## If the api call type is a post
             elif apiCallType.lower() == "post":
                     
-                ## If there is a p1_payload
-                if p1_payload:
+                ## If there is a p1_payload and files
+                if p1_payload and p1_files:
                     apiObject = requests.post(
-                        url=p1_apiUrl
+                        url = p1_apiUrl
+                        , headers = p1_header
+                        , json = p1_payload
+                        , files = p1_files
+                        )
+                ## If there is a p1_payload but no files
+                elif p1_payload:
+                    apiObject = requests.post(
+                        url = p1_apiUrl
                         , headers = p1_header
                         , params = p1_payload
                         )
+                ## If there is no payload or files
                 else:
                     apiObject = requests.post(
-                        url=p1_apiUrl
+                        url = p1_apiUrl
                         , headers = p1_header
                         )   
                         
@@ -216,11 +227,11 @@ def makeApiCall (p1_header = {'Authorization' : f"Bearer {canvasAccessToken}"}
 
                 ## If there is a p1_payload
                 if p1_payload:
-                    apiObject = requests.put(url=p1_apiUrl, headers=p1_header, json=p1_payload)
+                    apiObject = requests.put(url = p1_apiUrl, headers=p1_header, json=p1_payload)
 
                 ## If there is no payload
                 else:
-                    apiObject = requests.put(url=p1_apiUrl, headers=p1_header)
+                    apiObject = requests.put(url = p1_apiUrl, headers=p1_header)
 
             ## If the api call type is a delete
             elif apiCallType.lower() == "delete":
@@ -228,7 +239,7 @@ def makeApiCall (p1_header = {'Authorization' : f"Bearer {canvasAccessToken}"}
                 ## If there is a p1_payload
                 if p1_payload:
                     apiObject = requests.delete(
-                        url=p1_apiUrl
+                        url = p1_apiUrl
                         , headers = p1_header
                         , params = p1_payload
                         )
@@ -236,12 +247,12 @@ def makeApiCall (p1_header = {'Authorization' : f"Bearer {canvasAccessToken}"}
                 ## If there is no payload
                 else:
                     apiObject = requests.delete(
-                        url=p1_apiUrl
+                        url = p1_apiUrl
                         , headers = p1_header
                         )   
                 
             ## If there is a next page and the current page has content
-            if hasattr(apiObject, 'links') and 'next' in getattr(apiObject, 'links', {}):
+            if hasattr(apiObject, 'links') and 'next' in getattr(apiObject, 'links', {}) and firstPageOnly == False:
                     
                 ## Add the current page to the api object list
                 apiObjectList = [apiObject]

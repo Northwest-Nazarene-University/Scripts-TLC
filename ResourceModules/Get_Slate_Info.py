@@ -85,7 +85,7 @@ setOfFunctionsWithErrors = set()
 
 ## This function handles function errors
 def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
-    functionName = "except"
+    functionName = "error_handler"
     logger.error (f"     \nA script error occured while running {p1_ErrorLocation}. " +
                      f"Error: {str(p1_ErrorInfo)}")
     ## If the function with the error has not already been processed send an email alert
@@ -132,7 +132,7 @@ def getSlateInfo (p1_inputTerm):
         ssh_client = paramiko.SSHClient()
         ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         
-        ## Try to connect to the SFTP server
+        #try to connect to the SFTP server
         while attempt < retries:
             try:
                 ssh_client.connect(hostname=ASHost

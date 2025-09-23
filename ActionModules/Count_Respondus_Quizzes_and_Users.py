@@ -35,7 +35,7 @@ PFAbsolutePath = f"{os.path.abspath(PFRelativePath)}\\"
 
 ## Local Path Variables
 baseLogPath = f"{PFAbsolutePath}Logs\\{scriptName}\\"
-baseInputPath = f"{PFAbsolutePath}Canvas Resources\\"
+baseLocalInputPath = f"{PFAbsolutePath}Canvas Resources\\"
 configPath = f"{PFAbsolutePath}Configs TLC\\"
 
 ## If the base log path doesn't already exist, create it
@@ -51,10 +51,10 @@ from Error_Email_API import errorEmailApi  # Import errorEmailApi
 from Make_Api_Call import makeApiCall  # Import makeApiCall
 
 ## Canvas Instance Url
-CoreCanvasAPIUrl = None
+coreCanvasApiUrl = None
 ## Open the Core_Canvas_Url.txt from the config path
 with open(f"{configPath}Core_Canvas_Url.txt", "r") as file:
-    CoreCanvasAPIUrl = file.readlines()[0]
+    coreCanvasApiUrl = file.readlines()[0]
 
 ## If the script is run as main the folder with the access token is in the parent directory
 canvasAccessToken = ""
@@ -96,7 +96,7 @@ setOfFunctionsWithErrors = set()
 
 ## This function handles function errors
 def  except(p1_ErrorLocation, p1_ErrorInfo, sendOnce=True):
-    functionName = "except"
+    functionName = "error_handler"
     logger.error(f"\nA script error occurred while running {p1_ErrorLocation}. Error: {str(p1_ErrorInfo)}")
 
     ## If the function with the error has not already been processed send an email alert
@@ -117,7 +117,7 @@ def countRespondusQuizzes(p1_header, p1_courseId, result_dict):
         students_count = set()
 
         ## Get the assignments for the course
-        assignments_url = f"{CoreCanvasAPIUrl}courses/{p1_courseId}/assignments"
+        assignments_url = f"{coreCanvasApiUrl}courses/{p1_courseId}/assignments"
         courseAssignmentsParams = {'search_term': 'Respondus', 'include[]': 'submission'}
         response = makeApiCall(p1_header=p1_header, p1_apiUrl=assignments_url, p1_payload=courseAssignmentsParams, apiCallType="get")
 
@@ -137,7 +137,7 @@ def countRespondusQuizzes(p1_header, p1_courseId, result_dict):
                     assignment_id = assignment['id']
 
                     ## Save the assignment URL
-                    assignment_details_url = f"{CoreCanvasAPIUrl}courses/{p1_courseId}/assignments/{assignment_id}"
+                    assignment_details_url = f"{coreCanvasApiUrl}courses/{p1_courseId}/assignments/{assignment_id}"
 
                     ## Make an API call to get the assignment details
                     assignment_response = makeApiCall(p1_header=p1_header, p1_apiUrl=assignment_details_url, apiCallType="get")
@@ -156,7 +156,7 @@ def countRespondusQuizzes(p1_header, p1_courseId, result_dict):
                             if len(students_count) == 0:
 
                                 ## Define an api url to get the course's enrollments
-                                enrollments_url = f"{CoreCanvasAPIUrl}courses/{p1_courseId}/enrollments"
+                                enrollments_url = f"{coreCanvasApiUrl}courses/{p1_courseId}/enrollments"
 
                                  ## Define a payload to get only student enrollments
                                 enrollments_params = {'type[]': 'StudentEnrollment'}
@@ -195,7 +195,7 @@ def countRespondusQuizzes(p1_header, p1_courseId, result_dict):
 def countListedCoursesRespondusQuizzes():
     functionName = "countListedCoursesRespondusQuizzes"
     try:
-        targetCoursesCsvFilePath = f"{baseInputPath}Target_Canvas_Course_Ids.csv"
+        targetCoursesCsvFilePath = f"{baseLocalInputPath}Target_Canvas_Course_Ids.csv"
         header = {'Authorization': f"Bearer {canvasAccessToken}"}
         
         ## Define the necessary thread list

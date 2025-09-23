@@ -35,7 +35,7 @@ PFAbsolutePath = f"{os.path.abspath(PFRelativePath)}\\"
 
 ## Local Path Variables
 baseLogPath = f"{PFAbsolutePath}Logs\\{scriptName}\\"
-baseInputPath = f"{PFAbsolutePath}Canvas Resources\\"
+baseLocalInputPath = f"{PFAbsolutePath}Canvas Resources\\"
 configPath = f"{PFAbsolutePath}Configs TLC\\"
 
 ## If the base log path doesn't already exist, create it
@@ -51,10 +51,10 @@ from Error_Email_API import errorEmailApi  # Import errorEmailApi
 from Make_Api_Call import makeApiCall  # Import makeApiCall
 
 ## Canvas Instance Url
-CoreCanvasAPIUrl = None
+coreCanvasApiUrl = None
 ## Open the Core_Canvas_Url.txt from the config path
 with open(f"{configPath}Core_Canvas_Url.txt", "r") as file:
-    CoreCanvasAPIUrl = file.readlines()[0]
+    coreCanvasApiUrl = file.readlines()[0]
 
 ## If the script is run as main the folder with the access token is in the parent directory
 canvasAccessToken = ""
@@ -96,7 +96,7 @@ setOfFunctionsWithErrors = set()
 
 ## This function handles function errors
 def  except(p1_ErrorLocation, p1_ErrorInfo, sendOnce=True):
-    functionName = "except"
+    functionName = "error_handler"
     logger.error(f"\nA script error occurred while running {p1_ErrorLocation}. Error: {str(p1_ErrorInfo)}")
 
     ## If the function with the error has not already been processed send an email alert
@@ -113,7 +113,7 @@ def  except(p1_ErrorLocation, p1_ErrorInfo, sendOnce=True):
 def setCourseLongName(p1_header, p1_courseId, p1_longName):
     functionName = "setCourseLongName"
     try:
-        setLongNameApiUrl = f"{CoreCanvasAPIUrl}courses/{p1_courseId}"
+        setLongNameApiUrl = f"{coreCanvasApiUrl}courses/{p1_courseId}"
         payload = {"course": {"name": p1_longName}}
         response = makeApiCall(p1_header=p1_header, p1_apiUrl=setLongNameApiUrl, p1_payload=payload, apiCallType="put")
 
@@ -129,7 +129,7 @@ def setCourseLongName(p1_header, p1_courseId, p1_longName):
 def setListedCoursesLongName():
     functionName = "setListedCoursesLongName"
     try:
-        targetCoursesCsvFilePath = f"{baseInputPath}Target_Canvas_Course_Ids.csv"
+        targetCoursesCsvFilePath = f"{baseLocalInputPath}Target_Canvas_Course_Ids.csv"
         header = {'Authorization': f"Bearer {canvasAccessToken}"}
         
         ## Define the necessary thread list

@@ -62,10 +62,10 @@ if not (os.path.exists(outputPath)):
 relPathLen = len(PFRelativePath)
 
 ## Canvas Instance Url
-CoreCanvasAPIUrl = None
+coreCanvasApiUrl = None
 ## Open the Core_Canvas_Url.txt from the config path
 with open (f"{configPath}Core_Canvas_Url.txt", "r") as file:
-    CoreCanvasAPIUrl = file.readlines()[0]
+    coreCanvasApiUrl = file.readlines()[0]
 
 ## If the script is run as main the folder with the access token is in the parent directory
 canvasAccessToken = ""
@@ -107,7 +107,7 @@ setOfFunctionsWithErrors = set()
 
 ## This function handles function errors
 def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
-    functionName = "except"
+    functionName = "error_handler"
     logger.error (f"     \nA script error occured while running {p1_ErrorLocation}. " +
                      f"Error: {str(p1_ErrorInfo)}")
     ## If the function with the error has not already been processed send an email alert
@@ -152,7 +152,7 @@ def createAccountsCSV(p1_header, attempt = 0):
                 return targetDestination
         
         ## Define and initialize the api url for starting reports
-        start_report_API_URL = CoreCanvasAPIUrl + "accounts/1/reports/provisioning_csv"
+        start_report_API_URL = coreCanvasApiUrl + "accounts/1/reports/provisioning_csv"
         
         ## Make an api call to start a provisioning report for each of the relavent accounts and append the report id to the term_report_ID list
         logger.info ("\n" + "Calling provisioning accounts reports")
@@ -174,7 +174,7 @@ def createAccountsCSV(p1_header, attempt = 0):
         logger.info ("\nChecking statuses of provisioning accounts reports")
 
         ## Define the status check api url
-        status_report_API_URL = CoreCanvasAPIUrl + "accounts/1/reports/provisioning_csv/" + str(report_ID)
+        status_report_API_URL = coreCanvasApiUrl + "accounts/1/reports/provisioning_csv/" + str(report_ID)
 
         ## Make the status api call using makeApiCall
         status_object = makeApiCall(p1_header = p1_header, p1_apiUrl = status_report_API_URL, apiCallType = "get",)
@@ -211,7 +211,7 @@ def createAccountsCSV(p1_header, attempt = 0):
                         createAccountsCSV(p1_header, attempt + 1)
                     return
             
-        ## try: to append the download url to the term_report_download_url list
+        ## Attempt to append the download url to the term_report_download_url list
         ## If for whatever reason the report failed and there is no download url, make a note of it
         logger.info (f"     \n\nRecording download url for report term: ")
         reportDownloadUrl = status_text_jsonObject["attachment"]["url"]

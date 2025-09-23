@@ -41,7 +41,7 @@ pfAbsolutePath = f"{os.path.abspath(pfRelativePath)}\\"
 ## Local Path Variables
 baseLogPath = f"{pfAbsolutePath}Logs\\{scriptName}\\"
 ## Define the base log path
-baseInputPath = f"{pfAbsolutePath}Canvas Resources\\"
+baseLocalInputPath = f"{pfAbsolutePath}Canvas Resources\\"
 ## Define the base input path
 configPath = f"{pfAbsolutePath}Configs TLC\\"
 ## Define the config path
@@ -104,13 +104,13 @@ logError.setLevel(logging.ERROR)
 logError.setFormatter(FORMAT)
 logger.addHandler(logError)
 
-## The variable below holds a set of the functions that have had errors. This enables the errorHandler function to only send
+## The variable below holds a set of the functions that have had errors. This enables the error_handler function to only send
 ## an error email the first time the function triggers an error
 setOfFunctionsWithErrors = set()
 
 ## This function handles function errors
-def errorHandler(p1_errorLocation, p1_errorInfo, sendOnce=True):
-    functionName = "errorHandler"
+def error_handler(p1_errorLocation, p1_errorInfo, sendOnce=True):
+    functionName = "error_handler"
     logger.error(f"\nA script error occurred while running {p1_errorLocation}. Error: {str(p1_errorInfo)}")
 
     ## If the function with the error has not already been processed send an email alert
@@ -141,7 +141,7 @@ def deleteEnrollment(p1_header, p3_courseId, p1_enrollmentId):
             logger.warning(f"Failed to delete enrollment with ID: {p1_enrollmentId}. Status code: {response.status_code}")
 
     except Exception as error:
-        errorHandler(functionName, error)
+        error_handler(functionName, error)
 
 ## This function re-enrolls a user with a new role given the Canvas user ID, course ID, role ID, and base role type
 def reEnrollUser(p1_header, p1_userId, p2_courseId, p3_roleId, p4_baseRoleType):
@@ -168,7 +168,7 @@ def reEnrollUser(p1_header, p1_userId, p2_courseId, p3_roleId, p4_baseRoleType):
             logger.warning(f"Failed to re-enroll user with ID: {p1_userId} in course with ID: {p2_courseId}. Status code: {response.status_code}")
 
     except Exception as error:
-        errorHandler(functionName, error)
+        error_handler(functionName, error)
 
 ## This function deletes the enrollment and re-enrolls the user with the new role
 def deleteAndReenroll(p1_header, p1_enrollmentId, p1_userId, p2_courseId, p3_roleId, p4_baseRoleType):
@@ -179,7 +179,7 @@ def deleteAndReenroll(p1_header, p1_enrollmentId, p1_userId, p2_courseId, p3_rol
 def changeListedEnrollmentsRole():
     functionName = "changeListedEnrollmentsRole"
     try:
-        targetEnrollmentsCsvFilePath = f"{baseInputPath}Target_Canvas_Enrollment_Ids.csv"
+        targetEnrollmentsCsvFilePath = f"{baseLocalInputPath}Target_Canvas_Enrollment_Ids.csv"
         ## Define the CSV file path
         header = {'Authorization': f"Bearer {canvasAccessToken}"}
         ## Define the header
@@ -228,7 +228,7 @@ def changeListedEnrollmentsRole():
             thread.join()
 
     except Exception as error:
-        errorHandler(functionName, error)
+        error_handler(functionName, error)
 
 if __name__ == "__main__":
     ## Set working directory

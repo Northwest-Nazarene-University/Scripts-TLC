@@ -71,10 +71,10 @@ configPath = f"{PFAbsolutePath}\\Configs TLC\\"
 baseLocalInputPath = f"{PFAbsolutePath}Canvas Resources\\"
 
 ## Canvas Instance Url
-CoreCanvasAPIUrl = None
+coreCanvasApiUrl = None
 ## Open the Core_Canvas_Url.txt from the config path
 with open (f"{configPath}Core_Canvas_Url.txt", "r") as file:
-    CoreCanvasAPIUrl = file.readlines()[0]
+    coreCanvasApiUrl = file.readlines()[0]
 
 ## If the script is run as main the folder with the access token is in the parent directory
 canvasAccessToken = ""
@@ -123,7 +123,7 @@ setOfFunctionsWithErrors = set()
 
 ## This function handles function errors
 def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
-    functionName = "except"
+    functionName = "error_handler"
 
     ## Log the error
     logger.error (f"     \nA script error occured while running {p1_ErrorLocation}. " +
@@ -165,7 +165,7 @@ def addOutcomeToCourse (row, p2_inputTerm, p1_header, p1_outcomeCourseDict):
         logger.info("\n     Course:" + targetCourseSisId)
 
         # Create the URL the API call will be made to
-        course_API_url = CoreCanvasAPIUrl + "courses/sis_course_id:" + targetCourseSisId + "/course_copy"
+        course_API_url = coreCanvasApiUrl + "courses/sis_course_id:" + targetCourseSisId + "/course_copy"
         
         ## For each outcome in the row
         for outcome in outcomeKeys:
@@ -213,7 +213,7 @@ def allowThreadedReplies (p1_row, p1_header, p1_canvasCourseUnthreadedDiscussion
             discussionTopicPayload = {"discussion_type": "threaded"}
             
             ## Make a url to get the the courses's discussions
-            courseDiscussionTopicsApiUrl = CoreCanvasAPIUrl + "courses/" + str(canvasCourseId) + "/discussion_topics"
+            courseDiscussionTopicsApiUrl = coreCanvasApiUrl + "courses/" + str(canvasCourseId) + "/discussion_topics"
 
             ## Make the API call
             courseDiscussionTopicsObject = requests.get(courseDiscussionTopicsApiUrl, headers = p1_header, params = discussionTopicsPayload)

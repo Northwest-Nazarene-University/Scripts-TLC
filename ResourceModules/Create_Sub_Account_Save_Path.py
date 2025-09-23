@@ -89,7 +89,7 @@ setOfFunctionsWithErrors = set()
 
 ## This function handles function errors
 def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
-    functionName = "except"
+    functionName = "error_handler"
 
     ## Log the error
     logger.error (f"A script error occured while running {p1_ErrorLocation}. " +

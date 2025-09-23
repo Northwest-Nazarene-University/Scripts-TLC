@@ -147,7 +147,7 @@ setOfFunctionsWithErrors = set()
 
 ## This function handles function errors
 def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
-    functionName = "except"
+    functionName = "error_handler"
 
     ## Log the error
     logger.error (f"     \nA script error occured while running {p1_ErrorLocation}. " +
@@ -196,6 +196,7 @@ def createOutcomeEmailBody (p3_relevantEmail
                                 , "this/these" : "these"
                                 , "a/" : ""
                                 , "outcome/outcomes" : "outcomes"
+                                , "designatorSpecificTerm" : "habits" if "GE" in p1_outcome else "outcomes"
                                 , "rubric/rubrics" : "rubrics"
                                 , "assignment/assignments" : "assignments"
                                 }
@@ -209,6 +210,7 @@ def createOutcomeEmailBody (p3_relevantEmail
                                 , "this/these" : "this"
                                 , "a/" : " a"
                                 , "outcome/outcomes" : "outcome"
+                                , "designatorSpecificTerm" : "habit" if "GE" in p1_outcome else "outcome"
                                 , "rubric/rubrics" : "rubric"
                                 , "assignment/assignments" : "assignment"
                                 }
@@ -233,147 +235,78 @@ def createOutcomeEmailBody (p3_relevantEmail
 
     ## Set the emailbodysignature to Client Email Signature
     emailBodyDict["signature"] = p1_emailDetails["Client Email Signature"]
-
-    ## If the relevant email is a course start email and GE is in the outcome
-    if ("Course Start" in p3_relevantEmail
-        and "GE" in p1_outcome
-        ):
-
-
-        ## Assign the course start greeting string
-        emailBodyDict["greeting"] = "Greetings!"
         
-        ## Assign the course start html formated email body
-        emailBodyDict["formatedEmaiBody"] = f"""
-<!DOCTYPE html>
-<html>
-<head>
-    <style>
-        td {{
-            padding: 10px;
-        }}
+    ## Define the action
+    emailBodyDict["bulletted resource list"]  = """<li><a href='https://community.canvaslms.com/t5/Instructor-Guide/How-do-I-align-an-outcome-with-a-rubric-in-a-course/ta-p/1130' target='_blank'>Attaching an outcome to a rubric</a></li>
+    <li><a href='https://community.canvaslms.com/t5/Instructor-Guide/How-do-I-add-a-rubric-to-an-assignment/ta-p/1058#open_assignment' target='_blank'>Attaching a rubric to an assignment</a></li>
+    <li><a href='https://community.canvaslms.com/t5/Instructor-Guide/How-do-I-add-a-rubric-to-a-graded-discussion/ta-p/1062#open_discussion' target='_blank'>Attaching a rubric to a graded discussion</a></li>
+    <li><a href='https://community.canvaslms.com/t5/Instructor-Guide/How-do-I-add-a-rubric-to-a-quiz/ta-p/1009#open_quiz' target='_blank'>Attaching a rubric to a classic quiz</a></li>
+    <li><a href='https://community.canvaslms.com/t5/Instructor-Guide/How-do-I-align-an-outcome-to-a-quiz-in-New-Quizzes/ta-p/776#open-assessment' target='_blank'>Attaching an outcome to a new quiz</a></li>
+    <li><a href='https://community.canvaslms.com/t5/Instructor-Guide/How-do-I-align-an-outcome-to-a-quiz-question-in-New-Quizzes/ta-p/778#edit-quiz' target='_blank'>Attaching an outcome to a new quiz question</a></li>
+    <li><a href='https://community.canvaslms.com/t5/Instructor-Guide/How-do-I-use-a-rubric-to-grade-submissions-in-SpeedGrader/ta-p/1015#open_student_submission' target='_blank'>Using a rubric to grade submissions in SpeedGrader</a></li>
+    <li><a href='https://community.canvaslms.com/t5/Instructor-Guide/How-do-I-use-a-non-scoring-rubric-to-assess-submissions-in/ta-p/989' target='_blank'>Using a non-scoring rubric to assess submissions in SpeedGrader</a></li>"""
 
-        .bold-text {{
-            font-weight: bold;
-        }}
-    </style>
-</head>
-<body>
-    <p>Hello {singularOrPluralDict["Professor/Professors"]} {p1_instructorNameOrNames},</p>
-
-    <p>You are receiving this email because you are scheduled to be {singularOrPluralDict["an instructor/instructors"]} of the NNU outcome course {p1_course}, which is associated with the following {singularOrPluralDict['outcome/outcomes']}:</p>
+    ## If the relevant email is a course start email
+    if "Course Start" in p3_relevantEmail:
+            
+        ## Assign the future or current instructor dynamic string
+        emailBodyDict["future/current instructor"] = "are scheduled to be"
+            
+        ## Assign the course start dynamic cause string
+        emailBodyDict["dynamic cause"] = f"which has the following {singularOrPluralDict['outcome/outcomes']} associated with it:"
+            
+        ## Assign the course start reminder to attach outcomes to published assignments string
+        emailBodyDict["timeOfYearReminder"] = f"""As we begin the term, please ensure that the {singularOrPluralDict['designatorSpecificTerm']} langauge is included in your courses's syllabus.</p>
+        <p> Additionally, please consider how you will perform your outcome assessment, particularly which course assignment or assignments you will attach the {singularOrPluralDict['outcome/outcomes']} to."""
+        
+    ## If the relevant email is a reminder
+    elif  "Reminder" in p3_relevantEmail:
+            
+        ## Assign the future or current instructor dynamic string
+        emailBodyDict["future/current instructor"] = "are"
+            
+        ## Assign the reminder dynamic cause string
+        emailBodyDict["dynamic cause"] = f"where it appears that the following {singularOrPluralDict['is/are']} not attached to a published assignment:"
     
-    <ul>{p1_outcome}</ul>
-    
-    <p>You will find the language for {singularOrPluralDict['this/these']} {singularOrPluralDict['outcome/outcomes']} in the list linked below.</p>
-
-    <p>Please ensure the following steps are completed for your course:</p>
-
-    <ol>
-        <li>Identify which {singularOrPluralDict['outcome/outcomes']} should be assessed in your course. Outcomes are designated by two letters and one number (i.e. HU1). I have highlighted one of my courses below as an example.</li>
-        <li><a href="https://library.nnu.edu/general-education/outcomes-and-rubrics">Follow this link to our General Education Guide to identify your outcome language.</a>
-        <br>Here is the outcome language for my highlighted course:
-            <div style="border-collapse: collapse; border-spacing: 0; max-width: 70%; margin-bottom: 20px; border: 1px solid rgb(221, 221, 221); color: rgb(51, 51, 51); font-family: Arial, Helvetica, Verdana; font-size: 12px; overflow: hidden; display: flex;">
-                <div style="box-sizing: border-box; padding: 8px; height: 100%; line-height: 1.42857; vertical-align: middle; position: relative; border: none; min-width: 50px;">
-                    <span dir="ltr" style="box-sizing: border-box; margin: 0; font-weight: bold;">HU1:</span>
-                </div>
-                <div style="box-sizing: border-box; padding: 8px; line-height: 1.42857; vertical-align: top; position: relative; border: none; flex-grow: 1;">
-                    <span dir="ltr" style="box-sizing: border-box; margin: 0; padding-left: 5px;">Students will understand & appreciate visual, musical, and literary art based on the historical, political, and socio-cultural contexts in which they emerged.&nbsp;</span>
-                </div>
-            </div>
-        </li>
-        <li>Copy the outcome language.</li>
-        <li>Ensure the outcome language is in your course syllabus. Here is a syllabus statement from a previous outcome associated course as an example:
-            <br><br>
-            <div style="margin-left: 20px; font-style: italic;">
-                General Education Outcomes
-                <br>Humanities
-                <br><span style="font-weight: bold;">HU1, Transformation</span> - Students will understand & appreciate literary artworks based on the historical,
-                <br>political, and socio-cultural contexts in which they emerged.
-            </div>
-        </li>
-    </ol>
-
-    <p>That's all for now. Please let us know if you have any questions.</p>
-
-    {emailBodyDict["signature"]}
-</body>
-</html>
-"""
-
-    ## If the relevant email is a reminder or an alert
-    else:
+        ## If it is a midterm reminder
+        if "Midterm" in p3_relevantEmail:
         
-        ## Define the action
-        emailBodyDict["bulletted resource list"]  = """<li><a href='https://community.canvaslms.com/t5/Instructor-Guide/How-do-I-align-an-outcome-with-a-rubric-in-a-course/ta-p/1130' target='_blank'>Attaching an outcome to a rubric</a></li>
-        <li><a href='https://community.canvaslms.com/t5/Instructor-Guide/How-do-I-add-a-rubric-to-an-assignment/ta-p/1058#open_assignment' target='_blank'>Attaching a rubric to an assignment</a></li>
-        <li><a href='https://community.canvaslms.com/t5/Instructor-Guide/How-do-I-add-a-rubric-to-a-graded-discussion/ta-p/1062#open_discussion' target='_blank'>Attaching a rubric to a graded discussion</a></li>
-        <li><a href='https://community.canvaslms.com/t5/Instructor-Guide/How-do-I-add-a-rubric-to-a-quiz/ta-p/1009#open_quiz' target='_blank'>Attaching a rubric to a classic quiz</a></li>
-        <li><a href='https://community.canvaslms.com/t5/Instructor-Guide/How-do-I-align-an-outcome-to-a-quiz-in-New-Quizzes/ta-p/776#open-assessment' target='_blank'>Attaching an outcome to a new quiz</a></li>
-        <li><a href='https://community.canvaslms.com/t5/Instructor-Guide/How-do-I-align-an-outcome-to-a-quiz-question-in-New-Quizzes/ta-p/778#edit-quiz' target='_blank'>Attaching an outcome to a new quiz question</a></li>
-        <li><a href='https://community.canvaslms.com/t5/Instructor-Guide/How-do-I-use-a-rubric-to-grade-submissions-in-SpeedGrader/ta-p/1015#open_student_submission' target='_blank'>Using a rubric to grade submissions in SpeedGrader</a></li>
-        <li><a href='https://community.canvaslms.com/t5/Instructor-Guide/How-do-I-use-a-non-scoring-rubric-to-assess-submissions-in/ta-p/989' target='_blank'>Using a non-scoring rubric to assess submissions in SpeedGrader</a></li>"""
+            ## Assign the midterm reminder to attach outcomes to published assignments string
+            emailBodyDict["timeOfYearReminder"] = f"""As we proceed through midterm week for your course, please consider how you will perform your outcome assessment, and make sure that you have the most recent version of your {singularOrPluralDict['outcome/outcomes']} attached to an assignment rubric."""
 
-        ## If the relevant email is a course start email
-        if "Course Start" in p3_relevantEmail:
-            
-            ## Assign the future or current instructor dynamic string
-            emailBodyDict["future/current instructor"] = "are scheduled to be"
-            
-            ## Assign the course start dynamic cause string
-            emailBodyDict["dynamic cause"] = f"which has the following {singularOrPluralDict['outcome/outcomes']} associated with it:"
-            
-            ## Assign the course start reminder to attach outcomes to published assignments string
-            emailBodyDict["timeOfYearReminder"] = f"""As we begin the term, please consider how you will perform your outcome assessment, particularly which course assignment or assignments you will attach the {singularOrPluralDict['outcome/outcomes']} to."""
+        ## If it is a finals reminder
+        elif "Finals" in p3_relevantEmail:
         
-        ## If the relevant email is a reminder
-        elif  "Reminder" in p3_relevantEmail:
-            
-            ## Assign the future or current instructor dynamic string
-            emailBodyDict["future/current instructor"] = "are"
-            
-            ## Assign the reminder dynamic cause string
-            emailBodyDict["dynamic cause"] = f"where it appears that the following {singularOrPluralDict['is/are']} not attached to a published assignment:"
-    
-            ## If it is a midterm reminder
-            if "Midterm" in p3_relevantEmail:
-        
-                ## Assign the midterm reminder to attach outcomes to published assignments string
-                emailBodyDict["timeOfYearReminder"] = f"""As we proceed through midterm week for your course, please consider how you will perform your outcome assessment, and make sure that you have the most recent version of your {singularOrPluralDict['outcome/outcomes']} attached to an assignment rubric."""
+            ## Assign the finals reminder to attach outcomes to published assignments string
+            emailBodyDict["timeOfYearReminder"] = f"""As finals week has arrived, please make sure that you have the most recent version of the {singularOrPluralDict['outcome/outcomes']} attached to at least one rubric and that the associated {singularOrPluralDict['rubric/rubrics']} are attached to {singularOrPluralDict['a/']}published {singularOrPluralDict['assignment/assignments']}."""
 
-            ## If it is a finals reminder
-            elif "Finals" in p3_relevantEmail:
-        
-                ## Assign the finals reminder to attach outcomes to published assignments string
-                emailBodyDict["timeOfYearReminder"] = f"""As finals week has arrived, please make sure that you have the most recent version of the {singularOrPluralDict['outcome/outcomes']} attached to at least one rubric and that the associated {singularOrPluralDict['rubric/rubrics']} are attached to {singularOrPluralDict['a/']}published {singularOrPluralDict['assignment/assignments']}."""
-
-        elif "Missing" in p3_relevantEmail:
+    elif "Missing" in p3_relevantEmail:
             
-            ## Assign the future or current instructor dynamic string
-            emailBodyDict["future/current instructor"] = "were"
+        ## Assign the future or current instructor dynamic string
+        emailBodyDict["future/current instructor"] = "were"
 
-            ## Assign the alert that there outcome data missing dynamic cause string
-            emailBodyDict["dynamic cause"] = f"where it appears that less than 75% of the students have been scored for the following {singularOrPluralDict['outcome/outcomes']}:"
+        ## Assign the alert that there outcome data missing dynamic cause string
+        emailBodyDict["dynamic cause"] = f"where it appears that less than 75% of the students have been scored for the following {singularOrPluralDict['outcome/outcomes']}:"
         
-            ## Assign the missing data alert string
-            emailBodyDict["timeOfYearReminder"] = f"""For outcome data to be recorded, an additional grading step is required for each student that submitted to an assignment with an outcome rubric attached."""
+        ## Assign the missing data alert string
+        emailBodyDict["timeOfYearReminder"] = f"""For outcome data to be recorded, an additional grading step is required for each student that submitted to an assignment with an outcome rubric attached."""
         
-        emailBodyDict["formatedEmaiBody"] = f"""<!DOCTYPE html>
+    emailBodyDict["formatedEmaiBody"] = f"""<!DOCTYPE html>
 <html>
 <body>
-    <p>Hello {singularOrPluralDict["Professor/Professors"]} {p1_instructorNameOrNames},<br></p>
+<p>Hello {singularOrPluralDict["Professor/Professors"]} {p1_instructorNameOrNames},<br></p>
     
-    <p>You are receiving this email because you {emailBodyDict["future/current instructor"]} {singularOrPluralDict["an instructor/instructors"]} of the NNU outcome course {p1_course}, {emailBodyDict["dynamic cause"]}</p>
+<p>You are receiving this email because you {emailBodyDict["future/current instructor"]} {singularOrPluralDict["an instructor/instructors"]} of the NNU outcome course {p1_course}, {emailBodyDict["dynamic cause"]}</p>
     
-    <ul>{p1_outcome}</ul>
+<ul>{p1_outcome}</ul>
     
-    <p>{emailBodyDict["timeOfYearReminder"]}<br></p>
+<p>{emailBodyDict["timeOfYearReminder"]}<br></p>
     
-    <p>If you would like a refresher on how to do this, please identify your interest below:</p>
+<p>If you would like a refresher on how to do this, please identify your interest below:</p>
     
-    <ul>{emailBodyDict["bulletted resource list"]}</ul>
+<ul>{emailBodyDict["bulletted resource list"]}</ul>
     
-    <p>{p1_emailDetails['Relevant Authority Contact Name']} at <a href='mailto:{p1_emailDetails['Client Send/Recieve Email']}'>{p1_emailDetails['Client Send/Recieve Email']}</a> is a good resource for how to assess your associated outcomes in this field of study. Additionally, NNU's Teaching and Learning Center at <a href='mailto:tlc@nnu.edu'>tlc@nnu.edu</a> is always ready to provide ideas, best practice tips, and assistance with creating and assessing outcomes.<br></p>
+<p>{p1_emailDetails['Relevant Authority Contact Name']} can be reached at <a href='mailto:{p1_emailDetails['Client Send/Recieve Email']}'>{p1_emailDetails['Client Send/Recieve Email']}</a> and is a good resource for how to assess your associated outcomes in your field of study. Additionally, NNU's Teaching and Learning Center at <a href='mailto:tlc@nnu.edu'>tlc@nnu.edu</a> is always ready to provide ideas, best practice tips, and assistance with creating and assessing outcomes.<br></p>
 
     {emailBodyDict["signature"]}
 """
@@ -399,6 +332,12 @@ def craftAndSendRelevantEmail (
         automatedOutcomeToolVariablesDict = automatedOutcomeToolVariablesDf[
             automatedOutcomeToolVariablesDf["Target Designator"] == p2_row["Outcome Area"]
             ].iloc[0].to_dict()
+
+        ## If the Outcome Communication Opt In is false for the relevant outcome area
+        if not automatedOutcomeToolVariablesDict["Outcome Communication Opt In"]:
+
+            ## Return from the function without sending an email
+            return
         
         ## Make a filtered Unassessed Outcome Courses DF that only includes the course that the email is being sent about
         filteredUnassessedOutcomeCoursesDF = p1_auxillaryDFDict["Unassessed Outcome Courses DF"][
@@ -532,7 +471,7 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
         for index, row in completeActiveCanvasCoursesDF.iterrows():
             
             ## If ENGR4250 in row long_name
-            #if "ENGR4250" in row["long_name"]:
+            #if "WELL1000" in row["long_name"]:
 
                 ## Define a variable to track whether the course is an outcome course
                 isOutcomeCourse = True if row["long_name"] in auxillaryDFDict["Active Outcome Courses DF"]["Course_name"].values else False
@@ -576,8 +515,7 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
                 relevantEmailList = []
             
                 ## If it is the monday before the courses's week 0 and it is an outcome course
-                if (row['Course Week'] <= 0
-                    and currentDate.weekday() == 0
+                if (row['Course Week'] <= 4
                     and isOutcomeCourse
                     ):                
                     
@@ -593,6 +531,7 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
                             target=addOutcomeToCourse
                             , args=(row
                                     , auxillaryDFDict
+                                    , header
                                     )
                             )
 
@@ -702,26 +641,27 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
 ## For testing
 if __name__ == "__main__":
      
-    craftAndSendRelevantEmail (p2_relevantEmail="Associated Course Outcomes: Course Start Information"
-                               ,p2_row = {'Term': 'FA24'
-                                          , 'Outcome Area': 'GE'
-                                          , 'Course_sis_id': 'SP2025_ENGL3070W_01'
-                                          , 'Course_name': 'PROFESSIONL/TECHNICAL WRITING SP2025_ENGL3070W_01'
-                                          , 'Account_id': 'NNU'
-                                          , 'Number_of_students': 7
-                                          , 'Outcome 1': 'GE_IP2_V2.0'
-                                          , 'Outcome 2': None
-                                          , 'Instructor_#1_ID': 63232
-                                          , 'Instructor_#1_name': 'Jane Doe'
-                                          , 'Instructor_#1_email': 'tlc@nnu.edu'
-                                          #, 'Instructor_#2_name': 'John Doe'
-                                          },
-                                p3_inputTerm="FA24")
+    # craftAndSendRelevantEmail (p2_relevantEmail= "Associated Course Outcomes: Missing Required Data"
+    #                            ,p2_row = {'Term': 'GF25'
+    #                                       , 'Outcome Area': 'G-EDUC'
+    #                                       , 'Course_sis_id': 'GF2025_EDUC7575_1L'
+    #                                       , 'Course_name': 'LEGAL/FIN ISSUES IN EDUCATION GF2025_EDUC7575_1L'
+    #                                       , 'Account_id': 'Graduate Education'
+    #                                       , 'Number_of_students': 7
+    #                                       , 'Outcome 1': 'G-EDUC_CAEP: 1.3_1.0'
+    #                                       , 'Outcome 2': 'G-EDUC_CAEP: 1.4_1.0'
+    #                                       , 'Instructor_#1_ID': 63232
+    #                                       , 'Instructor_#1_name': 'John Doe'
+    #                                       , 'Instructor_#1_email': 'brycezmiller@nnu.edu'
+    #                                       , 'Instructor_#2_name': 'John Doe'
+    #                                       , 'Instructor_#2_email': 'rgilbert@nnu.edu'
+    #                                       },
+    #                             p3_inputTerm="GF25")
     
     ## Get an input term and start the term outcome email function
-    # termDetermineAndPerformRelevantActions (
-    #     p1_inputTerm = input("Enter the desired term in four character format (FA20, SU20, SP20): ")
-    #     , p1_targetDesignator = input("Enter the desired target designator (GE, I-EDUC, U-ENGR): ")
-    #     )
+    termDetermineAndPerformRelevantActions (
+        p1_inputTerm = input("Enter the desired term in four character format (FA20, SU20, SP20): ")
+        , p1_targetDesignator = input("Enter the desired target designator (GE, I-EDUC, U-ENGR): ")
+        )
 
     input("Press enter to exit")

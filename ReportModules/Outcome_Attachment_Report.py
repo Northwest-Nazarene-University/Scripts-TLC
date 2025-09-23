@@ -78,10 +78,10 @@ with open (f"{configPath}Base_External_Paths.json", "r") as file:
     baseExternalOutputPath = fileJson["baseTlcUniversitySyllabiDataExternalOutputPath"]
 
 ## Canvas Instance Url
-CoreCanvasAPIUrl = None
+coreCanvasApiUrl = None
 ## Open the Core_Canvas_Url.txt from the config path
 with open (f"{configPath}Core_Canvas_Url.txt", "r") as file:
-    CoreCanvasAPIUrl = file.readlines()[0]
+    coreCanvasApiUrl = file.readlines()[0]
 
 ## If the script is run as main the folder with the access token is in the parent directory
 canvasAccessToken = ""
@@ -133,7 +133,7 @@ setOfFunctionsWithErrors = set()
 
 ## This function handles function errors
 def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
-    functionName = "except"
+    functionName = "error_handler"
 
     ## Log the error
     logger.error (f"     \nA script error occured while running {p1_ErrorLocation}. " +
@@ -212,35 +212,6 @@ def assignmentIsPublishedCheck (p1_rubric_api_url, assignment_id):
 
     ## Make a variable to hold the course's rubric api object
     assignmentApiObject = makeApiCall(p1_header = header, p1_apiUrl = assignmentApiUlr, p1_payload = assignmentApiPayload)
-        
-    # ## Define a variable to track the number of attempts to get the api call
-    # assignmentViewApiAttempts = 0
-        
-    # ## If the api call was not sucessful and the number of assignmentViewApiAttempts is less than 5
-    # while (not assignmentApiObject
-    #         or (assignmentApiObject.status_code != 200 
-    #             and assignmentViewApiAttempts < 5)
-    #         ):
-
-    #     try: ## Irregular try clause, do not comment out in testing
-                            
-    #         ## If the number of attempts is greater than 0
-    #         if assignmentApiObject:
-                
-    #             ## Close the previous api object
-    #             assignmentApiObject.close()
-    
-    #             ## Wait for 2 seconds
-    #             time.sleep(2)
-                    
-    #         ##  the api call again
-    #         assignmentApiObject = requests.get(url=assignmentApiUlr, headers = header, params = assignmentApiPayload)
-                            
-    #     except Exception as error: ## Irregular except clause, do not comment out in testing
-    #         logger.warning(f"Error: {error} \n Occured when calling {assignmentApiUlr} for assignment id: {assignment_id}")
-            
-    #     ## Increment the number of attempts
-    #     assignmentViewApiAttempts += 1
 
     ## Save the primary body of information retrieved by the API call
     assignmentApiText = assignmentApiObject.text
@@ -273,35 +244,6 @@ def rubricIsAttachedToAPublishedAssignmentCheck(p1_courseRubricApiUrl, p1_rubric
 
     ## Make a variable to hold the course's rubric api object
     rubricApiObject = makeApiCall(p1_header = header, p1_apiUrl = rubricApiUlr, p1_payload = rubricApiPayload)
-        
-    # ## Define a variable to track the number of attempts to get the api call
-    # rubricViewApiAttempts = 0
-        
-    # ## If the api call was not sucessful and the number of rubricViewApiAttempts is less than 5
-    # while (not rubricApiObject
-    #         or (rubricApiObject.status_code != 200 
-    #             and rubricViewApiAttempts < 5)
-    #         ):
-
-    #     try: ## Irregular try clause, do not comment out in testing
-                            
-    #         ## If the number of attempts is greater than 0
-    #         if rubricApiObject:
-                
-    #             ## Close the previous api object
-    #             rubricApiObject.close()
-    
-    #             ## Wait for 2 seconds
-    #             time.sleep(2)
-                    
-    #         ##  the api call again
-    #         rubricApiObject = requests.get(url=rubricApiUlr, headers = header, params = rubricApiPayload)
-                            
-    #     except Exception as error: ## Irregular except clause, do not comment out in testing
-    #         logger.warning(f"Error: {error} \n Occured when calling {rubricApiUlr} for rubric id: {p1_rubricId}")
-            
-    #     ## Increment the number of attempts
-    #     rubricViewApiAttempts += 1
                     
     ## Save the primary body of information retrieved by the API call
     rubricApiText = rubricApiObject.text
@@ -345,7 +287,7 @@ def checkRubricOutcomeAlignment(p1_row, p1_targetCourseSisId, p1_uniqueAttachedO
         rubricsWithOutcomes = {}
             
         ## Define the course's API rubric call url
-        courseRubricApiUlr = CoreCanvasAPIUrl + "courses/sis_course_id:" + p1_targetCourseSisId + "/rubrics" + "?per_page=100"
+        courseRubricApiUlr = coreCanvasApiUrl + "courses/sis_course_id:" + p1_targetCourseSisId + "/rubrics" + "?per_page=100"
             
         ## Make a variable to hold the course's rubric api object
         courseRubricApiObject = makeApiCall(p1_header = header, p1_apiUrl = courseRubricApiUlr)
@@ -390,7 +332,7 @@ def checkRubricOutcomeAlignment(p1_row, p1_targetCourseSisId, p1_uniqueAttachedO
                     else:    
 
                         ## Define a Get outcome api url
-                        outcomeApiUrl = f"{CoreCanvasAPIUrl}outcomes/{criterion['learning_outcome_id']}"
+                        outcomeApiUrl = f"{coreCanvasApiUrl}outcomes/{criterion['learning_outcome_id']}"
 
                         ## Make a variable to hold the outcome api object
                         outcomeApiObject = makeApiCall(p1_header = header, p1_apiUrl = outcomeApiUrl)
@@ -608,7 +550,7 @@ def termOutcomeAttachmentReport (p1_inputTerm
         accountInfoDF = pd.read_csv(f"{baseLocalInputPath}Canvas_Accounts.csv")
 
         # Get the canvas account id associated with the targetAccountName
-        targetCanvasAccountId = 1 if p1_targetDesignator == "GE" else ( ## GE outcomes are located at the root account level which is not in the accounts csv
+        targetCanvasAccountId = 1 if p1_targetDesignator in ["GE", "CAP"] else ( ## GE outcomes are located at the root account level which is not in the accounts csv
             accountInfoDF.loc[
                 accountInfoDF["name"] == targetAccountName
                 , "canvas_account_id"

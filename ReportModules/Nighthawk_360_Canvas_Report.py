@@ -82,16 +82,16 @@ with open (f"{configPath}Base_External_Paths.json", "r") as file:
     baseExternalOutputPath = fileJson["baseRetentionPharosDataExternalOutputPath"]
 
 ## Canvas Instance Url
-CoreCanvasAPIUrl = None
+coreCanvasApiUrl = None
 ## Open the Core_Canvas_Url.txt from the config path
 with open (f"{configPath}Core_Canvas_Url.txt", "r") as file:
-    CoreCanvasAPIUrl = file.readlines()[0]
+    coreCanvasApiUrl = file.readlines()[0]
 
 ## Define the core Canvas enrollment API url
-coreEnrollmentApiUrl = f"{CoreCanvasAPIUrl}/accounts/1/enrollments/"
+coreEnrollmentApiUrl = f"{coreCanvasApiUrl}/accounts/1/enrollments/"
 
 ## Define the course Canvas course api url
-coreCoursesApiUrl = f"{CoreCanvasAPIUrl}//courses//"
+coreCoursesApiUrl = f"{coreCanvasApiUrl}//courses//"
 
 ## If the script is run as main the folder with the access token is in the parent directory
 canvasAccessToken = ""
@@ -144,7 +144,7 @@ setOfFunctionsWithErrors = set()
 
 ## This function handles function errors
 def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
-    functionName = "except"
+    functionName = "error_handler"
 
     ## Log the error
     logger.error (f"     \nA script error occured while running {p1_ErrorLocation}. " +
@@ -594,18 +594,36 @@ def getStuCourseData (p2_stuID
             stuCourseEnrollmentDeleteParams = {
                 "task": "delete"
             }
-
+            
             ## Make a delete enrollment api call to remove the reactivated enrollment
             enrollmentDeletionApiOjbect = makeApiCall(p1_header = header, p1_apiUrl = stuCourseEnrollmentDeletionApiUrl, p1_payload = stuCourseEnrollmentDeleteParams, apiCallType = "delete")
 
+            ## Define a deletion attempt variable
+            enrollmentDeletionAttempt = 1
+
             ## If the enrollment deletion api call was not successful
-            if enrollmentDeletionApiOjbect.status_code != 200:
+            while enrollmentDeletionApiOjbect.status_code != 200 and enrollmentDeletionAttempt != 5:
+
+                ## Sleep 3 seconds
+                time.sleep(3)
 
                 ## Log a warning that the enrollment deletion failed
                 logger.warning(f"Enrollment deletion failed for {p2_stuCoursesData[targetCourseSisId]['canvas_enrollment_id']} in course {targetCourseSisId} for student {p2_stuID}")
 
-                ## Call the error handler function
-                error_handler (functionName, p1_ErrorInfo = f"Enrollment deletion failed for {p2_stuCoursesData[targetCourseSisId]['canvas_enrollment_id']} in course {targetCourseSisId} for student {p2_stuID}")
+                #try to remove the reactiviated enrollment again
+                enrollmentDeletionApiOjbect = makeApiCall(p1_header = header, p1_apiUrl = stuCourseEnrollmentDeletionApiUrl, p1_payload = stuCourseEnrollmentDeleteParams, apiCallType = "delete")
+
+                ## Increment the attempt number
+                enrollmentDeletionAttempt += 1
+
+            ## If the status was unsucessful despite 5 attempts
+            if enrollmentDeletionApiOjbect.status_code != 200:
+
+                ## Log the attempt as a warning
+                logger.warning(f"Enrollment deletion failed for {p2_stuCoursesData[targetCourseSisId]['canvas_enrollment_id']} in course {targetCourseSisId} for student {p2_stuID}. Status Code: {enrollmentDeletionApiOjbect.status_code}")
+
+                ## Call the error handler function to alert the lms admin
+                error_handler (functionName, p1_ErrorInfo = f"Enrollment deletion failed for {p2_stuCoursesData[targetCourseSisId]['canvas_enrollment_id']} in course {targetCourseSisId} for student {p2_stuID}. Status Code: {enrollmentDeletionApiOjbect.status_code}")
 
     except Exception as error:
         error_handler (functionName, p1_ErrorInfo = error)
@@ -804,13 +822,16 @@ def getStuCoursesData (p1_stuID
     functionName = "Get Stu Courses"
     
     try:
+
+        # if p1_stuID == 25725:
+        #     print (1)
         
         ## Make a df of any canvas user ids that match the student id
         stuCanvasIdDf = p1_filteredCombinedCanvasEnrollmentsDF[
             p1_filteredCombinedCanvasEnrollmentsDF["user_id"].astype(int) == int(p1_stuID)
             ]["canvas_user_id"]
         
-        ## try to get the student's canvas id
+        ## Attempt to get the student's canvas id
         if not stuCanvasIdDf.empty:
             p1_stuCoursesData["stuCanvasId"] = stuCanvasIdDf.values[0]
         
@@ -839,7 +860,7 @@ def getStuCoursesData (p1_stuID
             if targetCourseSisId in p1_stuCoursesData.keys() or "CHPL1000_01" in targetCourseSisId:
 
                 ## Skip it
-                return
+                continue
 
             ## Create a variable to hold the parent course sis id of crosslisted courses when neccessary
             parentStuEnrolledCourseId = ""
@@ -972,6 +993,10 @@ def getNighthawk360Data (p1_oldEnrollmentDataDf):
             ## If the p1_oldEnrollmentDataDf is not empty
             if not p1_oldEnrollmentDataDf.empty:
 
+                ## Change all '-' to '_' in the course number column of the old enrollment data and deletedSisEnrollments
+                p1_oldEnrollmentDataDf['Course Number'] = p1_oldEnrollmentDataDf['Course Number'].str.replace('-', '_')
+                deletedSisEnrollments['course_id'] = deletedSisEnrollments['course_id'].str.replace('-', '_')
+
                 ## Retain the old enrollment data user ids for only the user id and course ids that are in the deleted sis enrollments
                 unEnrolledStudentData = p1_oldEnrollmentDataDf.merge(
                     deletedSisEnrollments[['user_id', 'course_id']],
@@ -980,11 +1005,14 @@ def getNighthawk360Data (p1_oldEnrollmentDataDf):
                     how='inner'
                 ).drop(columns=['user_id', 'course_id'])
 
+                ## Set all nan to ""
+                unEnrolledStudentData.fillna("", inplace=True)
 
-
-            
                 ## For each student id in the unEnrolledStudentData
                 for stuID in unEnrolledStudentData['Student ID'].astype(int).unique():
+
+                    # if (stuID == 718522):
+                    #     print (1)
 
                     ## Retreive the data associated with the student's deleted enrollments
                     stuDataDf = unEnrolledStudentData[unEnrolledStudentData['Student ID'] == stuID]
@@ -1075,7 +1103,7 @@ def getNighthawk360Data (p1_oldEnrollmentDataDf):
                 # For each unique student id
                 for stuID, stuCoursesData in studentDataDict.items():
 
-                    #if stuID == 718266:
+                    #if stuID == 718522:
                 
                         ## For each 
                         # If there is not a published key in all of the student's course data dicts
@@ -1088,47 +1116,54 @@ def getNighthawk360Data (p1_oldEnrollmentDataDf):
                             ## Define the stuEnrollmentDataThread as None to ensure a brand new thread is created
                             stuEnrollmentDataThread = None
 
-                            # Define the stuEnrollmentDataThread
-                            stuEnrollmentDataThread = threading.Thread(
-                                target=getStuCurrentCoursesData
-                                , args=(
-                                    stuID,
-                                    stuCoursesData,
-                                    filteredCombinedCanvasEnrollmentsDF,
-                                    combinedUnpublishedCanvasCoursesList,
-                                    filteredSisEnrollmentsDF,
-                                ),
-                            )
+                            ## If there is not a published value for the key
+                            if "Published" not in stuCoursesData.keys() or not stuCoursesData["Published"]:
 
-                            # Start the term related syllabi report thread
-                            stuEnrollmentDataThread.start()
+                                # Define the stuEnrollmentDataThread
+                                stuEnrollmentDataThread = threading.Thread(
+                                    target=getStuCurrentCoursesData
+                                    , args=(
+                                        stuID,
+                                        stuCoursesData,
+                                        filteredCombinedCanvasEnrollmentsDF,
+                                        combinedUnpublishedCanvasCoursesList,
+                                        filteredSisEnrollmentsDF,
+                                    ),
+                                )
 
-                            # Add the term related syllabi report thread to the list of ongoing threads
-                            ongoingReportThreads.append(stuEnrollmentDataThread)
+                                # Start the term related syllabi report thread
+                                stuEnrollmentDataThread.start()
+
+                                # Add the term related syllabi report thread to the list of ongoing threads
+                                ongoingReportThreads.append(stuEnrollmentDataThread)
                     
-                            ## Increment the thread counter
-                            threadCounter += 1
+                                ## Increment the thread counter
+                                threadCounter += 1
                     
-                            ## If the thread counter is greater than 100
-                            if threadCounter >= 100:
+                                ## If the thread counter is greater than 100
+                                if threadCounter >= 100:
                         
-                                ## For each ongoing thread
-                                for thread in ongoingReportThreads:
+                                    ## For each ongoing thread
+                                    for thread in ongoingReportThreads:
                             
-                                    ## Wait for the thread to finish
-                                    thread.join()
+                                        ## Wait for the thread to finish
+                                        thread.join()
 
-                                    ## Remove the thread from the ongoing threads list
-                                    ongoingReportThreads.remove(thread)
+                                        ## Remove the thread from the ongoing threads list
+                                        ongoingReportThreads.remove(thread)
                             
-                                ## Increment the tens Completed Counter
-                                tensCompletedCounter += 10
+                                    ## Increment the tens Completed Counter
+                                    tensCompletedCounter += 10
                                 
-                                ## Log the number of threads that have been completed
-                                logger.info(f"{tensCompletedCounter}0 threads have been completed")
+                                    ## Log the number of threads that have been completed
+                                    logger.info(f"{tensCompletedCounter}0 threads have been completed")
                             
-                                ## Reset the thread counter
-                                threadCounter = 0
+                                    ## Reset the thread counter
+                                    threadCounter = 0
+
+                            ## Else
+                            else:
+                                print ("already handled")
 
                 # Wait until all ongoing threads have completed
                 for thread in ongoingReportThreads:
@@ -1272,7 +1307,7 @@ def Nighthawk360CanvasReport ():
         #     #     , 'Published': 'published'
         #     # }, inplace=True)
 
-        #     # # Find the differences between the old and current data
+        #     # Find the differences between the old and current data
         #     # rawMissedEnrollmentsDf = oldEnrollmentDataDf[
         #     #     ~oldEnrollmentDataDf.apply(
         #     #         lambda row: any(
@@ -1422,7 +1457,7 @@ def Nighthawk360CanvasReport ():
                         formattedNumberOfMissedAssignments = "|\"\""
                         formattedNumberOf0Grades            = "|\"\"\n"
 
-                        ## try to format the data points for the csv
+                        ## Attempt to format the data points for the csv
                         try: ## Irregular try clause, do not comment out in testing
                         
                             formattedStuID                      = "\""  + str(stuID)                                                        + "\""

@@ -3,13 +3,13 @@
 
 from datetime import datetime
 from Download_File import downloadFile
-import requests, time, json, os, logging, sys
+import requests, time, json, os, logging, sys, re, pandas as pd
 
 # Define the script name, purpose, and external requirements for logging and error reporting purposes
-scriptName = "Get_TUG_Students"
+scriptName = "Get_GPS_Students"
 
 scriptPurpose = r"""
-This script (Get_TUG_Students) uses the Canvas API to run a users report and download the .csv result.
+This script (Get_GPS_Students) uses the Canvas API to run a users report and download the .csv result.
 It requires the following paramters: the path the .csv should be saved to (p1_SavePath), the API 
 header (p1_header).
 """
@@ -44,6 +44,9 @@ sys.path.append(f"{PFAbsolutePath}Scripts TLC\\ActionModules")
 ## Import local modules
 from Error_Email_API import errorEmailApi
 from Make_Api_Call import makeApiCall
+from Get_Courses import termGetCourses
+from Get_Enrollments import termGetEnrollments
+from Get_Users import getUsers
 
 ## Local Path Variables
 baseLogPath = f"{PFAbsolutePath}Logs\\{scriptName}\\"
@@ -72,6 +75,15 @@ canvasAccessToken = ""
 ## Open and retrieve the Canvas Access Token
 with open (f"{configPath}\Canvas_Access_Token.txt", "r") as file:
     canvasAccessToken = file.readlines()[0]
+
+## External Paths
+
+## Define a variable to hold the base external input path which is where the sis input files are stored
+baseExternalInputPath = None 
+## Open Base_External_Paths.json from the config path and get the baseExternalInputPath value
+with open (f"{configPath}Base_External_Paths.json", "r") as file:
+    fileJson = json.load(file)
+    baseExternalInputPath = fileJson["baseExternalInputPath"]
 
 ## Log configurations
 logger = logging.getLogger(__name__)
@@ -123,16 +135,31 @@ def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
 
 ## This function uses the user provided term to determines which Canvas school users to pull users from
 ## with the Canvas Reports API and creates a .csv file of the users in those Canvas school users
-def createUsersCSV(p1_header, attempt = 0):
+def createGPSStudentsCsv(p1_inputTerm, attempt = 0):
     functionName = "createUsersCSV"
     try:
-        logger.info (f"     \nStarting User report")
+        logger.info (f"     \nStarting GPS Student report")
+
+        ## Determine and save the term's school year
+        schoolYear = None
+        if re.search("AF|FA|GF", p1_inputTerm):
+            ## Fall terms are the first terms of a new school year so FA20 is part of the 2020-21 school year.
+            schoolYear = (century + p1_inputTerm[2:] + "-" + str(int(p1_inputTerm[2:]) + 1))
+        elif re.search("SP|GS|AS|SG|SA|SU", p1_inputTerm):
+            ## Spring and Summer terms belong in the same school year as the fall terms before them, so SP21 is part of the same 2020-21 school year as FA20.
+            schoolYear = (century + str(int(p1_inputTerm[2:]) - 1) + "-" + p1_inputTerm[2:])
+
+        ## Create the school year relavent output patha
+        schoolYearOutputPath = f"{outputPath}\\{schoolYear}\\" if p1_inputTerm != "All" else f"{outputPath}"
         
-        ## Define the target destination for the report
-        targetDestination = f"{outputPath}\\Canvas_Users.csv"
+        ## Define the term specific output path
+        termOutputPath = f"{schoolYearOutputPath}{p1_inputTerm}\\" if p1_inputTerm != "All" else f"{outputPath}"
+        
+        ## If the user did not provide a term, set the target path to the default
+        targetDestination = f"{termOutputPath}{p1_inputTerm}_GPS_Students.csv"
         
         ## If the target file exists
-        if os.path.exists(targetDestination) and not __name__ == "__main__":
+        if os.path.exists(targetDestination):
             
             ## Get its last moddifed timestamp
             targetFileTimestamp = os.path.getmtime(targetDestination)
@@ -147,113 +174,60 @@ def createUsersCSV(p1_header, attempt = 0):
             if targetFileHoursOld < 3.5:
 
                 ## logger.info that the file is up to date and return
-                logger.info (f"     \nTarget CSV is up to date")
+                logger.info (f"     \nTarget {targetDestination} CSV is up to date")
                 return targetDestination
         
-        ## Define and initialize the api url for starting reports
-        start_report_API_URL = coreCanvasApiUrl + "accounts/1/reports/provisioning_csv"
-        
-        ##Define and initialize the lists of relavent users, the IDs of their related reports, and their download urls
-        term_report_ID = ""
-        term_report_download_url = ""
-        
-        ## Make an api call to start a provisioning report for each of the relavent users and append the report id to the term_report_ID list
-        logger.info ("\n" + "Calling provisioning users reports")
+        ## Read (and update if neccessary) the canvas courses csv file for the term as a pandas df
+        rawCanvasCourses = pd.read_csv(termGetCourses(inputTerm = p1_inputTerm))
 
-        ## Initilize payload with one of the relavent users
-        payload = {'parameters[users]':'true', 'parameters[include_deleted_objects]':'true'}
+        ## Filter the sis courses to only include GPS courses by exluding all rows that have "G_" or "_APP"
+        ## in the account_id column and have TRUE in the created_by_sis column
+        GPSCanvasCourses = rawCanvasCourses[rawCanvasCourses["account_id"].str.contains("G_|_APP")
+                                   & (rawCanvasCourses["created_by_sis"] == True)
+                                   ]
 
-        ## Make the API call
-        #report_object = requests.post(start_report_API_URL, headers = p1_header, params = payload_2)
 
-        ## Make the api call using makeApiCall
-        report_object = makeApiCall(p1_header = p1_header, p1_apiUrl = start_report_API_URL, p1_payload = payload, apiCallType = "post")
+        ## Read (and update if neccessary) the canvas enrollment csv file for the term as a pandas df
+        rawCanvasEnrollments = pd.read_csv(termGetEnrollments(inputTerm = p1_inputTerm))
 
-        ## Convert report_text_jsonObject recieved through the API call in json to a Python Dictionary
-        report_text_jsonObject = json.loads(report_object.text)
-        term_report_ID = report_text_jsonObject["id"]
+        ## Filter the sis enrollments to only include those with that are enrolled in a GPSSisCourse course that have created by_sis set to TRUE
+        GPSCanvasEnrollments = rawCanvasEnrollments[rawCanvasEnrollments["canvas_course_id"].isin(GPSCanvasCourses["canvas_course_id"])
+                                                    & (rawCanvasEnrollments["created_by_sis"] == True)
+                                                    & (rawCanvasEnrollments["role"] == "student")
+                                           ]
 
-        ## Check the status of each report and, if the progress == 100, append the report's download url to term_report_download_url
-        logger.info ("\nChecking statuses of provisioning users reports")
+        ## Read (and update if neccessary) the canvas users csv file for the term as a pandas df
+        rawCanvasUsers = pd.read_csv(getUsers(inputTerm = p1_inputTerm))
 
-        ## Define the status report the Google api url with the report ID added on the end
-        status_report_API_URL = coreCanvasApiUrl + "accounts/1/reports/provisioning_csv/" + str(term_report_ID)
-        ## Make the status api call
-        status_object = requests.get(status_report_API_URL, headers = p1_header)
-        ## Convert status_text_jsonObject from json to a Python Dictionary
-        status_text_jsonObject = json.loads(status_object.text)
+        ## Filter the sis users to only include those whose ids are in the unique user_id column of the GPSCanvasEnrollments df
+        GPSCanvasUsers = rawCanvasUsers[rawCanvasUsers["canvas_user_id"].isin(GPSCanvasEnrollments["canvas_user_id"].unique())]
 
-        ## Check whether the report has finished and if it isn't, wait 10 seconds 
-        ## continue to check until the report shows progress as 100
-        while (status_text_jsonObject["progress"] != 100):
-            ## Wait 10 seconds
-            logger.info ("\n" + f"Users report is incomplete. Waiting 10 seconds")
-            time.sleep(10)
-            
-            ## Remake the call
-            status_object = requests.get(status_report_API_URL, headers = p1_header)
-            
-            ## Reinitilize the the status text dictionary so the progress can be checked again
-            status_text_jsonObject = json.loads(status_object.text)
+        ## Save the filtered sis users to a csv file in the outputPath
+        GPSCanvasUsers.to_csv(targetDestination, index=False)
 
-        ## If the report failed
-        if "parameters" in status_text_jsonObject.keys():
-            if "extra_text" in status_text_jsonObject["parameters"].keys():
-                if "failed" in status_text_jsonObject["parameters"]["extra_text"]:
-                    
-                    ## Recursively call this function again unless this is the fifth attempt
-                    if attempt != 3:
-                        createUsersCSV(p1_header, attempt + 1)
-                    return
+        logger.info (f"     \nGPS Student report created successfully at {outputPath}GPS_Students.csv")
 
-        ## : to append the download url to the term_report_download_url list
-        ## If for whatever reason the report failed and there is no download url, make a note of it
-        logger.info (f"     \n\nRecording download url for user csv")
-        reportDownloadUrl = status_text_jsonObject["attachment"]["url"]
-        reportText = status_text_jsonObject["parameters"]["extra_text"]
-        
-        try: ## Irregular try clause, do not comment out in testing
-            ## Add the download url to the relavent list
-            term_report_download_url = reportDownloadUrl
-        
-        except: ## Irregular except clause, do not comment out in testing
-            ## Make note that there was no download URL
-            logger.warning (f"\nError: No download url for the user report")
-
-            ## Make note of the text of the status object with no url
-            logger.info (f"     \n\nExtra Text: {reportText}")
-
-        ## Download the .csv file located at the term_report_download_url
-        ## Overwrite the file of the same name if it exists
-        logger.info ("\nDownloading provisioning users report")
-        downloadFile(term_report_download_url, f"{outputPath}\\Canvas_Users.csv", "w")
-
-        logger.info (f"     \nSucessfully downloaded User CSV")
-
-        ## Return the target destination
+        ## Return the path to the created csv file
         return targetDestination
+
+
 
     except Exception as error:
         error_handler (functionName, p1_ErrorInfo = error)
 
-def getUsers(inputTerm = ""):
-    functionName = "Get_TUG_Students"
-
-    ## Define the API Call header using the retreived Canvas Token
-    header = {'Authorization' : f"Bearer {canvasAccessToken}"}
+def termGetGPSStudents(inputTerm = ""):
+    functionName = "Get_GPS_Students"
 
     ## Start and download the Canvas report
-    targetDestiniation = createUsersCSV(p1_header = header)
+    targetDestiniation = createGPSStudentsCsv(p1_inputTerm = inputTerm)
 
     ## Return the target destination
     return targetDestiniation
 
 if __name__ == "__main__":
 
-    ## Define the API Call header using the retreived Canvas Token
-    header = {'Authorization' : f"Bearer {canvasAccessToken}"}
-
-    ## Start and download the Canvas report
-    createUsersCSV (p1_header = header)
+    ## Start the GPS student report creation process
+    termGetGPSStudents (inputTerm = input("Enter the desired term in \
+four character format (FA20, SU20, SP20): "))
 
     input("Press enter to exit")

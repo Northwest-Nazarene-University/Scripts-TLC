@@ -83,10 +83,10 @@ with open (f"{configPath}Base_External_Paths.json", "r") as file:
     baseExternalInputPath = fileJson["baseExternalInputPath"]
 
 ## Canvas Instance Url
-CoreCanvasAPIUrl = None
+coreCanvasApiUrl = None
 ## Open the Core_Canvas_Url.txt from the config path
 with open (f"{configPath}Core_Canvas_Url.txt", "r") as file:
-    CoreCanvasAPIUrl = file.readlines()[0]
+    coreCanvasApiUrl = file.readlines()[0]
 
 ## Define a variable to hold the Canvas Access Token
 canvasAccessToken = ""
@@ -135,7 +135,7 @@ setOfFunctionsWithErrors = set()
 
 ## This function handles function errors
 def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
-    functionName = "except"
+    functionName = "error_handler"
 
     ## Log the error
     logger.error (f"     \nA script error occured while running {p1_ErrorLocation}. " +
@@ -238,14 +238,44 @@ def retrieveDataForRelevantCommunication (p2_inputTerm
         ## Remove all columns from the active Sis courses df except the course_id column, the start_date, and the end_date
         reducedActiveSisCoursesDF = activeSisCoursesDF[["course_id", "start_date", "end_date"]]
 
-        ## Retrieve the Undg csv of term related Canvas courses from the term path
-        rawTermUndgCanvasCoursesDF = pd.read_csv(createCoursesCSV(p1_header, p2_inputTerm))
+        ## Define an empty rawTermUndgCanvasCoursesDF
+        rawTermUndgCanvasCoursesDF = pd.DataFrame()
 
-        ## Retrieve the grad csv of term related Canvas courses from the term path
-        rawTermGradCanvasCoursesDF = pd.read_csv(createCoursesCSV(p1_header, relevantGradTerm))
+        #try to retrieve the Undg csv of term related Canvas courses from the term path
+        try: ## Irregular try clause, do not comment out in testing
+            
+            ## Retrieve the Undg csv of term related Canvas courses from the term path
+            rawTermUndgCanvasCoursesDF = pd.read_csv(createCoursesCSV(p1_header, p2_inputTerm))
 
+        ## Otherwise
+        except: ## Irregular except clause, do not comment out in testing
+            
+            ## Log the fact that there is no undg courses csv for this term
+            logger.warning(f"\nNo Undg Courses CSV for {p2_inputTerm}")
+
+        ## Define an empty rawTermGradCanvasCoursesDF
+        rawTermGradCanvasCoursesDF = pd.DataFrame()
+
+        #try to retrieve the Grad csv of term related Canvas courses from the term path
+        try: ## Irregular try clause, do not comment out in testing
+            
+            ## Retrieve the grad csv of term related Canvas courses from the term path
+            rawTermGradCanvasCoursesDF = pd.read_csv(createCoursesCSV(p1_header, relevantGradTerm))
+
+        ## Otherwise
+        except: ## Irregular except clause, do not comment out in testing
+            
+            ## Log the fact that there is no grad courses csv for this term
+            logger.warning(f"\nNo Grad Courses CSV for {relevantGradTerm}")
+    
         ## Combine the Undg and Grad csvs of related canvas courses
         rawTermCanvasCoursesDF = pd.concat([rawTermUndgCanvasCoursesDF, rawTermGradCanvasCoursesDF])
+
+        ## If the raw term canvas courses df is empty
+        if rawTermCanvasCoursesDF.empty:
+
+            ## Return an empty dataframe for the active outcome courses df and the auxillary df dict
+            return rawTermCanvasCoursesDF, auxillaryDFDict
 
         ## Reset the index to ensure unique indices
         rawTermCanvasCoursesDF.reset_index(drop=True, inplace=True)
@@ -470,7 +500,7 @@ def addOutcomeToCourse (targetCourseDataDict
         logger.info("\n     Course:" + targetCourseDataDict['course_id'])
 
         ## Create the base and specific course API urls
-        baseCourseApiUrl = CoreCanvasAPIUrl + "courses/sis_course_id:" + targetCourseSisId
+        baseCourseApiUrl = coreCanvasApiUrl + "courses/sis_course_id:" + targetCourseSisId
         contentMigrationApiUrl = baseCourseApiUrl + "/content_migrations"
         
         ## Make a content migration API call to find out what content has already been copied to the course
@@ -502,8 +532,8 @@ def addOutcomeToCourse (targetCourseDataDict
                         ]
                     ]
             
-            ## If a migration that has settings has the outcome name in the migration's setting's source course name
-            if any([migration['settings']['source_course_id'] == outcomeCourseCanvasId for migration in courseMigrations if 'settings' in migration.keys()]):
+            ## If a migration that has settings has the outcome name in the migration's setting's source course name and has a status of completed
+            if any([migration['settings']['source_course_id'] == outcomeCourseCanvasId and migration['workflow_state'] == 'completed' for migration in courseMigrations if 'settings' in migration.keys()]):
 
                 ## Log the fact that the outcome has already been copied in
                 logger.info(f"\n {targetCourseSisId} already has {targetCourseActiveOutcomeCourseDataDict[outcome]}")
@@ -595,7 +625,7 @@ def removeMissingOutcomes (p1_activeOutcomeCourseDf, p1_uniqueOutcomes, p1_outco
                         p1_activeOutcomeCourseDf.loc[index, outcome] = ""
 
                         ## Send an error email about the missing outcome
-                        error_handler (functionName, f"Outcome Missing Import Course: {row[outcome]}")
+                        error_handler (f"External Input Error: {functionName}", f"Outcome Missing Import Course: {row[outcome]}")
                         
                 ## If all outcome values in the row are blank strings
                 if all([pd.isna(row[outcome]) for outcome in outcomesColumns]):
@@ -637,15 +667,31 @@ def getUniqueOutcomesAndOutcomeCoursesDict (p1_activeOutcomeCourseDf, p2_header)
             courseIndex = None
 
             try: ## Irregular try clause, do not comment out in testing
+
+                ## Make a list of the indexes where the long_name column is equal to the outcome (there should only be 1)
+                courseIndexSearch = allCanvasCoursesDF[allCanvasCoursesDF['long_name'] == outcome].index
+
+                ## If the courseIndexs is not empty
+                if not courseIndexSearch.empty:
+
+                    ## Get the first index from the courseIndexSearch
+                    courseIndex = courseIndexSearch[0]
+
             
-                ## Find the index of the course with the outcome as the name
+                ## Set the courseIndex to the index of the course with the outcome as the long name
                 courseIndex = allCanvasCoursesDF[allCanvasCoursesDF['long_name'] == outcome].index[0]
             
             ## If no course is found with the outcome as the long name
             except: ## Irregular except clause, do not comment out in testing
                 
-                ## Find the index of the course with the outcome as the short name
-                courseIndex = allCanvasCoursesDF[allCanvasCoursesDF['short_name'] == outcome].index[0]
+                ## Make a list of the indexes where the short_name column is equal to the outcome (there should only be 1)
+                courseIndexeSearch = allCanvasCoursesDF[allCanvasCoursesDF['short_name'] == outcome].index
+
+                ## If the courseIndexs is not empty
+                if not courseIndexeSearch.empty:
+
+                    ## Get the first index from the courseIndexSearch
+                    courseIndex = courseIndexeSearch[0]
                 
             ## Finally
             finally:
@@ -657,7 +703,7 @@ def getUniqueOutcomesAndOutcomeCoursesDict (p1_activeOutcomeCourseDf, p2_header)
                     logger.error(f"\nOutcome not found: {outcome}")
                     
                     ## Email the fact that the course was not found
-                    error_handler (functionName, f"Outcome course not found: {outcome}")
+                    error_handler (f"External Input Error: {functionName}", f"Outcome course not found: {outcome}")
 
                     ## Skip to the next outcome
                     continue

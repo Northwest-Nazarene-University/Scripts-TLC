@@ -84,10 +84,10 @@ with open (f"{configPath}Base_External_Paths.json", "r") as file:
     baseExternalOutputPath = fileJson["baseTlcUniversitySyllabiDataExternalOutputPath"]
 
 ## Canvas Instance Url
-CoreCanvasAPIUrl = None
+coreCanvasApiUrl = None
 ## Open the Core_Canvas_Url.txt from the config path
 with open (f"{configPath}Core_Canvas_Url.txt", "r") as file:
-    CoreCanvasAPIUrl = file.readlines()[0]
+    coreCanvasApiUrl = file.readlines()[0]
 
 ## If the script is run as main the folder with the access token is in the parent directory
 canvasAccessToken = ""
@@ -148,7 +148,7 @@ setOfFunctionsWithErrors = set()
 
 ## This function handles function errors
 def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
-    functionName = "except"
+    functionName = "error_handler"
 
     ## Log the error
     logger.error (f"     \nA script error occured while running {p1_ErrorLocation}. " +
@@ -296,7 +296,7 @@ def courseAddendumReport (row, p3_inputTerm, p1_departmentSavePaths, p1_CollegeO
         logger.info("\n     Course: " + courseSisId)
             
         ## Create the URL the API call will be made to
-        course_API_url = CoreCanvasAPIUrl + "courses/sis_course_id:" + courseSisId
+        course_API_url = coreCanvasApiUrl + "courses/sis_course_id:" + courseSisId
                 
         ## Make the API call and save the result as course_object
         course_object = requests.get(course_API_url, headers = header, params = payload)

@@ -117,7 +117,7 @@ def downloadFile(file_link, inputFilePathwithName, mode):
     attemptNum = 1
     completed = False
 
-    ## try: to download the file at least 5 times
+    ## Attempt to to download the file at least 5 times
     while not completed and attemptNum <= 5:
 
         try: ## Irregular try clause, do not comment out in testing
