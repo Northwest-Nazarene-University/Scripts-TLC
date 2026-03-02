@@ -82,20 +82,17 @@ def retrieveDataForRelevantCommunication (p2_inputTerm
                                           ):
     
     functionName = "Retrieve Data For Relevant Communication"
+
+    ## Define an auxillary data dict and auxillary df dict
+    auxillaryDFDict = {}
+    completeActiveCanvasCoursesDF = pd.DataFrame()
     
     try:
-    
-        ## Define an auxillary data dict and auxillary df dict
-        auxillaryDataDict = {}
-        auxillaryDFDict = {}
 
         ## Get the year of the term
         termYear = int(f"{localSetup.dateDict['century']}{p2_inputTerm[2:]}")
         termPrefix = p2_inputTerm[:2]
         termWord = localSetup._determineTermName(termPrefix)
-
-        ## Define the current school year
-        auxillaryDataDict["Target School Year"] = localSetup._determineSchoolYear(termWord, termYear)
 
         ## Retrieve the df of Active outcome courses which includes course code, required outcome/s, and the relevant instructor name/s, id/s, and email/s
         rawActiveOutcomeCourseDf = CanvasReport.getActiveOutcomeCoursesDf(localSetup, p2_inputTerm, p3_targetDesignator)
@@ -280,6 +277,7 @@ def retrieveDataForRelevantCommunication (p2_inputTerm
 
     except Exception as Error:
         errorHandler.sendError(functionName, Error)
+        return completeActiveCanvasCoursesDF, auxillaryDFDict 
 
 ## This function processes the rows of the CSV file and sends on the relavent data to process_course
 def addOutcomeToCourse (targetCourseDataDict
@@ -603,7 +601,10 @@ def getUniqueOutcomesAndOutcomeCoursesDict (p3_inputTerm, p1_activeOutcomeCourse
         accountsDf = CanvasReport.getAccountsDf(localSetup)
 
         ## Get the target account id from the accounts df using the target account name
-        targetCanvasAccountId = accountsDf.loc[accountsDf["name"] == targetAccountName, "canvas_account_id"].values[0]
+        targetCanvasAccountId = (
+            1 if targetAccountName == "NNU"
+            else accountsDf.loc[accountsDf["name"] == targetAccountName, "canvas_account_id"].values[0]
+            )
 
         ## Define a dict to hold tail of the api url to add the outcome to a course
         uniqueOutcomesCanvasData = {}
@@ -2940,9 +2941,10 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
     try:
 
         ## Retrieve the data for determining and sending out relevant communication
-        completeActiveCanvasCoursesDF, auxiliaryDfDict = retrieveDataForRelevantCommunication(p2_inputTerm = p1_inputTerm
-                                                                                              , p3_targetDesignator = p1_targetDesignator
-                                                                                              )
+        completeActiveCanvasCoursesDF, auxiliaryDfDict = retrieveDataForRelevantCommunication(
+            p2_inputTerm = p1_inputTerm
+            , p3_targetDesignator = p1_targetDesignator
+            )
                 
         ## Define a list to hold the communication threads
         actionThreads = []
@@ -3835,25 +3837,6 @@ four character format (FA20, SU20, SP20): "))
 # =============================================================================
 # Author: Bryce Miller - brycezmiller@nnu.edu
 # Last Updated by: Bryce Miller
-#
-# Downloads the GPS (Graduate) and TUG (Undergraduate) course catalogs from the
-# CleanCatalog production (current year) and staging (next year) report URLs,
-# builds a combined course list triplicated across all three terms
-# (Fall / Spring / Summer) for both the current and next school year,
-# resolves Parent Organization from Canvas sub-accounts using Smart Eval
-# Organizations, merges requisite columns per Simple Syllabus requirements,
-# and uploads the resulting CSVs to Simple Syllabus via SFTP.
-#
-# Graduate routing : course numbers >= 5000
-# Undergraduate routing : course numbers < 5000
-#
-# Output term label conventions:
-#   Graduate Fall   → "GRADUATE FALL SEMESTER {year}"
-#   Graduate Spring → "GRADUATE SPRING SEMESTER {year}"
-#   Graduate Summer → "GRADUATE SUMMER SESSION {year}"
-#   Undergrad Fall   → "UNDERGRADUATE FALL SEMESTER {year}"
-#   Undergrad Spring → "UNDERGRADUATE SPRING SEMESTER {year}"
-#   Undergrad Summer → "UNDERGRADUATE SUMMER SEMESTER {year}"
 # =============================================================================
 
 import os
@@ -3862,44 +3845,42 @@ import re
 import time
 import traceback
 import difflib
-
 import paramiko
 import pandas as pd
 from datetime import datetime
 
-# Add Script repository to sys.path
+## Add Script repository to syspath
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules"))
 
-# ── Script metadata ───────────────────────────────────────────────────────────
+## Define the script name, purpose, and external requirements for logging and error reporting
 scriptName = __file__.replace(".py", "")
 scriptPurpose = r"""
 Downloads the GPS (Graduate) and TUG (Undergraduate) course catalogs from the
 CleanCatalog production (current year) and staging (next year) report URLs,
 builds a combined course list triplicated across all three terms
 (Fall / Spring / Summer) for both the current and next school year,
-resolves Parent Organization from Canvas sub-accounts using Smart Eval
+resolves Parent Organization from Canvas sub-accounts using Simple Syllabus
 Organizations, merges requisite columns per Simple Syllabus requirements,
 and uploads the resulting CSVs to Simple Syllabus via SFTP.
-
 Graduate routing : course numbers >= 5000
 Undergraduate routing : course numbers < 5000
-
 Output term label conventions:
- Graduate Fall   → "GRADUATE FALL SEMESTER {year}"
+ Graduate Fall → "GRADUATE FALL SEMESTER {year}"
  Graduate Spring → "GRADUATE SPRING SEMESTER {year}"
  Graduate Summer → "GRADUATE SUMMER SESSION {year}"
- Undergrad Fall   → "UNDERGRADUATE FALL SEMESTER {year}"
- Undergrad Spring → "UNDERGRADUATE SPRING SEMESTER {year}"
- Undergrad Summer → "UNDERGRADUATE SUMMER SEMESTER {year}"
+ Undergrad Fall → "UNDERGRADUATE FALL SEMESTER {year}"
+ Undergrad Spring→ "UNDERGRADUATE SPRING SEMESTER {year}"
+ Undergrad Summer→ "UNDERGRADUATE SUMMER SEMESTER {year}"
 """
+
 externalRequirements = r"""
 To function properly this script requires:
  - Network access to the CleanCatalog production and staging GPS and TUG report URLs
  - A Simple Syllabus SSH private key stored at:
-   <configPath>/Simple_Syllabus_Private_Key.txt
+    <configPath>/Simple_Syllabus_Private_Key.txt
  - Valid Canvas API credentials defined in Common_Configs
- - Smart Eval Organizations CSV in the Config folder:
-   <configPath>/Smart Eval Organizations.csv
+ - Simple Syllabus Organizations CSV in the Config folder:
+    <configPath>/Simple Syllabus Organizations.csv
 """
 
 # ── Imports from the existing TLC resource stack ──────────────────────────────
@@ -3914,292 +3895,275 @@ except ImportError:
     from ResourceModules.Canvas_Report import CanvasReport
     from ResourceModules.Error_Email import errorEmail
 
-# Initialise LocalSetup and error handler
+## Initialize LocalSetup and error handler so this module works when imported or run directly
 localSetup = LocalSetup(datetime.now(), __file__)
 errorHandler = errorEmail(scriptName, scriptPurpose, externalRequirements, localSetup)
 
-# ── CleanCatalog production & staging report URLs ────────────────────────────
-# Production (current catalog)
-PROD_GPS_CATALOG_URL = (
-    "https://gpscatalog.nnu.edu/admin/reports/gps-course-report/download?page&_format=csv"
-)
-PROD_TUG_CATALOG_URL = (
-    "https://catalog.nnu.edu/admin/reports/tug-course-report/download?page&_format=csv"
-)
+## Import shared configuration (Catalog URLs, SFTP, term labels, term/year logic)
+from Common_Configs import simpleSyllabusConfig, termSchoolYearLogic
 
-# Staging (next catalog)
-STAGING_GPS_CATALOG_URL = (
-    "https://test-nnu-grad.cleancatalog.io/admin/reports/gps-course-report"
-)
-STAGING_TUG_CATALOG_URL = (
-    "https://test-nnu-catalog.cleancatalog.io/admin/reports/tug-course-report"
-)
-
-# ── Simple Syllabus SFTP connection settings (per SFTP_Documentation PDF) ────
-SS_HOST = "files.simplesyllabus.com"
-SS_PORT = 22
-SS_USERNAME = "nnu"
-SS_KEY_PATH = os.path.join(localSetup.configPath, "Simple_Syllabus_Private_Key.txt")
-SS_REMOTE_DIR = "/imports"
-
-# ── Local output directory for generated CSVs ─────────────────────────────────
-OUTPUT_DIR = os.path.join(
+## Local output directory for generated CSVs
+outputDir = os.path.join(
     localSetup.getInternalResourcePaths("Simple_Syllabus"),
     "Catalog_Export"
 )
-os.makedirs(OUTPUT_DIR, exist_ok=True)
-
-# ── Term label templates keyed by (level, term) ───────────────────────────────
-TERM_LABELS = {
-    ("graduate", "Fall"):   "GRADUATE FALL SEMESTER {year}",
-    ("graduate", "Spring"): "GRADUATE SPRING SEMESTER {year}",
-    ("graduate", "Summer"): "GRADUATE SUMMER SESSION {year}",
-    ("undergraduate", "Fall"):   "UNDERGRADUATE FALL SEMESTER {year}",
-    ("undergraduate", "Spring"): "UNDERGRADUATE SPRING SEMESTER {year}",
-    ("undergraduate", "Summer"): "UNDERGRADUATE SUMMER SEMESTER {year}",
-}
-
-# Fall belongs to the START year of the school year (FA25 = school year 2025-26)
-# Spring and Summer belong to the END year (SP26, SU26 = school year 2025-26)
-TERM_YEAR_SIDE = {
-    "Fall": "start",   # use schoolYearStart
-    "Spring": "end",   # use schoolYearStart + 1
-    "Summer": "end",   # use schoolYearStart + 1
-}
-
-TERM_ORDER = ["Fall", "Spring", "Summer"]
+os.makedirs(outputDir, exist_ok=True)
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+## This function splits a catalog Title such as 'ACCT6000' into ('ACCT', '6000')
+## Returns (None, None) if the format is not recognised
 def splitCourseCode(rawTitle: str):
-    """
-    Split a catalog Title such as 'ACCT6000' into ('ACCT', '6000').
-    Returns (None, None) if the format is not recognised.
-    """
     match = re.match(r"([A-Za-z]+)(\d+)", str(rawTitle).strip())
     if match:
         return match.group(1).upper(), match.group(2)
     return None, None
 
 
+## This function merges multiple text fields into one semicolon-delimited string
+## Blank, NaN, and duplicate values are discarded
 def combineFields(*fields):
-    """
-    Merge multiple text fields into one semicolon-delimited string.
-    Blank, NaN, and duplicate values are discarded.
-    """
-    seen = set()
+    seenValues = set()
     parts = []
     for field in fields:
         if pd.notna(field):
-            val = str(field).strip()
-            if val and val.lower() != "nan" and val not in seen:
-                seen.add(val)
-                parts.append(val)
+            value = str(field).strip()
+            if value and value.lower() != "nan" and value not in seenValues:
+                seenValues.add(value)
+                parts.append(value)
     return "; ".join(parts)
 
 
-def _normalize_name_for_match(name: str) -> str:
-    """
-    Normalize org/account names for matching:
-    - lowercase
-    - collapse non-alphanumeric characters to spaces
-    - strip extra whitespace
-    """
+## This function normalizes org/account names for matching:
+##  - lowercase
+##  - collapse non-alphanumeric characters to spaces
+##  - strip extra whitespace
+def _normalizeNameForMatch(name: str) -> str:
     if not isinstance(name, str):
         return ""
     cleaned = re.sub(r"[^a-z0-9]+", " ", name.lower())
     return cleaned.strip()
 
 
-def _load_smart_eval_orgs():
-    """
-    Load Smart Eval Organizations from the Config folder and
-    build a normalized-name → actual-name lookup plus a list of
-    all normalized names for fuzzy matching.
-    """
-    smart_eval_path = os.path.join(localSetup.configPath, "Smart Eval Organizations.csv")
-    if not os.path.exists(smart_eval_path):
-        localSetup.logger.warning(f"Smart Eval Organizations file not found: {smart_eval_path}")
+## This function loads Simple Syllabus Organizations from the Config folder and
+## builds:
+##   - a normalized-name → actual-name lookup dict
+##   - a list of all normalized names for fuzzy matching
+def _loadSimpleSyllabusOrgs():
+    simpleSyllabusPath = os.path.join(
+        localSetup.configPath,
+        "Simple Syllabus Organizations.csv"
+    )
+
+    if not os.path.exists(simpleSyllabusPath):
+        localSetup.logger.warning(
+            f"Simple Syllabus Organizations file not found: {simpleSyllabusPath}"
+        )
         return {}, []
 
-    se_df = pd.read_csv(smart_eval_path)
-    name_to_actual = {}
-    normalized_names = []
+    simpleSyllabusDf = pd.read_csv(simpleSyllabusPath)
 
-    for _, row in se_df.iterrows():
-        raw_name = str(row.get("name", "")).strip()
-        if not raw_name:
+    nameToActual = {}
+    normalizedNames = []
+
+    for _, row in simpleSyllabusDf.iterrows():
+        rawName = str(row.get("name", "")).strip()
+        if not rawName:
             continue
-        norm = _normalize_name_for_match(raw_name)
-        if norm:
-            name_to_actual[norm] = raw_name
-            normalized_names.append(norm)
+
+        normalized = _normalizeNameForMatch(rawName)
+        if normalized:
+            nameToActual[normalized] = rawName
+            normalizedNames.append(normalized)
 
     localSetup.logger.info(
-        f"Loaded {len(name_to_actual)} Smart Eval organizations from {smart_eval_path}"
+        f"Loaded {len(nameToActual)} Simple Syllabus organizations from {simpleSyllabusPath}"
     )
-    return name_to_actual, normalized_names
+
+    return nameToActual, normalizedNames
 
 
-def _map_account_to_smarteval_org(account_id: str,
-                                  accounts_by_id: dict,
-                                  se_name_map: dict,
-                                  se_normalized_names: list) -> str:
-    """
-    Starting at the given Canvas account_id, walk up the account hierarchy.
-    For each account encountered:
-      1) Try an exact normalized-name match to Smart Eval orgs
-      2) If none, pick the 'closest' Smart Eval org via difflib.get_close_matches
-    Return the Smart Eval org name if found, else ''.
-    """
+## This function, starting at a given Canvas accountId, walks up the account
+## hierarchy and attempts to resolve a matching Simple Syllabus organization name.
+## It first tries an exact normalized-name match, then a fuzzy match using difflib.
+def _mapAccountToSimpleSyllabusOrg(
+    accountId: str,
+    accountsById: dict,
+    simpleSyllabusNameMap: dict,
+    simpleSyllabusNormalizedNames: list
+) -> str:
     visited = set()
-    current_id = str(account_id).strip()
+    currentId = str(accountId).strip()
 
-    while current_id and current_id not in visited:
-        visited.add(current_id)
-        account = accounts_by_id.get(current_id)
+    while currentId and currentId not in visited:
+        visited.add(currentId)
+
+        account = accountsById.get(currentId)
         if not account:
             break
 
-        acc_name = str(account.get("name", "")).strip()
-        norm_acc_name = _normalize_name_for_match(acc_name)
-        if norm_acc_name:
+        accountName = str(account.get("name", "")).strip()
+        normalizedAccountName = _normalizeNameForMatch(accountName)
+
+        if normalizedAccountName:
             # 1) Exact normalized match
-            if norm_acc_name in se_name_map:
-                return se_name_map[norm_acc_name]
+            if normalizedAccountName in simpleSyllabusNameMap:
+                return simpleSyllabusNameMap[normalizedAccountName]
 
             # 2) Fuzzy / likely match
             candidates = difflib.get_close_matches(
-                norm_acc_name, se_normalized_names, n=1, cutoff=0.8
+                normalizedAccountName,
+                simpleSyllabusNormalizedNames,
+                n=1,
+                cutoff=0.8
             )
             if candidates:
-                matched_norm = candidates[0]
-                return se_name_map.get(matched_norm, "")
+                matchedNorm = candidates[0]
+                return simpleSyllabusNameMap.get(matchedNorm, "")
 
         # ascend in the hierarchy
-        parent_id = str(account.get("parent_account_id", "")).strip()
-        if not parent_id or parent_id == current_id:
+        parentId = str(account.get("parent_account_id", "")).strip()
+        if not parentId or parentId == currentId:
             break
-        current_id = parent_id
+
+        currentId = parentId
 
     return ""
 
 
+## This function builds a (subject, courseNumber) → Parent Organization mapping
+## using Canvas accounts + Simple Syllabus Organizations.
+## Steps:
+##  1. Load Canvas courses & accounts via CanvasReport
+##  2. Load Simple Syllabus orgs from Config/Simple Syllabus Organizations.csv
+##  3. For each course, use its accountId and walk up the account tree until
+##     a matching Simple Syllabus org is found (exact or fuzzy).
+##  4. Store the resolved Simple Syllabus org name as Parent Organization.
 def buildSubjectOrgMap():
-    """
-    Build (subject, courseNumber) → Parent Organization mapping
-    using Canvas accounts + Smart Eval Organizations.
+    functionName = "buildSubjectOrgMap"
+    try:
+        localSetup.logger.info(
+            "Building subject→ParentOrg map via Canvas + Simple Syllabus..."
+        )
 
-    Steps:
-      1. Load Canvas courses & accounts via CanvasReport
-      2. Load Smart Eval orgs from Config/Smart Eval Organizations.csv
-      3. For each course, use its account_id and walk up the account tree
-         until we find a Canvas account whose name matches (exactly or
-         closely) a Smart Eval org name.
-      4. Store the resolved Smart Eval org name as Parent Organization.
-    """
-    localSetup.logger.info("Building subject→ParentOrg map via Canvas + Smart Eval...")
+        allCoursesDf = CanvasReport.getCoursesDf(localSetup, "All")
+        accountsDf = CanvasReport.getAccountsDf(localSetup)
 
-    allCoursesDf = CanvasReport.getCoursesDf(localSetup, "All")
-    accountsDf = CanvasReport.getAccountsDf(localSetup)
+        # Simple Syllabus orgs (normalized)
+        simpleSyllabusNameMap, simpleSyllabusNormalizedNames = (
+            _loadSimpleSyllabusOrgs()
+        )
 
-    # Smart Eval orgs (normalized)
-    se_name_map, se_normalized_names = _load_smart_eval_orgs()
+        # --- Build accountId → {name, parent_account_id} lookup ---
+        accountsById = {}
+        if accountsDf is not None and not accountsDf.empty:
+            for _, row in accountsDf.iterrows():
+                canvasAccountId = str(row.get("canvas_account_id", "")).strip()
+                if not canvasAccountId:
+                    continue
 
-    # --- Build account_id → {name, parent_account_id} lookup ---
-    accounts_by_id = {}
-    if accountsDf is not None and not accountsDf.empty:
-        for _, row in accountsDf.iterrows():
-            acct_id = str(row.get("canvas_account_id", "")).strip()
-            if not acct_id:
-                continue
-            accounts_by_id[acct_id] = {
-                "name": str(row.get("name", "")).strip(),
-                "parent_account_id": str(row.get("parent_account_id", "")).strip(),
-            }
+                accountsById[canvasAccountId] = {
+                    "name": str(row.get("name", "")).strip(),
+                    "parent_account_id": str(row.get("parent_account_id", "")).strip(),
+                }
 
-    # --- Build (subject, courseNum) → Smart Eval org name from course_id ---
-    # Sample course_id values: FA2025_ACCT6000_01, SP2026_BIOL2210_1L
-    courseIdPattern = re.compile(r"^[A-Z]{2}\d{2}_([A-Za-z]+)(\d+)_", re.IGNORECASE)
-    subjectCourseToOrg = {}
+        # --- Build (subject, courseNum) → Simple Syllabus org name from courseId ---
+        # Sample courseId values: FA2025_ACCT6000_01, SP2026_BIOL2210_1L
+        courseIdPattern = re.compile(
+            r"^[A-Z]{2}\d{2}_([A-Za-z]+)(\d+)_",
+            re.IGNORECASE
+        )
 
-    if allCoursesDf is not None and not allCoursesDf.empty:
-        for _, row in allCoursesDf.iterrows():
-            courseId = str(row.get("course_id", "")).strip()
-            accountId = str(row.get("account_id", "")).strip()
-            m = courseIdPattern.match(courseId)
-            if not m or not accountId:
-                continue
+        subjectCourseToOrg = {}
+        if allCoursesDf is not None and not allCoursesDf.empty:
+            for _, row in allCoursesDf.iterrows():
+                courseId = str(row.get("course_id", "")).strip()
+                accountId = str(row.get("account_id", "")).strip()
+                match = courseIdPattern.match(courseId)
+                if not match or not accountId:
+                    continue
 
-            key = (m.group(1).upper(), m.group(2))
+                subject = match.group(1).upper()
+                courseNumber = match.group(2)
+                key = (subject, courseNumber)
 
-            # First match wins; most schools have a consistent sub-account per course
-            if key in subjectCourseToOrg:
-                continue
+                # First match wins; most schools have a consistent sub-account per course
+                if key in subjectCourseToOrg:
+                    continue
 
-            parent_org = _map_account_to_smarteval_org(
-                accountId, accounts_by_id, se_name_map, se_normalized_names
-            )
+                parentOrg = _mapAccountToSimpleSyllabusOrg(
+                    accountId,
+                    accountsById,
+                    simpleSyllabusNameMap,
+                    simpleSyllabusNormalizedNames
+                )
 
-            if parent_org:
-                subjectCourseToOrg[key] = parent_org
+                if parentOrg:
+                    subjectCourseToOrg[key] = parentOrg
 
-    localSetup.logger.info(
-        f"Subject→ParentOrg map complete — {len(subjectCourseToOrg)} "
-        f"unique (subject, courseNumber) entries mapped."
-    )
-    return subjectCourseToOrg
+        localSetup.logger.info(
+            f"Subject→ParentOrg map complete — {len(subjectCourseToOrg)} "
+            f"unique (subject, courseNumber) entries mapped."
+        )
+
+        return subjectCourseToOrg
+
+    except Exception as Error:
+        errorHandler.sendError(functionName, Error)
 
 
+## This function downloads a CleanCatalog report CSV via downloadFile
+## and returns it as a pandas DataFrame
 def downloadCatalog(url: str, localPath: str) -> pd.DataFrame:
-    """Download a CleanCatalog report CSV via downloadFile and return as DataFrame."""
     localSetup.logger.info(f"Downloading catalog: {url} → {localPath}")
     downloadFile(localSetup, url, localPath, "w")
-    df = pd.read_csv(localPath)
-    localSetup.logger.info(f"Catalog downloaded — {len(df)} rows, columns: {list(df.columns)}")
-    return df
+
+    dataFrame = pd.read_csv(localPath)
+    localSetup.logger.info(
+        f"Catalog downloaded — {len(dataFrame)} rows, columns: {list(dataFrame.columns)}"
+    )
+
+    return dataFrame
 
 
+## This function expands any rows whose Title contains slash-delimited codes
+## (e.g., 'MUSC2250/MUSC2254') into one row per code so downstream processing
+## sees each course code as an independent row
 def expandSlashTitles(catalogDf: pd.DataFrame) -> pd.DataFrame:
-    """
-    Some catalog rows carry a slash-delimited Title such as 'MUSC2250/MUSC2254'.
-    This function duplicates those rows — one per code — so that downstream
-    logic sees each course code as its own independent row.
-    """
-    expanded = []
+    expandedRows = []
+
     for _, row in catalogDf.iterrows():
         rawTitle = str(row.get("Title", "")).strip()
         if "/" in rawTitle:
-            codes = [c.strip() for c in rawTitle.split("/") if c.strip()]
+            codes = [code.strip() for code in rawTitle.split("/") if code.strip()]
             for code in codes:
                 newRow = row.copy()
                 newRow["Title"] = code
-                expanded.append(newRow)
+                expandedRows.append(newRow)
+
             localSetup.logger.info(
                 f"Expanded slash title '{rawTitle}' into {len(codes)} rows: {codes}"
             )
         else:
-            expanded.append(row)
-    return pd.DataFrame(expanded).reset_index(drop=True)
+            expandedRows.append(row)
+
+    return pd.DataFrame(expandedRows).reset_index(drop=True)
 
 
-def buildOutputRows(catalogDf: pd.DataFrame,
-                    isGraduate: bool,
-                    schoolYearStart: int,
-                    subjectOrgMap: dict) -> list:
-    """
-    For every course in catalogDf that belongs to the requested level (grad / undg),
-    produce three rows — one per term (Fall / Spring / Summer) — for the given
-    school year.
-
-    Slash-delimited titles (e.g. 'MUSC2250/MUSC2254') are expanded into
-    individual rows before processing so each code gets its own entries.
-
-    Column merging rules
-    ────────────────────
-    Output Prerequisites ← Prerequisites + Prerequisite Courses
-    Output Corequisites ← Corequisites + Corequisite Courses + Concurrent + Concurrent Requisite
-    """
+## This function builds one Simple Syllabus output row per (course, term) for
+## the requested level (Graduate / Undergraduate) and schoolYearStart.
+## For each qualifying course it emits entries for Fall, Spring, and Summer.
+## It also:
+##  - merges prerequisite/corequisite-related catalog columns
+##  - resolves Parent Organization from the Canvas+Simple Syllabus map
+##  - uses shared termSchoolYearLogic + TERM_LABELS to determine term labels
+def buildOutputRows(
+    catalogDf: pd.DataFrame,
+    isGraduate: bool,
+    schoolYearStart: int,
+    subjectOrgMap: dict,
+    termLabels: dict,
+) -> list:
     # Expand any slash-delimited titles before processing
     catalogDf = expandSlashTitles(catalogDf)
 
@@ -4208,98 +4172,123 @@ def buildOutputRows(catalogDf: pd.DataFrame,
 
     for _, catalogRow in catalogDf.iterrows():
         # ── Parse course code ─────────────────────────────────────────────
-        subject, courseNum = splitCourseCode(catalogRow.get("Title", ""))
+        subject, courseNumber = splitCourseCode(catalogRow.get("Title", ""))
         if subject is None:
             localSetup.logger.warning(
                 f"Could not parse course code from Title='{catalogRow.get('Title')}' — skipping."
             )
             continue
 
-        # ── Route by course level ─────────────────────────────────────────
+        # ── Route by course level ────────────────────────────────────────
         try:
-            courseIsGrad = int(courseNum) >= 5000
+            courseIsGraduate = int(courseNumber) >= 5000
         except ValueError:
             localSetup.logger.warning(
-                f"Non-numeric course number '{courseNum}' from Title='{catalogRow.get('Title')}' — skipping."
+                f"Non-numeric course number '{courseNumber}' "
+                f"from Title='{catalogRow.get('Title')}' — skipping."
             )
             continue
 
-        if courseIsGrad != isGraduate:
-            continue  # This row belongs to the other output file
+        if courseIsGraduate != isGraduate:
+            # This row belongs to the other output file
+            continue
 
-        # ── Parent Organisation from Canvas+SmartEval map ─────────────────
-        parentOrg = subjectOrgMap.get((subject, courseNum), "")
+        # ── Parent Organisation from Canvas+Simple Syllabus map ─────────
+        parentOrg = subjectOrgMap.get((subject, courseNumber), "")
 
-        # ── Merge requisite columns (new rules) ───────────────────────────
-        #   Prerequisites ← Prerequisites + Prerequisite Courses
-        prereqs = combineFields(
+        # ── Merge requisite columns (new rules) ─────────────────────────
+        # Prerequisites ← Prerequisites + Prerequisite Courses
+        prerequisites = combineFields(
             catalogRow.get("Prerequisites", ""),
             catalogRow.get("Prerequisite Courses", ""),
         )
-        #   Corequisites ← Corequisites + Corequisite Courses + Concurrent + Concurrent Requisite
-        coreqs = combineFields(
+
+        # Corequisites ← Corequisites + Corequisite Courses
+        #                + Concurrent + Concurrent Requisite
+        corequisites = combineFields(
             catalogRow.get("Corequisites", ""),
             catalogRow.get("Corequisite Courses", ""),
             catalogRow.get("Concurrent", ""),
             catalogRow.get("Concurrent Requisite", ""),
         )
 
-        # ── Emit one row per term in this school year ─────────────────────
-        for termName in TERM_ORDER:
-            calYear = (
-                schoolYearStart
-                if TERM_YEAR_SIDE[termName] == "start"
-                else schoolYearStart + 1
-            )
-            termLabel = TERM_LABELS[(level, termName)].format(year=calYear)
+        # ── Emit one row per term in this school year ───────────────────
+        for termName in ("Fall", "Spring", "Summer"):
+            logic = termSchoolYearLogic.get(termName)
+
+            if logic == "current-next":
+                # e.g., Fall term belongs to the start year of the school year
+                calendarYear = schoolYearStart
+            elif logic == "previous-current":
+                # e.g., Spring/Summer belong to the end year of the school year
+                calendarYear = schoolYearStart + 1
+            else:
+                # Fallback (should not happen if config is correct)
+                localSetup.logger.warning(
+                    f"Unknown termSchoolYearLogic '{logic}' for term '{termName}', "
+                    f"defaulting to start year."
+                )
+                calendarYear = schoolYearStart
+
+            termLabel = termLabels[(level, termName)].format(year=calendarYear)
 
             rows.append({
                 "Term": termLabel,
                 "Subject": subject,
-                "Course Number": courseNum,
+                "Course Number": courseNumber,
                 "Title": str(catalogRow.get("Name", "")).strip(),
                 "Parent Organization": parentOrg,
                 "Class Program": str(catalogRow.get("Class Program", "")).strip(),
                 "Description": str(catalogRow.get("Description", "")).strip(),
                 "Credits": catalogRow.get("Credits", ""),
-                "Prerequisites": prereqs,
-                "Corequisites": coreqs,
+                "Prerequisites": prerequisites,
+                "Corequisites": corequisites,
             })
 
     return rows
 
 
-def uploadToSimpleSyllabus(localFilePath: str, remoteFileName: str):
-    """
-    Upload a single CSV to the Simple Syllabus SFTP server.
-    Uses SSH key authentication following the same pattern as the existing
-    Slate SFTP upload (key_filename from configPath).
-    Retries up to 3 times with a 5-second pause between attempts.
-    """
+## This function uploads a single CSV to the Simple Syllabus SFTP server
+## using SSH key authentication.
+## It will retry up to 3 times with a 5-second pause between attempts.
+def uploadToSimpleSyllabus(
+    localFilePath: str,
+    remoteFileName: str,
+    sftpConfig: dict,
+    keyPath: str,
+):
     functionName = "uploadToSimpleSyllabus"
-    attempt = 0    # noqa: F841 (kept for clarity)
+    attempt = 0
     maxRetries = 3
     connected = False
 
-    ssh_client = paramiko.SSHClient()
-    ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    sshClient = paramiko.SSHClient()
+    sshClient.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+    host = sftpConfig["host"]
+    port = sftpConfig["port"]
+    username = sftpConfig["username"]
+    remoteDir = sftpConfig["remote_dir"]
 
     while not connected and attempt < maxRetries:
         try:
             localSetup.logger.info(
                 f"Connecting to Simple Syllabus SFTP — attempt {attempt + 1} …"
             )
-            ssh_client.connect(
-                hostname=SS_HOST,
-                port=SS_PORT,
-                username=SS_USERNAME,
-                key_filename=SS_KEY_PATH,
+            sshClient.connect(
+                hostname=host,
+                port=port,
+                username=username,
+                key_filename=keyPath,
             )
             connected = True
             localSetup.logger.info("SFTP connection established.")
-        except Exception as err:
+        except Exception as connectionError:
             attempt += 1
-            localSetup.logger.error(f"SFTP connect attempt {attempt} failed: {err}")
+            localSetup.logger.error(
+                f"SFTP connect attempt {attempt} failed: {connectionError}"
+            )
+
             if attempt < maxRetries:
                 localSetup.logger.info("Retrying in 5 seconds …")
                 time.sleep(5)
@@ -4309,27 +4298,51 @@ def uploadToSimpleSyllabus(localFilePath: str, remoteFileName: str):
                 )
                 raise
 
-    sftp = ssh_client.open_sftp()
-    remotePath = f"{SS_REMOTE_DIR}/{remoteFileName}"
+    sftpClient = sshClient.open_sftp()
+    remotePath = f"{remoteDir}/{remoteFileName}"
 
     try:
         localSetup.logger.info(f"Uploading {localFilePath} → {remotePath}")
-        sftp.put(localFilePath, remotePath)
+        sftpClient.put(localFilePath, remotePath)
         localSetup.logger.info(f"Upload complete: {remoteFileName}")
     finally:
-        sftp.close()
-        ssh_client.close()
+        sftpClient.close()
+        sshClient.close()
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+# ── Main Orchestrator ─────────────────────────────────────────────────────────
 
+## This function orchestrates the full Simple Syllabus catalog process:
+##  1. Reads scoped config values for CleanCatalog URLs, SFTP, and term labels
+##  2. Determines current and next school year using LocalSetup
+##  3. Builds the (subject, courseNumber) → Parent Organization map
+##  4. Downloads production (current-year) and staging (next-year) catalogs
+##  5. Builds graduate & undergraduate rows for both school years
+##  6. Writes the combined CSVs to disk
+##  7. Uploads the CSVs to Simple Syllabus via SFTP
 def sendCatalogToSimpleSyllabus():
     functionName = "sendCatalogToSimpleSyllabus"
     try:
-        # ── Determine current and next school year ────────────────────────
+        # ---- Scoped config values from simpleSyllabusConfig ----
+        catalogProduction = simpleSyllabusConfig["catalogProduction"]
+        catalogStaging = simpleSyllabusConfig["catalogStaging"]
+        sftpConfig = simpleSyllabusConfig["sftp"]
+        termLabels = simpleSyllabusConfig["TERM_LABELS"]
+
+        prodGpsCatalogUrl = catalogProduction["gps"]
+        prodTugCatalogUrl = catalogProduction["tug"]
+        stagingGpsCatalogUrl = catalogStaging["gps"]
+        stagingTugCatalogUrl = catalogStaging["tug"]
+
+        ssKeyPath = os.path.join(
+            localSetup.configPath,
+            "Simple_Syllabus_Private_Key.txt"
+        )
+
+        # ---- Determine current and next school year (using LocalSetup) ----
         # LocalSetup encodes NNU's school-year logic:
-        # Fall (Aug-Dec) → "current-next" (startYear = that calendar year)
-        # Spring/Summer → "previous-current" (startYear = prior calendar year)
+        #   Fall (Aug-Dec)   → "current-next"  (startYear = that calendar year)
+        #   Spring/Summer    → "previous-current" (startYear = prior calendar year)
         currentMonth = localSetup.dateDict["month"]
         currentYear = localSetup.dateDict["year"]
         currentTermName = localSetup._determineCurrentTerm(currentMonth)
@@ -4339,113 +4352,129 @@ def sendCatalogToSimpleSyllabus():
         nextSchoolYearStart = startYear + 1
 
         localSetup.logger.info(
-            f"Generating Simple Syllabus catalog for school years "
+            "Generating Simple Syllabus catalog for school years "
             f"{currentSchoolYearStart}-{currentSchoolYearStart + 1} and "
             f"{nextSchoolYearStart}-{nextSchoolYearStart + 1}"
         )
 
-        # ── Step 1: Build (subject, course) → ParentOrg lookup ────────────
+        # ---- Step 1: Build (subject, course) → ParentOrg lookup ----
         subjectOrgMap = buildSubjectOrgMap()
 
-        # ── Step 2: Download production (current) and staging (next) catalogs ─
-        prodGpsCsvPath = os.path.join(OUTPUT_DIR, "prod_gps_catalog_raw.csv")
-        prodTugCsvPath = os.path.join(OUTPUT_DIR, "prod_tug_catalog_raw.csv")
-        stagingGpsCsvPath = os.path.join(OUTPUT_DIR, "staging_gps_catalog_raw.csv")
-        stagingTugCsvPath = os.path.join(OUTPUT_DIR, "staging_tug_catalog_raw.csv")
+        # ---- Step 2: Download production (current) and staging (next) catalogs ----
+        prodGpsCsvPath = os.path.join(outputDir, "prod_gps_catalog_raw.csv")
+        prodTugCsvPath = os.path.join(outputDir, "prod_tug_catalog_raw.csv")
+        stagingGpsCsvPath = os.path.join(outputDir, "staging_gps_catalog_raw.csv")
+        stagingTugCsvPath = os.path.join(outputDir, "staging_tug_catalog_raw.csv")
 
-        prodGpsDf = downloadCatalog(PROD_GPS_CATALOG_URL, prodGpsCsvPath)
-        prodTugDf = downloadCatalog(PROD_TUG_CATALOG_URL, prodTugCsvPath)
-        stagingGpsDf = downloadCatalog(STAGING_GPS_CATALOG_URL, stagingGpsCsvPath)
-        stagingTugDf = downloadCatalog(STAGING_TUG_CATALOG_URL, stagingTugCsvPath)
+        prodGpsDf = downloadCatalog(prodGpsCatalogUrl, prodGpsCsvPath)
+        prodTugDf = downloadCatalog(prodTugCatalogUrl, prodTugCsvPath)
+        stagingGpsDf = downloadCatalog(stagingGpsCatalogUrl, stagingGpsCsvPath)
+        stagingTugDf = downloadCatalog(stagingTugCatalogUrl, stagingTugCsvPath)
 
-        # ── Step 3: Build output rows for both school years ───────────────
-        allGradRows: list = []
-        allUndgRows: list = []
+        # ---- Step 3: Build output rows for both school years ----
+        allGraduateRows: list = []
+        allUndergradRows: list = []
 
         # Current school year → production catalogs
         for catalogDf in [prodGpsDf, prodTugDf]:
-            allGradRows.extend(
+            allGraduateRows.extend(
                 buildOutputRows(
                     catalogDf,
                     isGraduate=True,
                     schoolYearStart=currentSchoolYearStart,
-                    subjectOrgMap=subjectOrgMap
+                    subjectOrgMap=subjectOrgMap,
+                    termLabels=termLabels,
                 )
             )
-            allUndgRows.extend(
+            allUndergradRows.extend(
                 buildOutputRows(
                     catalogDf,
                     isGraduate=False,
                     schoolYearStart=currentSchoolYearStart,
-                    subjectOrgMap=subjectOrgMap
+                    subjectOrgMap=subjectOrgMap,
+                    termLabels=termLabels,
                 )
             )
 
         # Next school year → staging catalogs
         for catalogDf in [stagingGpsDf, stagingTugDf]:
-            allGradRows.extend(
+            allGraduateRows.extend(
                 buildOutputRows(
                     catalogDf,
                     isGraduate=True,
                     schoolYearStart=nextSchoolYearStart,
-                    subjectOrgMap=subjectOrgMap
+                    subjectOrgMap=subjectOrgMap,
+                    termLabels=termLabels,
                 )
             )
-            allUndgRows.extend(
+            allUndergradRows.extend(
                 buildOutputRows(
                     catalogDf,
                     isGraduate=False,
                     schoolYearStart=nextSchoolYearStart,
-                    subjectOrgMap=subjectOrgMap
+                    subjectOrgMap=subjectOrgMap,
+                    termLabels=termLabels,
                 )
             )
 
-        # ── Step 4: Write output CSVs ─────────────────────────────────────
-        OUTPUT_COLUMNS = [
+        # ---- Step 4: Write output CSVs ----
+        outputColumns = [
             "Term", "Subject", "Course Number", "Title",
             "Parent Organization", "Class Program",
             "Description", "Credits", "Prerequisites", "Corequisites",
         ]
 
-        gradDf = pd.DataFrame(allGradRows, columns=OUTPUT_COLUMNS)
-        undgDf = pd.DataFrame(allUndgRows, columns=OUTPUT_COLUMNS)
+        graduateDf = pd.DataFrame(allGraduateRows, columns=outputColumns)
+        undergradDf = pd.DataFrame(allUndergradRows, columns=outputColumns)
 
         # De-duplicate in case the same course appears in multiple catalogs
-        gradDf = gradDf.drop_duplicates(subset=["Term", "Subject", "Course Number"])
-        undgDf = undgDf.drop_duplicates(subset=["Term", "Subject", "Course Number"])
+        graduateDf = graduateDf.drop_duplicates(
+            subset=["Term", "Subject", "Course Number"]
+        )
+        undergradDf = undergradDf.drop_duplicates(
+            subset=["Term", "Subject", "Course Number"]
+        )
 
         # Sort for readability: by Term, then Subject, then Course Number
-        gradDf = gradDf.sort_values(["Term", "Subject", "Course Number"]).reset_index(drop=True)
-        undgDf = undgDf.sort_values(["Term", "Subject", "Course Number"]).reset_index(drop=True)
+        graduateDf = graduateDf.sort_values(
+            ["Term", "Subject", "Course Number"]
+        ).reset_index(drop=True)
+        undergradDf = undergradDf.sort_values(
+            ["Term", "Subject", "Course Number"]
+        ).reset_index(drop=True)
 
         # File names span both school years for clarity
         endYear = nextSchoolYearStart + 1
-        gradFileName = f"Graduate_Catalog_{currentSchoolYearStart}-{endYear}.csv"
-        undgFileName = f"Undergraduate_Catalog_{currentSchoolYearStart}-{endYear}.csv"
+        graduateFileName = f"Graduate_Catalog_{currentSchoolYearStart}-{endYear}.csv"
+        undergradFileName = f"Undergraduate_Catalog_{currentSchoolYearStart}-{endYear}.csv"
 
-        gradLocalPath = os.path.join(OUTPUT_DIR, gradFileName)
-        undgLocalPath = os.path.join(OUTPUT_DIR, undgFileName)
+        graduateLocalPath = os.path.join(outputDir, graduateFileName)
+        undergradLocalPath = os.path.join(outputDir, undergradFileName)
 
-        gradDf.to_csv(gradLocalPath, index=False)
-        undgDf.to_csv(undgLocalPath, index=False)
+        graduateDf.to_csv(graduateLocalPath, index=False)
+        undergradDf.to_csv(undergradLocalPath, index=False)
 
         localSetup.logger.info(
-            f"Graduate CSV written: {len(gradDf)} rows → {gradLocalPath}"
+            f"Graduate CSV written: {len(graduateDf)} rows → {graduateLocalPath}"
         )
         localSetup.logger.info(
-            f"Undergraduate CSV written: {len(undgDf)} rows → {undgLocalPath}"
+            f"Undergraduate CSV written: {len(undergradDf)} rows → {undergradLocalPath}"
         )
 
-        # ── Step 5: Upload both CSVs to Simple Syllabus via SFTP ──────────
-        uploadToSimpleSyllabus(gradLocalPath, gradFileName)
-        uploadToSimpleSyllabus(undgLocalPath, undgFileName)
+        # ---- Step 5: Upload both CSVs to Simple Syllabus via SFTP ----
+        uploadToSimpleSyllabus(
+            graduateLocalPath, graduateFileName, sftpConfig, ssKeyPath
+        )
+        uploadToSimpleSyllabus(
+            undergradLocalPath, undergradFileName, sftpConfig, ssKeyPath
+        )
 
         localSetup.logger.info(
             "sendCatalogToSimpleSyllabus completed successfully."
         )
 
-    except Exception as Error:
-        errorHandler.sendError(functionName, Error)
+    except Exception as error:
+        errorHandler.sendError(functionName, error)
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
