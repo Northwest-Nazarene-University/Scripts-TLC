@@ -3,6 +3,7 @@
 
 ## Import Generic Moduels
 from datetime import datetime
+from math import e
 import os, sys, threading, time
 import pandas as pd
 
@@ -49,9 +50,9 @@ decade = localSetup.dateDict["decade"]
 
 
 ## Testing variables
-## currentDay = 1 ## First week of the month testing value
-## currentWeekDay = 4 ## Day of the week testing value 
-## currentHour = 1 ## First run of the day testing value
+currentDay = 1 ## First week of the month testing value
+currentWeekDay = 0 ## Day of the week testing value 
+currentHour = 1 ## First run of the day testing value
 ## currentHour = 16 ## Last run of the day testing value
 
         
@@ -199,66 +200,70 @@ def outcomeReportsAndActions (p1_relaventTerm):
 
 ## This function creates course and enrollment CSVs for the given term
 def createPartialCanvasInputs_Threaded (p3_RelaventTerm):
-    
-    ## Create a list for ongoing threads
-    activeThreads = []
+    functionName = "Create Partial Canvas Inputs"
 
-    ## Define the primary threading objects and add them to the ongoingThreads list
-    activeThreads.append(threading.Thread(target=CanvasReport.getCoursesDf, args=(localSetup, p3_RelaventTerm)))
-    activeThreads.append(threading.Thread(target=CanvasReport.getSectionsDf, args=(localSetup, p3_RelaventTerm)))
-    activeThreads.append(threading.Thread(target=CanvasReport.getEnrollmentsDf, args=(localSetup, p3_RelaventTerm)))
-    activeThreads.append(threading.Thread(target=CanvasReport.getUnpublishedCoursesDf, args=(localSetup, p3_RelaventTerm)))
+    try:
+    
+        ## Create a list for ongoing threads
+        activeThreads = []
+
+        ## Define the primary threading objects and add them to the ongoingThreads list
+        activeThreads.append(threading.Thread(target=CanvasReport.getCoursesDf, args=(localSetup, p3_RelaventTerm)))
+        activeThreads.append(threading.Thread(target=CanvasReport.getSectionsDf, args=(localSetup, p3_RelaventTerm)))
+        activeThreads.append(threading.Thread(target=CanvasReport.getEnrollmentsDf, args=(localSetup, p3_RelaventTerm)))
+        activeThreads.append(threading.Thread(target=CanvasReport.getUnpublishedCoursesDf, args=(localSetup, p3_RelaventTerm)))
 
         
-    ## Start threading objects 
-    for thread in activeThreads:
-        thread.start()
-        time.sleep(1)
+        ## Start threading objects 
+        for thread in activeThreads:
+            thread.start()
+            time.sleep(1)
 
-    ## Wait for the threading to complete
-    for thread in activeThreads:
-        thread.join()
+        ## Wait for the threading to complete
+        for thread in activeThreads:
+            thread.join()
 
-    ## Make sure the users file is recent
-    CanvasReport.getUsersDf(localSetup)
+        ## Make sure the users file is recent
+        CanvasReport.getUsersDf(localSetup)
     
+    except Exception as Error:
+        errorHandler.sendError (functionName, Error)
 
 
 
-## This function creates term, user, course, and account CSVs for the given term
-## Term and User CSVs are not term specific and so only need to be created once
-def createCompleteCanvasInputs_Threaded(p2_RelaventTerm):
-    ## Define a list for ongoing threads
-    activeThreads = []
+    ## This function creates term, user, course, and account CSVs for the given term
+    ## Term and User CSVs are not term specific and so only need to be created once
+    def createCompleteCanvasInputs_Threaded(p2_RelaventTerm):
+        ## Define a list for ongoing threads
+        activeThreads = []
 
-    ## Define Canvas instance wholistic threading objects
-    activeThreads.append(threading.Thread(target=CanvasReport.getCoursesDf, args=(localSetup, "All")))
-    activeThreads.append(threading.Thread(target=CanvasReport.getSectionsDf, args=(localSetup, "All")))
-    activeThreads.append(threading.Thread(target=CanvasReport.getCoursesDf, args=(localSetup, p2_RelaventTerm)))
-    activeThreads.append(threading.Thread(target=CanvasReport.getTermsDf, args=(localSetup,)))
-    activeThreads.append(threading.Thread(target=CanvasReport.getUsersDf, args=(localSetup,)))
-    activeThreads.append(threading.Thread(target=CanvasReport.getAccountsDf, args=(localSetup,)))
-    activeThreads.append(threading.Thread(target=CanvasReport.getCanvasUserLastAccessDf, args=(localSetup,)))
+        ## Define Canvas instance wholistic threading objects
+        activeThreads.append(threading.Thread(target=CanvasReport.getCoursesDf, args=(localSetup, "All")))
+        activeThreads.append(threading.Thread(target=CanvasReport.getSectionsDf, args=(localSetup, "All")))
+        activeThreads.append(threading.Thread(target=CanvasReport.getTermsDf, args=(localSetup,)))
+        activeThreads.append(threading.Thread(target=CanvasReport.getUsersDf, args=(localSetup,)))
+        activeThreads.append(threading.Thread(target=CanvasReport.getAccountsDf, args=(localSetup,)))
+        activeThreads.append(threading.Thread(target=CanvasReport.getCanvasUserLastAccessDf, args=(localSetup,)))
 
-    ## Define the term specific threading object
-    activeThreads.append(threading.Thread(target=createPartialCanvasInputs_Threaded, args=(p2_RelaventTerm,)))
+        ## Define the term specific threading object
+        activeThreads.append(threading.Thread(target=createPartialCanvasInputs_Threaded, args=(p2_RelaventTerm,)))
 
-    ## Start threading objects 
-    for thread in activeThreads:
-        thread.start()
-        time.sleep(1)
+        ## Start threading objects 
+        for thread in activeThreads:
+            thread.start()
+            time.sleep(1)
 
-    ## Wait for the threading to complete
-    for thread in activeThreads:
-        thread.join()
+        ## Wait for the threading to complete
+        for thread in activeThreads:
+            thread.join()
 
-    ## Retrieve the Automated Outcome Tool Variables excel file as a df    
-    automatedOutcomeToolVariablesDf = pd.read_excel(os.path.join(localSetup.getExternalResourcePath("SIS"), "Internal Tool Files\\Automated Outcome Tool Variables.xlsx"))
+        ## Retrieve the Automated Outcome Tool Variables excel file as a df    
+        automatedOutcomeToolVariablesDf = pd.read_excel(os.path.join(localSetup.getExternalResourcePath("SIS"), "Internal Tool Files\\Automated Outcome Tool Variables.xlsx"))
     
-    ## For each Target Designator in the Automated Outcome Tool Variables
-    for targetDesignator in automatedOutcomeToolVariablesDf["Target Designator"]:
-        ## Retrieve the lists of active outcome courses for the given term
-        CanvasReport.getActiveOutcomeCoursesDf(localSetup, p2_RelaventTerm, targetDesignator)
+        ## For each Target Designator in the Automated Outcome Tool Variables
+        for targetDesignator in automatedOutcomeToolVariablesDf["Target Designator"]:
+            ## Retrieve the lists of active outcome courses for the given term
+            CanvasReport.getActiveOutcomeCoursesDf(localSetup, p2_RelaventTerm, targetDesignator)
 
 ## This function determines the target term(s) using TLC_Common helper
 def determineTargetTerms():
@@ -293,6 +298,7 @@ def determineTargetTerms():
 
     except Exception as Error:
         errorHandler.sendError(functionName, p1_ErrorInfo=Error)
+        return localSetup.getCurrentTermCodes()
 
 ## This function retrives the data neccessary to run the four times daily processes and runs them
 def fourTimesDaily (p1_relaventTerm):
@@ -306,8 +312,8 @@ def fourTimesDaily (p1_relaventTerm):
             sisCoursesDf = pd.read_csv(f"{localSetup.getExternalResourcePath('SIS')}canvas_course.csv", dtype=str)
             sisCoursesDf.fillna("", inplace=True)
 
-            ## Filter out any that have 2025 in the course_id
-            sisCoursesDf = sisCoursesDf[~sisCoursesDf["course_id"].str.contains("2025")]
+            ## Filter out any courses that are not in the current or next term
+            sisCoursesDf = sisCoursesDf[sisCoursesDf["term_id"].isin(localSetup.getCurrentTermCodes().union(localSetup.getNextTermCodes()))]
 
             ## Filter out any deleted courses
             sisCoursesDf = sisCoursesDf[sisCoursesDf["status"] != "deleted"]
@@ -430,28 +436,32 @@ def oneTimeDaily (p1_currentTerm, p1_relaventTerms):
         mostRecentCompletedTermCodes = localSetup.getMostRecentCompletedTermCodes()
         nextTermCodes = localSetup.getNextTermCodes()
 
-        ## Define a set of all the current, most recent completed, and next term codes
-        currentMostRecentNextTerms = list(
-            currentTermCodes.union(mostRecentCompletedTermCodes).union(nextTermCodes)
-            )
+        ## Define a variable to hold the outcome target terms
+        outcomeTargetTermCodesList = list()
+
+        ## If it is the first or third Friday of the month, define a list of all the current, most recent completed, and next term codes
+        if (1 <= currentDay <= 7) or (15 <= currentDay <= 21):
+            outcomeTargetTermCodesList = list(
+                currentTermCodes.union(mostRecentCompletedTermCodes).union(nextTermCodes)
+                )
+        ## Otherwise, define the list as just the current term codes
+        else:
+            outcomeTargetTermCodesList = list(currentTermCodes)
             
         ## For each term in the relavent terms
-        for term in currentMostRecentNextTerms:
-            
-            ## for each of the first three terms
-            ## if term == "GF25":
+        for term in outcomeTargetTermCodesList:
 
-                ## Define a outcome reports and actions thread
-                outcomeReportsAndActionsThread = threading.Thread(target=outcomeReportsAndActions, args=(term,))
+            ## Define a outcome reports and actions thread
+            outcomeReportsAndActionsThread = threading.Thread(target=outcomeReportsAndActions, args=(term,))
                 
-                ## Start the outcome reports and actions thread
-                outcomeReportsAndActionsThread.start()
+            ## Start the outcome reports and actions thread
+            outcomeReportsAndActionsThread.start()
                 
-                ## Add the outcome reports and actions thread to the list of ongoing threads
-                ongoingOutcomeThreads.append(outcomeReportsAndActionsThread)
+            ## Add the outcome reports and actions thread to the list of ongoing threads
+            ongoingOutcomeThreads.append(outcomeReportsAndActionsThread)
                 
-                ## Wait a second to ensure there is a gap before the next thread
-                time.sleep(1)
+            ## Wait a second to ensure there is a gap before the next thread
+            time.sleep(1)
         
         ## Check if all ongoing outcome threads have completed
         for thread in ongoingOutcomeThreads:
@@ -470,7 +480,7 @@ def oneTimeDaily (p1_currentTerm, p1_relaventTerms):
 
         ## Define a term related enrollGPSStudentsInGrad_Hub thread
         ## If the term is the summer term, change it to fall for the purpose of enrolling TUG students in SGA
-        enrollGPSStudentsInGrad_HubThread = threading.Thread(target=enrollGPSStudentsInGrad_Hub, args=(p1_currentTerm.replace("SG|FA","GF").replace("SP","GS"),))
+        enrollGPSStudentsInGrad_HubThread = threading.Thread(target=enrollGPSStudentsInGrad_Hub, args=(p1_currentTerm.replace("SG", "GF").replace("FA", "GF").replace("SP", "GS"),))
 
         ## Start the term related enrollGPSStudentsInGrad_Hub thread
         enrollGPSStudentsInGrad_HubThread.start()
@@ -520,7 +530,7 @@ def main ():
         else:
 
             ## Run the fourTimesDaily script with the 1st (and should be only) target term
-            fourTimesDaily (p1_relaventTerm = targetTerms[0])
+            fourTimesDaily (p1_relaventTerm = currentTerm)
 
     except Exception as Error:
         errorHandler.sendError (functionName, Error)
@@ -529,4 +539,4 @@ def main ():
 
 if __name__ == "__main__":
     main()
-    input("Press enter to exit")
+    #input("Press enter to exit")

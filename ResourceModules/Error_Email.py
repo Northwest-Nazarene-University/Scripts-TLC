@@ -36,7 +36,7 @@ class errorEmail:
         self.sentErrors = set()
 
     ## This class method creates a formatted error email
-    def _createErrorEmailBody(self, p1_functionName, errorInfo):
+    def _createErrorEmailBody(self, p1_functionName, p1_ErrorInfo):
         functionName = "_createErrorEmailBody"
 
         return f"""To the LMS Admin or the department chair of {scriptLibrary},
@@ -54,15 +54,15 @@ Purpose:
 Requirements to work properly:
 {self.externalRequirements}
 
-Error Description/Code: {errorInfo}
+Error Description/Code: {p1_ErrorInfo}
 """
 
     ## This method sends an error email for a specific function
-    def sendError(self, p1_functionName, errorInfo):
+    def sendError(self, p1_functionName, p1_ErrorInfo):
         functionName = "Send Error"
         
         ## Log the error
-        self.localSetup.logger.error(f"\nA script error occurred while running {p1_functionName}. Error: {str(errorInfo)}")
+        self.localSetup.logger.error(f"\nA script error occurred while running {p1_functionName}. Error: {str(p1_ErrorInfo)}")
 
         ## If the function has already triggered an error email, skip sending again
         if p1_functionName in self.sentErrors:
@@ -71,7 +71,7 @@ Error Description/Code: {errorInfo}
 
         
         # Try to get the actual exception object
-        exc = errorInfo if isinstance(errorInfo, BaseException) else None
+        exc = p1_ErrorInfo if isinstance(p1_ErrorInfo, BaseException) else None
 
         if exc is None:
             # Fall back to the currently handled exception (if any)
@@ -89,7 +89,7 @@ Error Description/Code: {errorInfo}
 
 
         ## Format the full error info with traceback
-        fullErrorInfo = f"{errorInfo}: \n\n{traceWithLocals}"
+        fullErrorInfo = f"{p1_ErrorInfo}: \n\n{traceWithLocals}"
 
         ## Log the full error info
         self.localSetup.logger.error(f"\nFull Error Info:\n{fullErrorInfo}")
