@@ -34,13 +34,13 @@ To function properly this script requires a spreadsheet of the most recent outco
 ## Initialize LocalSetup and resource helpers
 try: ## Irregular try clause, do not comment out in testing
     from Local_Setup import LocalSetup
-    from TLC_Common import makeApiCall, flattenApiObjectToJsonList
+    from TLC_Common import makeApiCall
     from Canvas_Report import CanvasReport
     from Error_Email import errorEmail
 
 except ImportError:
     from ResourceModules.Local_Setup import LocalSetup
-    from ResourceModules.TLC_Common import makeApiCall, flattenApiObjectToJsonList
+    from ResourceModules.TLC_Common import makeApiCall
     from ResourceModules.Canvas_Report import CanvasReport
     from ResourceModules.Error_Email import errorEmail
 
@@ -328,7 +328,7 @@ def addOutcomeToCourse (targetCourseDataDict
         # contentMigrationApiUrl = baseCourseApiUrl + "/content_migrations"
         
         # ## Make a content migration API call to find out what content has already been copied to the course
-        # courseMigrationsObject, _ = makeApiCall(localSetup, p1_apiUrl=contentMigrationApiUrl)
+        # courseMigrationsObject = makeApiCall(localSetup, p1_apiUrl=contentMigrationApiUrl)
         
         # ## If the API status code is anything other than 200 it is an error, so log it and skip
         # if (courseMigrationsObject.status_code != 200):
@@ -360,7 +360,7 @@ def addOutcomeToCourse (targetCourseDataDict
             courseOutcomeGroupsApiUrl = f"{baseCourseApiUrl}/outcome_groups"
 
             ## Make the API call to get the outcome groups of the course
-            courseOutcomeGroupsObject, _ = makeApiCall(localSetup, p1_apiUrl=courseOutcomeGroupsApiUrl)
+            courseOutcomeGroupsObject = makeApiCall(localSetup, p1_apiUrl=courseOutcomeGroupsApiUrl)
 
             ## If the API status code is anything other than 200 it is an error, so log it and skip
             if (courseOutcomeGroupsObject.status_code != 200):
@@ -399,7 +399,7 @@ def addOutcomeToCourse (targetCourseDataDict
             if courseOutcomeGroupCanvasId is None:
                 rootOutcomeGroupApiUrl = f"{baseCourseApiUrl}/root_outcome_group"
 
-                rootOutcomeGroupObject, _ = makeApiCall(localSetup, p1_apiUrl=rootOutcomeGroupApiUrl)
+                rootOutcomeGroupObject = makeApiCall(localSetup, p1_apiUrl=rootOutcomeGroupApiUrl)
 
                 if (rootOutcomeGroupObject.status_code != 200):
                     localSetup.logger.error("\nCourse Error: " + str(rootOutcomeGroupObject.status_code))
@@ -421,7 +421,7 @@ def addOutcomeToCourse (targetCourseDataDict
                     }
 
                 ## Make the API call to add the outcome group to the course
-                addOutcomeGroupToCourseObject, _ = makeApiCall(
+                addOutcomeGroupToCourseObject = makeApiCall(
                     localSetup, 
                     p1_apiUrl=addOutcomeGroupToCourseApiUrl, 
                     p1_payload=addOutcomeGroupToCourseApiPayload, 
@@ -445,7 +445,7 @@ def addOutcomeToCourse (targetCourseDataDict
             addOutcomeToCourseApiUrl = f"{baseCourseApiUrl}/outcome_groups/{outcomeGroupCanvasIdInCourse}/outcomes/{outcomeCanvasData['Outcome Canvas Id']}"
 
             ## Make the API call to add the outcome to the course
-            addOutcomeToCourseObject, _ = makeApiCall(localSetup, p1_apiUrl=addOutcomeToCourseApiUrl, p1_apiCallType="put")
+            addOutcomeToCourseObject = makeApiCall(localSetup, p1_apiUrl=addOutcomeToCourseApiUrl, p1_apiCallType="put")
 
             ## If the API status code is anything other than 200 it is an error, so log it and skip
             if (addOutcomeToCourseObject.status_code != 200):
@@ -470,7 +470,7 @@ def addOutcomeToCourse (targetCourseDataDict
             #payload = {'migration_type': 'course_copy_importer', 'settings[source_course_id]': [outcomeCourseCanvasId], 'selective_import': True}
                 
             ## Make the API call and save the result as course_object
-            # courseCopyObject, _ = makeApiCall(localSetup, p1_apiUrl=contentMigrationApiUrl, p1_payload=payload, p1_apiCallType="post")
+            # courseCopyObject = makeApiCall(localSetup, p1_apiUrl=contentMigrationApiUrl, p1_payload=payload, p1_apiCallType="post")
             
             # ## Turn the text of the API call into a json object
             # courseCopy = courseCopyObject.json()
@@ -479,7 +479,7 @@ def addOutcomeToCourse (targetCourseDataDict
             # listSelectiveImportItemsApiUrl = f"{contentMigrationApiUrl}/{courseCopy['id']}/selective_data"
 
             # ## Make a get request to the list items endpoint
-            # listSelectiveImportItemsObject, _ = makeApiCall(localSetup, p1_apiUrl=listSelectiveImportItemsApiUrl)
+            # listSelectiveImportItemsObject = makeApiCall(localSetup, p1_apiUrl=listSelectiveImportItemsApiUrl)
 
             # ## If the API status code is anything other than 200 it is an error, so log it and skip
             # if (listSelectiveImportItemsObject.status_code != 200):
@@ -504,7 +504,7 @@ def addOutcomeToCourse (targetCourseDataDict
             # updateContentMigrationApiUrl = f"{contentMigrationApiUrl}/{courseCopy['id']}"
 
             # ## Make a put request to the update content migration api url with the update content migration api payload
-            # updateContentMigrationObject, _ = makeApiCall(localSetup, p1_apiUrl=updateContentMigrationApiUrl, p1_payload=updateContentMigrationApiPayload, p1_apiCallType="put")
+            # updateContentMigrationObject = makeApiCall(localSetup, p1_apiUrl=updateContentMigrationApiUrl, p1_payload=updateContentMigrationApiPayload, p1_apiCallType="put")
 
             # ## If the API status code is anything other than 200 it is an error, so log it and skip
             # if (updateContentMigrationObject.status_code != 200):
@@ -634,7 +634,7 @@ def getUniqueOutcomesAndOutcomeCoursesDict (p3_inputTerm, p1_activeOutcomeCourse
             outcomeGroupsApiUrl = f"{coreCanvasApiUrl}accounts/{targetCanvasAccountId}/outcome_groups"
 
             ## Make an API call to get the outcome groups in the target account
-            outcomeGroupsObject, outcomeGroupsObjectList = makeApiCall(localSetup, p1_apiUrl=outcomeGroupsApiUrl)
+            outcomeGroupsObject = makeApiCall(localSetup, p1_apiUrl=outcomeGroupsApiUrl)
 
             ## If the API status code is anything other than 200 it is an error, so log it and skip`
             if (outcomeGroupsObject.status_code != 200):
@@ -643,29 +643,11 @@ def getUniqueOutcomesAndOutcomeCoursesDict (p3_inputTerm, p1_activeOutcomeCourse
                 localSetup.logger.error(outcomeGroupsObject.url)
                 continue
 
-            ## If the the api response was paginated a list of the responses will have been returned
-            outcomeGroupsJsonList = []
-            if outcomeGroupsObjectList:
-                ## Paginated: flatten all pages
-                outcomeGroupsJsonList = flattenApiObjectToJsonList(
-                    localSetup,
-                    outcomeGroupsObjectList,
-                    outcomeGroupsApiUrl
-                )
-            else:
-                ## Non-paginated: just use the single response's json
-                singlePageData = outcomeGroupsObject.json()
-                if isinstance(singlePageData, list):
-                    outcomeGroupsJsonList = singlePageData
-                else:
-                    outcomeGroupsJsonList = [singlePageData]
-
-
             ## Define a variable to hold the outcome group Canvas id
             outcomeGroupCanvasId = None
 
-            ## For each outcome group in the outcome groups json list
-            for outcomeGroup in outcomeGroupsJsonList:
+            ## For each outcome group in the outcome groups object
+            for outcomeGroup in outcomeGroupsObject.json():
                 
                 ## If the outcomeParentGuid is nan
                 if (
@@ -692,7 +674,7 @@ def getUniqueOutcomesAndOutcomeCoursesDict (p3_inputTerm, p1_activeOutcomeCourse
             outcomesApiUrl = f"{outcomeGroupsApiUrl}/{outcomeGroupCanvasId}/outcomes"
 
             ## Make an API call to the outcomes api url to get the outcomes in the outcome group
-            outcomesObjects, _ = makeApiCall(localSetup, p1_apiUrl=outcomesApiUrl)
+            outcomesObjects = makeApiCall(localSetup, p1_apiUrl=outcomesApiUrl)
 
             ## If the API status code is anything other than 200 it is an error, so log it and skip
             if (outcomesObjects.status_code != 200):
@@ -938,7 +920,7 @@ def importCXData():
         checkSisImportUrl = f"{coreCanvasApiUrl}accounts/1/sis_imports"
 
         ## Make the api call to check if there is an ongoing sis import
-        sisImportCheckResponse, _ = makeApiCall(localSetup, p1_apiUrl=checkSisImportUrl, firstPageOnly = True)
+        sisImportCheckResponse = makeApiCall(localSetup, p1_apiUrl=checkSisImportUrl, firstPageOnly = True)
 
         ## Define a blank object to hold the sis imports
         sisImports = None
@@ -967,7 +949,7 @@ def importCXData():
             abortImportUrl = f"{coreCanvasApiUrl}accounts/1/sis_imports/{importId}/abort"
 
             ## Make the api call to abort the import
-            abortImportResponse, _ = makeApiCall(localSetup, p1_apiUrl=abortImportUrl, p1_apiCallType="put")
+            abortImportResponse = makeApiCall(localSetup, p1_apiUrl=abortImportUrl, p1_apiCallType="put")
 
             ## If the response was not successful, log the error
             if abortImportResponse.status_code != 200:
@@ -1032,7 +1014,7 @@ def importCXData():
             importSisDataUrl = f"{coreCanvasApiUrl}accounts/1/sis_imports"
 
             ## Make the api call and save the response
-            sisImportOjbect, _ = makeApiCall(localSetup,
+            sisImportOjbect = makeApiCall(localSetup,
                                           p1_apiUrl=importSisDataUrl,
                                           p1_payload=params,
                                           p1_files=files,
@@ -1064,7 +1046,7 @@ def importCXData():
                 while importStatus != 100:
 
                     ## Make the api call to check the import status
-                    importStatusResponse, _ = makeApiCall(localSetup, p1_apiUrl=checkImportStatusUrl)
+                    importStatusResponse = makeApiCall(localSetup, p1_apiUrl=checkImportStatusUrl)
 
                     ## If the response was not successful, log the error
                     if importStatusResponse.status_code != 200:
@@ -1177,7 +1159,7 @@ def changeCourseAccount(
         changeAccountUrl = f"{coreCanvasApiUrl}courses/{courseId}"
         payload = {"course": {"account_id": accountId}}
 
-        response, _ = makeApiCall(
+        response = makeApiCall(
             localSetup=localSetup,
             p1_apiUrl=changeAccountUrl,
             p1_payload=payload,
@@ -1369,7 +1351,7 @@ def changeCourseGradingStandard(
             }
         }
 
-        response, _ = makeApiCall(
+        response = makeApiCall(
             localSetup,
             p1_apiUrl=updateCourseUrl,
             p1_payload=payload,
@@ -1631,7 +1613,7 @@ def setCourseLongName(p1_header, p1_courseId, p1_longName):
     try:
         setLongNameApiUrl = f"{coreCanvasApiUrl}courses/{p1_courseId}"
         payload = {"course": {"name": p1_longName}}
-        response, _ = makeApiCall(localSetup, p1_header=p1_header, p1_apiUrl=setLongNameApiUrl, p1_payload=payload, p1_apiCallType="put")
+        response = makeApiCall(localSetup, p1_header=p1_header, p1_apiUrl=setLongNameApiUrl, p1_payload=payload, p1_apiCallType="put")
 
         if response.status_code == 200:
             localSetup.logger.info(f"Successfully set long name for course with ID: {p1_courseId}")
@@ -1833,7 +1815,7 @@ def deleteEnrollment(p1_header, p3_courseId, p1_enrollmentId):
         deleteEnrollmentUrl = f"{coreCanvasApiUrl}courses/{p3_courseId}/enrollments/{p1_enrollmentId}"
 
         ## Define the API URL for deleting the enrollment
-        response, _ = makeApiCall(localSetup, p1_header=p1_header, p1_apiUrl=deleteEnrollmentUrl, p1_apiCallType="delete")
+        response = makeApiCall(localSetup, p1_header=p1_header, p1_apiUrl=deleteEnrollmentUrl, p1_apiCallType="delete")
 
         ## Make the API call to delete the enrollment
         if response.status_code == 200:
@@ -1860,7 +1842,7 @@ def reEnrollUser(p1_header, p1_userId, p2_courseId, p3_roleId, p4_baseRoleType):
                    }
 
         ## Define the payload
-        response, _ = makeApiCall(localSetup, p1_header=p1_header, p1_apiUrl=reEnrollUrl, p1_payload=payload, p1_apiCallType="post")
+        response = makeApiCall(localSetup, p1_header=p1_header, p1_apiUrl=reEnrollUrl, p1_payload=payload, p1_apiCallType="post")
 
         ## Make the API call to re-enroll the user
         if response.status_code == 200:
@@ -2002,7 +1984,7 @@ def getNavigationTabs (p1_targetCourseSisId):
         baseCourseApiUrl = coreCanvasApiUrl + "courses/sis_course_id:" + p1_targetCourseSisId
         navigationApiUrl = baseCourseApiUrl + "/tabs"
         ## Make the API call and save the result as navigationObject
-        navigationObject, _ = makeApiCall (localSetup, p1_apiUrl = navigationApiUrl)
+        navigationObject = makeApiCall (localSetup, p1_apiUrl = navigationApiUrl)
         ## If the API status code is anything other than 200 it is an error, so log it and skip
         if (navigationObject.status_code != 200):
             localSetup.logger.error("\nNavigation Error: " + str(navigationObject.status_code))
@@ -2049,7 +2031,7 @@ def updateCourseSyllabusTab (p1_targetCourseSisId):
             ## Define the payload to hide the tab
             payload = {"hidden": True, "position": (len(navigationTabs) - 2)}
             ## Make the API call and save the result as updateTabObject
-            updateTabObject, _ = makeApiCall (localSetup, p1_apiUrl = updateTabApiUrl, p1_payload = payload, p1_apiCallType = "put")
+            updateTabObject = makeApiCall (localSetup, p1_apiUrl = updateTabApiUrl, p1_payload = payload, p1_apiCallType = "put")
             ## If the API status code is anything other than 200 it is an error, so log it and skip
             if (updateTabObject.status_code != 200):
                 localSetup.logger.error("\nUpdate Tab Error: " + str(updateTabObject.status_code))
@@ -2067,7 +2049,7 @@ def updateCourseSyllabusTab (p1_targetCourseSisId):
             ## Define the payload to move the tab to position 2
             payload = {'visibility' : 'public', 'position': 2, 'hidden': False}
             ## Make the API call and save the result as updateTabObject
-            updateTabObject, _ = makeApiCall (localSetup, p1_apiUrl = updateTabApiUrl, p1_payload = payload, p1_apiCallType = "put")
+            updateTabObject = makeApiCall (localSetup, p1_apiUrl = updateTabApiUrl, p1_payload = payload, p1_apiCallType = "put")
             ## If the API status code is anything other than 200 it is an error, so log it and skip
             if (updateTabObject.status_code != 200):
                 localSetup.logger.error("\nUpdate Tab Error: " + str(updateTabObject.status_code))
@@ -2213,7 +2195,7 @@ def setCourseTerm(p1_header, p1_courseId, p1_termId):
     try:
         set_term_url = f"{coreCanvasApiUrl}courses/{p1_courseId}"
         payload = {"course": {"enrollment_term_id": p1_termId}}
-        response, _ = makeApiCall(localSetup, p1_header=p1_header, p1_apiUrl=set_term_url, p1_payload=payload, p1_apiCallType="put")
+        response = makeApiCall(localSetup, p1_header=p1_header, p1_apiUrl=set_term_url, p1_payload=payload, p1_apiCallType="put")
 
         if response.status_code == 200:
             localSetup.logger.info(f"Successfully set term for course with ID: {p1_courseId}")
@@ -2423,7 +2405,7 @@ def countRespondusQuizzes(p1_courseId: str, result_dict: dict) -> None:
         }
 
         # Header is provided by makeApiCall (via LocalSetup), no explicit header needed
-        response, _ = makeApiCall(
+        response = makeApiCall(
             localSetup,
             p1_apiUrl=assignments_url,
             p1_payload=courseAssignmentsParams,
@@ -2448,7 +2430,7 @@ def countRespondusQuizzes(p1_courseId: str, result_dict: dict) -> None:
                     )
 
                     # Make an API call to get the assignment details
-                    assignment_response, _ = makeApiCall(
+                    assignment_response = makeApiCall(
                         localSetup,
                         p1_apiUrl=assignment_details_url,
                         p1_apiCallType="get",
@@ -2477,7 +2459,7 @@ def countRespondusQuizzes(p1_courseId: str, result_dict: dict) -> None:
                                 }
 
                                 # Make an API call to get the course's enrollments
-                                enrollments_response, _ = makeApiCall(
+                                enrollments_response = makeApiCall(
                                     localSetup,
                                     p1_apiUrl=enrollments_url,
                                     p1_payload=enrollments_params,
@@ -3281,7 +3263,7 @@ def deleteCourse(p1_header, courseId):
     try:
         delete_url = f"{coreCanvasApiUrl}courses/{courseId}"
         payload = {"event": "delete"}
-        response, _ = makeApiCall(localSetup, 
+        response = makeApiCall(localSetup, 
             p1_header=p1_header
             , p1_apiUrl=delete_url
             , p1_payload=payload
@@ -3398,7 +3380,7 @@ def deleteEnrollment(p3_courseId, p1_enrollmentId):
         deleteEnrollmentUrl = f"{coreCanvasApiUrl}courses/{p3_courseId}/enrollments/{p1_enrollmentId}"
 
         ## Define the API URL for deleting the enrollment
-        response, _ = makeApiCall(localSetup, p1_apiUrl=deleteEnrollmentUrl, p1_apiCallType="delete")
+        response = makeApiCall(localSetup, p1_apiUrl=deleteEnrollmentUrl, p1_apiCallType="delete")
 
         ## Make the API call to delete the enrollment
         if response.status_code == 200:
@@ -3425,7 +3407,7 @@ def reEnrollUser(p1_userId, p2_courseId, p3_roleId, p4_baseRoleType):
                    }
 
         ## Define the payload
-        response, _ = makeApiCall(localSetup, p1_apiUrl=reEnrollUrl, p1_payload=payload, p1_apiCallType="post")
+        response = makeApiCall(localSetup, p1_apiUrl=reEnrollUrl, p1_payload=payload, p1_apiCallType="post")
 
         ## Make the API call to enroll the user
         if response.status_code == 200:
@@ -3485,7 +3467,7 @@ def enrollGPSStudentsInGrad_Hub(inputTerm):
         Grad_HubCourseUserPayload = {"enrollment_type[]":["student"], "include[]": "enrollments", "per_page": 100}
 
         ## Make the API call to get the course's details
-        Grad_HubCourseEnrollmentObjectOrObjectList, _ = makeApiCall(localSetup, p1_apiUrl = Grad_HubCourseUsersApiUrl, p1_payload = Grad_HubCourseUserPayload)
+        Grad_HubCourseEnrollmentObjectOrObjectList = makeApiCall(localSetup, p1_apiUrl = Grad_HubCourseUsersApiUrl, p1_payload = Grad_HubCourseUserPayload)
 
         ## Make a list to hold the target orientation students
         targetCourseEnrolledStudentsDict = {}
@@ -3541,7 +3523,7 @@ def enrollGPSStudentsInGrad_Hub(inputTerm):
                 }
 
                 ## Make a delete enrollment api call to remove the reactivated enrollment
-                enrollmentDeletionApiOjbect, _ = makeApiCall(localSetup, p1_apiUrl = stuCourseEnrollmentDeletionApiUrl, p1_payload = stuCourseEnrollmentDeleteParams, p1_apiCallType = "delete")
+                enrollmentDeletionApiOjbect = makeApiCall(localSetup, p1_apiUrl = stuCourseEnrollmentDeletionApiUrl, p1_payload = stuCourseEnrollmentDeleteParams, p1_apiCallType = "delete")
 
                 ## Define a deletion attempt variable
                 enrollmentDeletionAttempt = 1
@@ -3556,7 +3538,7 @@ def enrollGPSStudentsInGrad_Hub(inputTerm):
                     localSetup.logger.warning(f"Enrollment deletion failed in the Graduate & Professional Student Hub course for student {studentId}")
 
                     ## try to remove the reactiviated enrollment again
-                    enrollmentDeletionApiOjbect, _ = makeApiCall(localSetup, p1_apiUrl = stuCourseEnrollmentDeletionApiUrl, p1_payload = stuCourseEnrollmentDeleteParams, p1_apiCallType = "delete")
+                    enrollmentDeletionApiOjbect = makeApiCall(localSetup, p1_apiUrl = stuCourseEnrollmentDeletionApiUrl, p1_payload = stuCourseEnrollmentDeleteParams, p1_apiCallType = "delete")
 
                     ## Increment the attempt number
                     enrollmentDeletionAttempt += 1
@@ -3578,7 +3560,7 @@ def enrollGPSStudentsInGrad_Hub(inputTerm):
             if str(studentRow['user_id']) not in targetCourseEnrolledStudentsDict.keys():
 
                 ## Make a post api call to enroll the student in the Graduate & Professional Student Hub course
-                reEnrollApiObject, _ = makeApiCall(localSetup, p1_apiUrl=Grad_HubCourseUsersApiUrl, p1_payload=reEnrollPayload, p1_apiCallType="post")
+                reEnrollApiObject = makeApiCall(localSetup, p1_apiUrl=Grad_HubCourseUsersApiUrl, p1_payload=reEnrollPayload, p1_apiCallType="post")
 
                 ## If the enrollment was successful
                 if reEnrollApiObject.status_code == 200:
@@ -3658,7 +3640,7 @@ def deleteEnrollment(p3_courseId, p1_enrollmentId):
         deleteEnrollmentUrl = f"{coreCanvasApiUrl}courses/{p3_courseId}/enrollments/{p1_enrollmentId}"
 
         ## Define the API URL for deleting the enrollment
-        response, _ = makeApiCall(localSetup, p1_apiUrl=deleteEnrollmentUrl, p1_apiCallType="delete")
+        response = makeApiCall(localSetup, p1_apiUrl=deleteEnrollmentUrl, p1_apiCallType="delete")
 
         ## Make the API call to delete the enrollment
         if response.status_code == 200:
@@ -3685,7 +3667,7 @@ def reEnrollUser(p1_userId, p2_courseId, p3_roleId, p4_baseRoleType):
                    }
 
         ## Define the payload
-        response, _ = makeApiCall(localSetup, p1_apiUrl=reEnrollUrl, p1_payload=payload, p1_apiCallType="post")
+        response = makeApiCall(localSetup, p1_apiUrl=reEnrollUrl, p1_payload=payload, p1_apiCallType="post")
 
         ## Make the API call to enroll the user
         if response.status_code == 200:
@@ -3731,7 +3713,7 @@ def enrollTugStudentsInSga(inputTerm):
         SGACourseUserPayload = {"enrollment_type[]":["student"], "include[]": "enrollments", "per_page": 100}
 
         ## Make the API call to get the course's details
-        SGACourseEnrollmentObjectOrObjectList, _ = makeApiCall(localSetup, p1_apiUrl = SGACourseUsersApiUrl, p1_payload = SGACourseUserPayload)
+        SGACourseEnrollmentObjectOrObjectList = makeApiCall(localSetup, p1_apiUrl = SGACourseUsersApiUrl, p1_payload = SGACourseUserPayload)
 
         ## Make a list to hold the target orientation students
         targetCourseEnrolledStudentsDict = {}
@@ -3784,7 +3766,7 @@ def enrollTugStudentsInSga(inputTerm):
                 }
 
                 ## Make a delete enrollment api call to remove the reactivated enrollment
-                enrollmentDeletionApiOjbect, _ = makeApiCall(localSetup, p1_apiUrl = stuCourseEnrollmentDeletionApiUrl, p1_payload = stuCourseEnrollmentDeleteParams, p1_apiCallType = "delete")
+                enrollmentDeletionApiOjbect = makeApiCall(localSetup, p1_apiUrl = stuCourseEnrollmentDeletionApiUrl, p1_payload = stuCourseEnrollmentDeleteParams, p1_apiCallType = "delete")
 
                 ## Define a deletion attempt variable
                 enrollmentDeletionAttempt = 1
@@ -3799,7 +3781,7 @@ def enrollTugStudentsInSga(inputTerm):
                     localSetup.logger.warning(f"Enrollment deletion failed in the SGA course for student {studentId}")
 
                     ## try to remove the reactiviated enrollment again
-                    enrollmentDeletionApiOjbect, _ = makeApiCall(localSetup, p1_apiUrl = stuCourseEnrollmentDeletionApiUrl, p1_payload = stuCourseEnrollmentDeleteParams, p1_apiCallType = "delete")
+                    enrollmentDeletionApiOjbect = makeApiCall(localSetup, p1_apiUrl = stuCourseEnrollmentDeletionApiUrl, p1_payload = stuCourseEnrollmentDeleteParams, p1_apiCallType = "delete")
 
                     ## Increment the attempt number
                     enrollmentDeletionAttempt += 1
@@ -3821,7 +3803,7 @@ def enrollTugStudentsInSga(inputTerm):
             if str(studentRow['user_id']) not in targetCourseEnrolledStudentsDict.keys():
 
                 ## Make a post api call to enroll the student in the SGA course
-                reEnrollApiObject, _ = makeApiCall(localSetup, p1_apiUrl=SGACourseUsersApiUrl, p1_payload=reEnrollPayload, p1_apiCallType="post")
+                reEnrollApiObject = makeApiCall(localSetup, p1_apiUrl=SGACourseUsersApiUrl, p1_payload=reEnrollPayload, p1_apiCallType="post")
 
                 ## If the enrollment was successful
                 if reEnrollApiObject.status_code == 200:
@@ -3850,772 +3832,655 @@ four character format (FA20, SU20, SP20): "))
 ## FILE: ActionModules\Send_Catalog_To_Simple_Syllabus.py
 ## ===========================================================================
 
+# =============================================================================
+# FILE: ActionModules/Send_Catalog_To_Simple_Syllabus.py
+# =============================================================================
 # Author: Bryce Miller - brycezmiller@nnu.edu
 # Last Updated by: Bryce Miller
+# =============================================================================
 
-## Import Generic Modules
-import os, sys
-from datetime import datetime
+import os
+import sys
+import re
+import time
+import traceback
+import difflib
+import paramiko
 import pandas as pd
+from datetime import datetime
 
 ## Add Script repository to syspath
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules"))
 
-# Define the script name, purpose, and external requirements for logging and error reporting purposes
+## Define the script name, purpose, and external requirements for logging and error reporting
 scriptName = __file__.replace(".py", "")
 scriptPurpose = r"""
-Send the course catalog to Simple Syllabus with properly mapped organizations.
-This ensures course data is correctly categorized by subject/department based on Canvas account hierarchy.
+Downloads the GPS (Graduate) and TUG (Undergraduate) course catalogs from the
+CleanCatalog production (current year) and staging (next year) report URLs,
+builds a combined course list triplicated across all three terms
+(Fall / Spring / Summer) for both the current and next school year,
+resolves Parent Organization from Canvas sub-accounts using Simple Syllabus
+Organizations, merges requisite columns per Simple Syllabus requirements,
+and uploads the resulting CSVs to Simple Syllabus via SFTP.
+Graduate routing : course numbers >= 5000
+Undergraduate routing : course numbers < 5000
+Output term label conventions:
+ Graduate Fall → "GRADUATE FALL SEMESTER {year}"
+ Graduate Spring → "GRADUATE SPRING SEMESTER {year}"
+ Graduate Summer → "GRADUATE SUMMER SESSION {year}"
+ Undergrad Fall → "UNDERGRADUATE FALL SEMESTER {year}"
+ Undergrad Spring→ "UNDERGRADUATE SPRING SEMESTER {year}"
+ Undergrad Summer→ "UNDERGRADUATE SUMMER SEMESTER {year}"
 """
+
 externalRequirements = r"""
 To function properly this script requires:
-- Access to course catalog file
-- Simple Syllabus Organizations.csv in Configs TLC folder
-- Canvas API access via CanvasReport
-- All Accounts.csv from Canvas (Canvas Report)
+ - Network access to the CleanCatalog production and staging GPS and TUG report URLs
+ - A Simple Syllabus SSH private key stored at:
+    <configPath>/Simple_Syllabus_Private_Key.txt
+ - Valid Canvas API credentials defined in Common_Configs
+ - Simple Syllabus Organizations CSV in the Config folder:
+    <configPath>/Simple Syllabus Organizations.csv
 """
 
-## Initialize LocalSetup and resource helpers
-try:  ## Irregular try clause, do not comment out in testing
+# ── Imports from the existing TLC resource stack ──────────────────────────────
+try:
     from Local_Setup import LocalSetup
+    from TLC_Common import downloadFile, makeApiCall
     from Canvas_Report import CanvasReport
     from Error_Email import errorEmail
-    from TLC_Common import downloadFile, isFileRecent
-    from Common_Configs import simpleSyllabusConfig
 except ImportError:
     from ResourceModules.Local_Setup import LocalSetup
+    from ResourceModules.TLC_Common import downloadFile, makeApiCall
     from ResourceModules.Canvas_Report import CanvasReport
     from ResourceModules.Error_Email import errorEmail
-    from ResourceModules.TLC_Common import downloadFile, isFileRecent
-    from ResourceModules.Common_Configs import simpleSyllabusConfig
 
-# Create LocalSetup and localSetup.logger
+## Initialize LocalSetup and error handler so this module works when imported or run directly
 localSetup = LocalSetup(datetime.now(), __file__)
-logger = localSetup.logger
-
-## Setup error handler
 errorHandler = errorEmail(scriptName, scriptPurpose, externalRequirements, localSetup)
 
-## =========================================================================
-## HELPER FUNCTIONS - Data Preparation
-## =========================================================================
+## Import shared configuration (Catalog URLs, SFTP, term labels, term/year logic)
+from Common_Configs import simpleSyllabusConfig, termSchoolYearLogic
 
-## This function extracts subject code and course number from raw title
-def splitCourseCode(p1_rawTitle):
-    p1_functionName = "splitCourseCode"
-    try:
-        ## Split on spaces and extract first two parts (subject code + number)
-        parts = str(p1_rawTitle).split()
-        if len(parts) >= 2:
-            p2_subject = parts[0].upper()
-            p2_courseNum = parts[1]
-            return (p2_subject, p2_courseNum)
-    except Exception as Error:
-        logger.warning(f"\nFailed to parse course code from '{p1_rawTitle}': {Error}")
-    return (p1_rawTitle, "")
+## Local output directory for generated CSVs
+outputDir = os.path.join(
+    localSetup.getInternalResourcePaths("Simple_Syllabus"),
+    "Catalog_Export"
+)
+os.makedirs(outputDir, exist_ok=True)
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+## This function splits a catalog Title such as 'ACCT6000' into ('ACCT', '6000')
+## Returns (None, None) if the format is not recognised
+def splitCourseCode(rawTitle: str):
+    match = re.match(r"([A-Za-z]+)(\d+)", str(rawTitle).strip())
+    if match:
+        return match.group(1).upper(), match.group(2)
+    return None, None
 
 
-## This function combines multiple fields into a single string, filtering out empty values
-def combineFields(*p1_fields):
-    p1_functionName = "combineFields"
-    try:
-        ## Filter out empty strings and join with spaces
-        p2_combined = " ".join(
-            str(p1_field).strip()
-            for p1_field in p1_fields
-            if p1_field and str(p1_field).strip()
-        )
-        return p2_combined
-    except Exception as Error:
-        logger.warning(f"\nFailed to combine fields: {Error}")
+## This function merges multiple text fields into one semicolon-delimited string
+## Blank, NaN, and duplicate values are discarded
+def combineFields(*fields):
+    seenValues = set()
+    parts = []
+    for field in fields:
+        if pd.notna(field):
+            value = str(field).strip()
+            if value and value.lower() != "nan" and value not in seenValues:
+                seenValues.add(value)
+                parts.append(value)
+    return "; ".join(parts)
+
+
+## This function normalizes org/account names for matching:
+##  - lowercase
+##  - collapse non-alphanumeric characters to spaces
+##  - strip extra whitespace
+def _normalizeNameForMatch(name: str) -> str:
+    if not isinstance(name, str):
         return ""
+    cleaned = re.sub(r"[^a-z0-9]+", " ", name.lower())
+    return cleaned.strip()
 
 
-## This function normalizes names for comparison operations
-def _normalizeNameForMatch(p1_name):
-    p1_functionName = "_normalizeNameForMatch"
-    try:
-        ## Normalization rules:
-        ## - Convert to lowercase
-        ## - Strip whitespace
-        ## - Remove special characters
-        ## - Replace multiple spaces with single space
-        if not p1_name:
-            return ""
-        ## Convert to lowercase and strip
-        p2_normalized = p1_name.lower().strip()
-        ## Remove common punctuation
-        for p2_char in [".", ",", "-", "_"]:
-            p2_normalized = p2_normalized.replace(p2_char, "")
-        ## Collapse multiple spaces
-        p2_normalized = " ".join(p2_normalized.split())
-        return p2_normalized
-    except Exception as Error:
-        logger.warning(f"\nFailed to normalize name: {Error}")
-        return p1_name
+## This function loads Simple Syllabus Organizations from the Config folder and
+## builds:
+##   - a normalized-name → actual-name lookup dict
+##   - a list of all normalized names for fuzzy matching
+def _loadSimpleSyllabusOrgs():
+    simpleSyllabusPath = os.path.join(
+        localSetup.configPath,
+        "Simple Syllabus Organizations.csv"
+    )
 
-
-## =========================================================================
-## CONFIG-BASED HELPERS
-## =========================================================================
-
-def _getCatalogUrlFromConfig(audience="gps", environment="production"):
-    """
-    Resolve the CleanCatalog CSV URL using simpleSyllabusConfig.
-
-    audience: "gps" or "tug"
-    environment: "production" or "staging"
-    """
-    p1_functionName = "_getCatalogUrlFromConfig"
-    envKey = "catalogProduction" if environment == "production" else "catalogStaging"
-    try:
-        url = simpleSyllabusConfig[envKey][audience]
-        logger.info(
-            f"\nUsing CleanCatalog URL from simpleSyllabusConfig: "
-            f"env='{envKey}', audience='{audience}' -> {url}"
+    if not os.path.exists(simpleSyllabusPath):
+        localSetup.logger.warning(
+            f"Simple Syllabus Organizations file not found: {simpleSyllabusPath}"
         )
-        return url
-    except Exception as Error:
-        errorHandler.sendError(p1_functionName, str(Error))
-        raise
+        return {}, []
+
+    simpleSyllabusDf = pd.read_csv(simpleSyllabusPath)
+
+    nameToActual = {}
+    normalizedNames = []
+
+    for _, row in simpleSyllabusDf.iterrows():
+        rawName = str(row.get("name", "")).strip()
+        if not rawName:
+            continue
+
+        normalized = _normalizeNameForMatch(rawName)
+        if normalized:
+            nameToActual[normalized] = rawName
+            normalizedNames.append(normalized)
+
+    localSetup.logger.info(
+        f"Loaded {len(nameToActual)} Simple Syllabus organizations from {simpleSyllabusPath}"
+    )
+
+    return nameToActual, normalizedNames
 
 
-## =========================================================================
-## EXTERNAL DATA LOADING FUNCTIONS
-## =========================================================================
+## This function, starting at a given Canvas accountId, walks up the account
+## hierarchy and attempts to resolve a matching Simple Syllabus organization name.
+## It first tries an exact normalized-name match, then a fuzzy match using difflib.
+def _mapAccountToSimpleSyllabusOrg(
+    accountId: str,
+    accountsById: dict,
+    simpleSyllabusNameMap: dict,
+    simpleSyllabusNormalizedNames: list
+) -> str:
+    visited = set()
+    currentId = str(accountId).strip()
 
-## This function loads Simple Syllabus organizations from the CSV config file
-def _loadsimpSylNamesAndCanvasAccIdsDictFromCsv():
-    functionName = "_loadsimpSylNamesAndCanvasAccIdsDictFromCsv"
-    try:
-        ## Config path for Simple Syllabus Organizations CSV
-        simpSylNamesAndCanvasAccIdsDictCsvPath = os.path.join(
-            localSetup.configPath,
-            "Simple Syllabus Organizations.csv",
-        )
-        logger.info(
-            f"\nLoading Simple Syllabus organizations from {simpSylNamesAndCanvasAccIdsDictCsvPath}..."
-        )
-        ## Check if file exists
-        if not os.path.exists(simpSylNamesAndCanvasAccIdsDictCsvPath):
-            raise FileNotFoundError(
-                f"\nSimple Syllabus Organizations CSV not found at {simpSylNamesAndCanvasAccIdsDictCsvPath}"
+    while currentId and currentId not in visited:
+        visited.add(currentId)
+
+        account = accountsById.get(currentId)
+        if not account:
+            break
+
+        accountName = str(account.get("name", "")).strip()
+        normalizedAccountName = _normalizeNameForMatch(accountName)
+
+        if normalizedAccountName:
+            # 1) Exact normalized match
+            if normalizedAccountName in simpleSyllabusNameMap:
+                return simpleSyllabusNameMap[normalizedAccountName]
+
+            # 2) Fuzzy / likely match
+            candidates = difflib.get_close_matches(
+                normalizedAccountName,
+                simpleSyllabusNormalizedNames,
+                n=1,
+                cutoff=0.8
             )
-        ## Read the CSV file
-        orgsDf = pd.read_csv(simpSylNamesAndCanvasAccIdsDictCsvPath)
-        ## Convert DataFrame to dictionary with canvas_account_id as key
-        simpSylNamesAndCanvasAccIdsDict = {}
-        for index, row in orgsDf.iterrows():
-            simpSylAccName = row.get("name")
-            ## Skip rows with NaN account_id
-            if pd.isna(accountId):
-                continue
-            simpSylNamesAndCanvasAccIdsDict[simpSylAccName] = int(row.get("canvas_account_id", ""))
-        logger.info(
-            f"\nLoaded {len(simpSylNamesAndCanvasAccIdsDict)} Simple Syllabus organizations from CSV"
-        )
-        return simpSylNamesAndCanvasAccIdsDict
-    except Exception as Error:
-        errorHandler.sendError(functionName, str(Error))
-        raise
+            if candidates:
+                matchedNorm = candidates[0]
+                return simpleSyllabusNameMap.get(matchedNorm, "")
 
+        # ascend in the hierarchy
+        parentId = str(account.get("parent_account_id", "")).strip()
+        if not parentId or parentId == currentId:
+            break
 
-## This function loads all Canvas accounts for parent lookup
-def _loadAllCanvasAccounts():
-    p1_functionName = "_loadAllCanvasAccounts"
-    try:
-        logger.info("\nLoading all Canvas accounts for parent hierarchy lookup...")
-        ## Use CanvasReport to get the accounts DataFrame
-        allAccountsDf = CanvasReport.getAccountsDf(localSetup)
-        ## Convert to dictionary with canvas_account_id as key for quick lookup
-        accountsDict = {}
-        for index, row in allAccountsDf.iterrows():
-            accountId = str(row.get("canvas_account_id", ""))
-            parentId = (
-                str(row.get("canvas_parent_id", ""))
-                if pd.notna(row.get("canvas_parent_id"))
-                else None
-            )
-            accountsDict[accountId] = {
-                "name": row.get("name", ""),
-                "canvas_account_id": accountId,
-                "parent_id": parentId,
-            }
-        logger.info(f"\nLoaded {len(accountsDict)} Canvas accounts")
-        return accountsDict
-    except Exception as Error:
-        errorHandler.sendError(p1_functionName, str(Error))
-        raise
+        currentId = parentId
 
-
-## =========================================================================
-## ACCOUNT HIERARCHY AND MAPPING FUNCTIONS
-## =========================================================================
-
-## This function finds the parent organization by walking up the account hierarchy
-def _findParentOrgAccountId(
-    p1_courseAccountId,
-    p2_allAccountsDict,
-    p3_simpSylNamesAndCanvasAccIdsDictDict,
-    p4_visitedAccounts=None,
-):
-    p1_functionName = "_findParentOrgAccountId"
-    try:
-        ## Initialize visited accounts set to prevent infinite loops
-        if p4_visitedAccounts is None:
-            p4_visitedAccounts = set()
-
-        ## Get the account ID as string for comparison
-        p2_currentAccountId = str(p1_courseAccountId)
-
-        ## Check if we've already visited this account (prevent circular references)
-        if p2_currentAccountId in p4_visitedAccounts:
-            logger.warning(
-                f"\nCircular reference detected in account hierarchy at account {p2_currentAccountId}"
-            )
-            return ""
-
-        p4_visitedAccounts.add(p2_currentAccountId)
-
-        ## Check if current account is in Simple Syllabus orgs
-        if p2_currentAccountId in p3_simpSylNamesAndCanvasAccIdsDictDict:
-            logger.info(
-                f"\nFound Simple Syllabus org for account "
-                f"{p2_currentAccountId}: {p3_simpSylNamesAndCanvasAccIdsDictDict[p2_currentAccountId]['name']}"
-            )
-            return p2_currentAccountId
-
-        ## If not in orgs, try to find parent
-        if p2_currentAccountId not in p2_allAccountsDict:
-            logger.warning(
-                f"\nAccount {p2_currentAccountId} not found in Canvas accounts"
-            )
-            return ""
-
-        p2_parentAccountId = p2_allAccountsDict[p2_currentAccountId].get("parent_id")
-
-        ## If no parent or parent is None, we've reached the top
-        if not p2_parentAccountId or p2_parentAccountId == "None":
-            logger.warning(
-                f"\nNo Simple Syllabus org found in hierarchy for account {p2_currentAccountId}"
-            )
-            return ""
-
-        ## Recursively check parent
-        logger.info(
-            f"\nAccount {p2_currentAccountId} not in orgs, checking parent {p2_parentAccountId}"
-        )
-        return _findParentOrgAccountId(
-            p2_parentAccountId, p2_allAccountsDict, p3_simpSylNamesAndCanvasAccIdsDictDict, p4_visitedAccounts
-        )
-    except Exception as Error:
-        errorHandler.sendError(p1_functionName, str(Error))
-        return ""
-
-
-## =========================================================================
-## CORE TRANSFORMATION FUNCTIONS
-## =========================================================================
-
-## This function builds mapping of Canvas account IDs to Simple Syllabus organization IDs from CATALOG ONLY
-## KEY CHANGE: This function now accepts p1_catalogDf as a parameter, ensuring we ONLY map
-## accounts that exist in the catalog, not all Canvas accounts
-def buildAccountOrgMap(p2_allAccountsDict, p3_simpSylNamesAndCanvasAccIdsDictDict):
-    p1_functionName = "buildAccountOrgMap"
-    try:
-        logger.info(
-            "\nBuilding Canvas account-to-organization mapping from catalog courses..."
-        )
-
-
-        ## STEP 1: Map each catalog account to its Simple Syllabus org
-        accountOrgMap = {}
-        for canvasAccountId in p3_simpSylNamesAndCanvasAccIdsDictDict.values(): ## The keys are the corresponding canvas_account_ids
-            try:
-                ## Find the org account by walking up the hierarchy
-                p2_orgAccountId = _findParentOrgAccountId(
-                    canvasAccountId, p2_allAccountsDict, p3_simpSylNamesAndCanvasAccIdsDictDict
-                )
-                if p2_orgAccountId:
-                    accountOrgMap[canvasAccountId] = p2_orgAccountId
-                    orgName = p3_simpSylNamesAndCanvasAccIdsDictDict[p2_orgAccountId]["name"]
-                    logger.info(
-                        f"\nMapped account {canvasAccountId} to organization "
-                        f"{p2_orgAccountId} ({orgName})"
-                    )
-                else:
-                    logger.warning(
-                        f"\nFailed to find organization for account {canvasAccountId}"
-                    )
-            except Exception as Error:
-                logger.warning(f"\nError mapping account {canvasAccountId}: {Error}")
-                continue
-
-        logger.info(
-            f"\nSuccessfully built mapping for {len(accountOrgMap)} accounts"
-        )
-        return accountOrgMap
-    except Exception as Error:
-        errorHandler.sendError(p1_functionName, str(Error))
-        raise
-
-
-## This function expands course titles containing slashes into separate rows
-def expandSlashTitles(p1_catalogDf):
-    p1_functionName = "expandSlashTitles"
-    try:
-        p2_expandedRows = []
-        for p2_index, p2_row in p1_catalogDf.iterrows():
-            p2_title = str(p2_row.get("course_code", ""))
-            ## Check if title contains a slash
-            if "/" in p2_title:
-                p2_parts = p2_title.split("/")
-                ## Create a separate row for each part
-                for p2_part in p2_parts:
-                    p2_newRow = p2_row.copy()
-                    p2_newRow["course_code"] = p2_part.strip()
-                    p2_expandedRows.append(p2_newRow)
-            else:
-                p2_expandedRows.append(p2_row)
-        p2_expandedDf = pd.DataFrame(p2_expandedRows)
-        logger.info(
-            f"\nExpanded {len(p1_catalogDf)} rows to {len(p2_expandedDf)} rows after slash expansion"
-        )
-        return p2_expandedDf
-    except Exception as Error:
-        errorHandler.sendError(p1_functionName, str(Error))
-        raise
-
-
-## =========================================================================
-## SIS HELPERS FOR PROD/STAGING RESOLUTION
-## =========================================================================
-
-def _normalize_course_code(code):
-    """Uppercase and remove whitespace for robust matching."""
-    return "".join(str(code).upper().split())
-
-
-def _extract_course_code_from_course_id(course_id):
-    """
-    From SIS course_id like 'FA2026_ACCT2060_01' -> 'ACCT2060'.
-    Adjust if your pattern differs.
-    """
-    parts = str(course_id).split("_")
-    if len(parts) >= 2:
-        return parts[1]
     return ""
 
 
-def _get_school_year(date_obj):
-    """
-    Academic year helper: if month >= 7, take that year; otherwise year - 1.
-    e.g., 2026-08-10 -> 2026 school year, 2027-01-10 (spring) -> 2026 school year.
-    """
-    if date_obj.month >= 7:
-        return date_obj.year
-    return date_obj.year - 1
-
-
-def _dedupeProdStaging(p1_catalogDf, activeSisCourses):
-    """
-    For each course_code, if there are both production and staging catalog rows,
-    use SIS school-year info to pick:
-      - current school year -> production
-      - coming school year  -> staging
-    """
-    # Build SIS mapping: normalized course code -> set of school years
-    sisDf = activeSisCourses.copy()
-    sisDf["sis_course_code"] = sisDf["course_id"].apply(
-        _extract_course_code_from_course_id
-    )
-    sisDf["sis_course_code_norm"] = sisDf["sis_course_code"].apply(
-        _normalize_course_code
-    )
-
-    sisDf["start_date_dt"] = pd.to_datetime(sisDf["start_date"])
-    sisDf["school_year"] = sisDf["start_date_dt"].dt.date.apply(_get_school_year)
-
-    sisYearByCourseCode = (
-        sisDf.groupby("sis_course_code_norm")["school_year"]
-        .apply(lambda s: set(int(y) for y in s.dropna().unique()))
-        .to_dict()
-    )
-
-    # Normalize course_code in catalog
-    p1_catalogDf = p1_catalogDf.copy()
-    p1_catalogDf["course_code_norm"] = p1_catalogDf["course_code"].apply(
-        _normalize_course_code
-    )
-
-    today = datetime.now().date()
-    currentSchoolYear = _get_school_year(today)
-    nextSchoolYear = currentSchoolYear + 1
-
-    def pick_row(group):
-        code_norm = group["course_code_norm"].iloc[0]
-        years = sisYearByCourseCode.get(code_norm, set())
-        envs = set(group["environment"])
-
-        has_current = currentSchoolYear in years
-        has_next = nextSchoolYear in years
-
-        # Current school year -> prefer production
-        if has_current and "production" in envs:
-            return group[group["environment"] == "production"].iloc[0]
-
-        # Coming school year -> prefer staging
-        if has_next and "staging" in envs:
-            return group[group["environment"] == "staging"].iloc[0]
-
-        # Fallbacks:
-        if len(envs) == 1:
-            # Only one env, just return first
-            return group.iloc[0]
-
-        # Otherwise, prefer production if present
-        prod_rows = group[group["environment"] == "production"]
-        if not prod_rows.empty:
-            return prod_rows.iloc[0]
-
-        # Last resort
-        return group.iloc[0]
-
-    deduped = (
-        p1_catalogDf.groupby("course_code_norm", as_index=False)
-        .apply(pick_row)
-        .reset_index(drop=True)
-    )
-
-    return deduped
-
-
-## This function constructs rows for upload to Simple Syllabus
-## KEY CHANGE: This function now uses SIS to filter & resolve prod vs staging
-def buildOutputRows(p1_catalogDf, accountOrgMap, p3_simpSylNamesAndCanvasAccIdsDictDict):
-    p1_functionName = "buildOutputRows"
+## This function builds a (subject, courseNumber) → Parent Organization mapping
+## using Canvas accounts + Simple Syllabus Organizations.
+## Steps:
+##  1. Load Canvas courses & accounts via CanvasReport
+##  2. Load Simple Syllabus orgs from Config/Simple Syllabus Organizations.csv
+##  3. For each course, use its accountId and walk up the account tree until
+##     a matching Simple Syllabus org is found (exact or fuzzy).
+##  4. Store the resolved Simple Syllabus org name as Parent Organization.
+def buildSubjectOrgMap():
+    functionName = "buildSubjectOrgMap"
     try:
-        logger.info("\nBuilding output rows for Simple Syllabus upload...")
-
-        # --- NEW: load active SIS courses and restrict catalog to those ---
-        sisPath = os.path.join(
-            localSetup.getExternalResourcePath("SIS"),
-            "canvas_course.csv",
-        )
-        if not os.path.exists(sisPath):
-            raise FileNotFoundError(f"\nSIS canvas_course.csv not found at {sisPath}")
-
-        rawSisDf = pd.read_csv(sisPath)
-        activeSisCourses = rawSisDf[rawSisDf["status"] == "active"].copy()
-
-        # Build normalized course_code from SIS course_id
-        activeSisCourses["sis_course_code"] = activeSisCourses["course_id"].apply(
-            _extract_course_code_from_course_id
-        )
-        activeSisCourses["sis_course_code_norm"] = activeSisCourses[
-            "sis_course_code"
-        ].apply(_normalize_course_code)
-
-        # Normalize catalog course_code
-        p1_catalogDf = p1_catalogDf.copy()
-        p1_catalogDf["course_code_norm"] = p1_catalogDf["course_code"].apply(
-            _normalize_course_code
+        localSetup.logger.info(
+            "Building subject→ParentOrg map via Canvas + Simple Syllabus..."
         )
 
-        # Filter catalog: only keep courses whose code appears in active SIS
-        validCodes = set(activeSisCourses["sis_course_code_norm"].unique())
-        p1_catalogDf = p1_catalogDf[
-            p1_catalogDf["course_code_norm"].isin(validCodes)
-        ].copy()
+        allCoursesDf = CanvasReport.getCoursesDf(localSetup, "All")
+        accountsDf = CanvasReport.getAccountsDf(localSetup)
 
-        logger.info(
-            f"\nFiltered catalog to {len(p1_catalogDf)} rows present in active SIS courses"
+        # Simple Syllabus orgs (normalized)
+        simpleSyllabusNameMap, simpleSyllabusNormalizedNames = (
+            _loadSimpleSyllabusOrgs()
         )
 
-        # Dedupe prod vs staging per course_code using school-year logic
-        p1_catalogDf = _dedupeProdStaging(p1_catalogDf, activeSisCourses)
-
-        logger.info(
-            f"\nAfter prod/staging school-year resolution, {len(p1_catalogDf)} catalog rows remain"
-        )
-        # --- END NEW SIS logic ---
-
-        # Validate input
-        p2_requiredColumns = ["course_code", "title", "account_id"]
-        p2_missingColumns = [
-            p2_col for p2_col in p2_requiredColumns if p2_col not in p1_catalogDf.columns
-        ]
-        if p2_missingColumns:
-            raise ValueError(f"\nMissing required columns: {p2_missingColumns}")
-
-        p2_outputRows = []
-
-        for p2_index, p2_row in p1_catalogDf.iterrows():
-            try:
-                ## Get account ID and look up org
-                p2_courseAccountId = str(p2_row.get("account_id", "")).strip()
-                p2_courseCode = str(p2_row.get("course_code", ""))
-                if not p2_courseAccountId or p2_courseAccountId.upper() == "NAN":
-                    logger.warning(
-                        f"\nNo account ID for course '{p2_courseCode}'. Skipping."
-                    )
+        # --- Build accountId → {name, parent_account_id} lookup ---
+        accountsById = {}
+        if accountsDf is not None and not accountsDf.empty:
+            for _, row in accountsDf.iterrows():
+                canvasAccountId = str(row.get("canvas_account_id", "")).strip()
+                if not canvasAccountId:
                     continue
 
-                ## Get the organization account ID from mapping
-                p2_orgAccountId = accountOrgMap.get(p2_courseAccountId, "")
-                if not p2_orgAccountId:
-                    logger.warning(
-                        f"\nNo organization mapping for account '{p2_courseAccountId}' "
-                        f"in course '{p2_courseCode}'. Skipping."
-                    )
-                    continue
-
-                ## Get organization name
-                p2_orgName = p3_simpSylNamesAndCanvasAccIdsDictDict.get(p2_orgAccountId, {}).get(
-                    "name", ""
-                )
-
-                ## Build output row
-                p2_outputRow = {
-                    "course_code": p2_courseCode,
-                    "course_title": p2_row.get("title", ""),
-                    "organization_id": p2_orgAccountId,
-                    "organization_name": p2_orgName,
-                    "canvas_account_id": p2_courseAccountId,
-                    "sis_course_id": p2_row.get("sis_course_id", ""),
-                    "description": p2_row.get("description", ""),
-                    "environment": p2_row.get("environment", ""),
-                    "audience": p2_row.get("audience", ""),
+                accountsById[canvasAccountId] = {
+                    "name": str(row.get("name", "")).strip(),
+                    "parent_account_id": str(row.get("parent_account_id", "")).strip(),
                 }
-                p2_outputRows.append(p2_outputRow)
 
-            except Exception as Error:
-                logger.warning(
-                    f"\nFailed to build row for course "
-                    f"'{p2_row.get('course_code', 'UNKNOWN')}': {Error}"
-                )
-                continue
-
-        p2_outputDf = pd.DataFrame(p2_outputRows)
-        logger.info(f"\nBuilt {len(p2_outputDf)} output rows for upload")
-        return p2_outputDf
-    except Exception as Error:
-        errorHandler.sendError(p1_functionName, str(Error))
-        raise
-
-
-## =========================================================================
-## DOWNLOAD AND UPLOAD FUNCTIONS
-## =========================================================================
-
-## This function downloads catalog from URL and returns as DataFrame
-def downloadCatalog(p1_url, p2_localPath):
-    p1_functionName = "downloadCatalog"
-    try:
-        logger.info(f"\nDownloading catalog from {p1_url} to {p2_localPath}...")
-
-        ## If the file isn't recent
-        if not isFileRecent(localSetup, p2_localPath):
-
-            # Use TLC_Common.downloadFile to make a GET call to the URL
-            downloadFile(localSetup, p1_url, p2_localPath)
-
-        # Now read the downloaded CSV
-        p2_catalogDf = pd.read_csv(p2_localPath)
-        logger.info(f"\nDownloaded {len(p2_catalogDf)} courses from {p1_url}")
-        return p2_catalogDf
-    except Exception as Error:
-        errorHandler.sendError(p1_functionName, str(Error))
-        raise
-
-
-def downloadAllCatalogs():
-    """
-    Download all four CleanCatalog exports (prod/staging x gps/tug),
-    tag each with environment/audience, and return a single combined DataFrame.
-    """
-    p1_functionName = "downloadAllCatalogs"
-    try:
-        baseDir = os.path.join(
-            localSetup.getInternalResourcePaths("Simple_Syllabus"),
-            "Catalog_Export",
+        # --- Build (subject, courseNum) → Simple Syllabus org name from courseId ---
+        # Sample courseId values: FA2025_ACCT6000_01, SP2026_BIOL2210_1L
+        courseIdPattern = re.compile(
+            r"^[A-Z]{2}\d{2}_([A-Za-z]+)(\d+)_",
+            re.IGNORECASE
         )
-        os.makedirs(baseDir, exist_ok=True)
 
-        combos = [
-            ("production", "gps"),
-            ("production", "tug"),
-            ("staging", "gps"),
-            ("staging", "tug"),
+        subjectCourseToOrg = {}
+        if allCoursesDf is not None and not allCoursesDf.empty:
+            for _, row in allCoursesDf.iterrows():
+                courseId = str(row.get("course_id", "")).strip()
+                accountId = str(row.get("account_id", "")).strip()
+                match = courseIdPattern.match(courseId)
+                if not match or not accountId:
+                    continue
+
+                subject = match.group(1).upper()
+                courseNumber = match.group(2)
+                key = (subject, courseNumber)
+
+                # First match wins; most schools have a consistent sub-account per course
+                if key in subjectCourseToOrg:
+                    continue
+
+                parentOrg = _mapAccountToSimpleSyllabusOrg(
+                    accountId,
+                    accountsById,
+                    simpleSyllabusNameMap,
+                    simpleSyllabusNormalizedNames
+                )
+
+                if parentOrg:
+                    subjectCourseToOrg[key] = parentOrg
+
+        localSetup.logger.info(
+            f"Subject→ParentOrg map complete — {len(subjectCourseToOrg)} "
+            f"unique (subject, courseNumber) entries mapped."
+        )
+
+        return subjectCourseToOrg
+
+    except Exception as Error:
+        errorHandler.sendError(functionName, Error)
+
+
+## This function downloads a CleanCatalog report CSV via downloadFile
+## and returns it as a pandas DataFrame
+def downloadCatalog(url: str, localPath: str) -> pd.DataFrame:
+    localSetup.logger.info(f"Downloading catalog: {url} → {localPath}")
+    downloadFile(localSetup, url, localPath, "w")
+
+    dataFrame = pd.read_csv(localPath)
+    localSetup.logger.info(
+        f"Catalog downloaded — {len(dataFrame)} rows, columns: {list(dataFrame.columns)}"
+    )
+
+    return dataFrame
+
+
+## This function expands any rows whose Title contains slash-delimited codes
+## (e.g., 'MUSC2250/MUSC2254') into one row per code so downstream processing
+## sees each course code as an independent row
+def expandSlashTitles(catalogDf: pd.DataFrame) -> pd.DataFrame:
+    expandedRows = []
+
+    for _, row in catalogDf.iterrows():
+        rawTitle = str(row.get("Title", "")).strip()
+        if "/" in rawTitle:
+            codes = [code.strip() for code in rawTitle.split("/") if code.strip()]
+            for code in codes:
+                newRow = row.copy()
+                newRow["Title"] = code
+                expandedRows.append(newRow)
+
+            localSetup.logger.info(
+                f"Expanded slash title '{rawTitle}' into {len(codes)} rows: {codes}"
+            )
+        else:
+            expandedRows.append(row)
+
+    return pd.DataFrame(expandedRows).reset_index(drop=True)
+
+
+## This function builds one Simple Syllabus output row per (course, term) for
+## the requested level (Graduate / Undergraduate) and schoolYearStart.
+## For each qualifying course it emits entries for Fall, Spring, and Summer.
+## It also:
+##  - merges prerequisite/corequisite-related catalog columns
+##  - resolves Parent Organization from the Canvas+Simple Syllabus map
+##  - uses shared termSchoolYearLogic + TERM_LABELS to determine term labels
+def buildOutputRows(
+    catalogDf: pd.DataFrame,
+    isGraduate: bool,
+    schoolYearStart: int,
+    subjectOrgMap: dict,
+    termLabels: dict,
+) -> list:
+    # Expand any slash-delimited titles before processing
+    catalogDf = expandSlashTitles(catalogDf)
+
+    level = "graduate" if isGraduate else "undergraduate"
+    rows = []
+
+    for _, catalogRow in catalogDf.iterrows():
+        # ── Parse course code ─────────────────────────────────────────────
+        subject, courseNumber = splitCourseCode(catalogRow.get("Title", ""))
+        if subject is None:
+            localSetup.logger.warning(
+                f"Could not parse course code from Title='{catalogRow.get('Title')}' — skipping."
+            )
+            continue
+
+        # ── Route by course level ────────────────────────────────────────
+        try:
+            courseIsGraduate = int(courseNumber) >= 5000
+        except ValueError:
+            localSetup.logger.warning(
+                f"Non-numeric course number '{courseNumber}' "
+                f"from Title='{catalogRow.get('Title')}' — skipping."
+            )
+            continue
+
+        if courseIsGraduate != isGraduate:
+            # This row belongs to the other output file
+            continue
+
+        # ── Parent Organisation from Canvas+Simple Syllabus map ─────────
+        parentOrg = subjectOrgMap.get((subject, courseNumber), "")
+
+        # ── Merge requisite columns (new rules) ─────────────────────────
+        # Prerequisites ← Prerequisites + Prerequisite Courses
+        prerequisites = combineFields(
+            catalogRow.get("Prerequisites", ""),
+            catalogRow.get("Prerequisite Courses", ""),
+        )
+
+        # Corequisites ← Corequisites + Corequisite Courses
+        #                + Concurrent + Concurrent Requisite
+        corequisites = combineFields(
+            catalogRow.get("Corequisites", ""),
+            catalogRow.get("Corequisite Courses", ""),
+            catalogRow.get("Concurrent", ""),
+            catalogRow.get("Concurrent Requisite", ""),
+        )
+
+        # ── Emit one row per term in this school year ───────────────────
+        for termName in ("Fall", "Spring", "Summer"):
+            logic = termSchoolYearLogic.get(termName)
+
+            if logic == "current-next":
+                # e.g., Fall term belongs to the start year of the school year
+                calendarYear = schoolYearStart
+            elif logic == "previous-current":
+                # e.g., Spring/Summer belong to the end year of the school year
+                calendarYear = schoolYearStart + 1
+            else:
+                # Fallback (should not happen if config is correct)
+                localSetup.logger.warning(
+                    f"Unknown termSchoolYearLogic '{logic}' for term '{termName}', "
+                    f"defaulting to start year."
+                )
+                calendarYear = schoolYearStart
+
+            termLabel = termLabels[(level, termName)].format(year=calendarYear)
+
+            rows.append({
+                "Term": termLabel,
+                "Subject": subject,
+                "Course Number": courseNumber,
+                "Title": str(catalogRow.get("Name", "")).strip(),
+                "Parent Organization": parentOrg,
+                "Class Program": str(catalogRow.get("Class Program", "")).strip(),
+                "Description": str(catalogRow.get("Description", "")).strip(),
+                "Credits": catalogRow.get("Credits", ""),
+                "Prerequisites": prerequisites,
+                "Corequisites": corequisites,
+            })
+
+    return rows
+
+
+## This function uploads a single CSV to the Simple Syllabus SFTP server
+## using SSH key authentication.
+## It will retry up to 3 times with a 5-second pause between attempts.
+def uploadToSimpleSyllabus(
+    localFilePath: str,
+    remoteFileName: str,
+    sftpConfig: dict,
+    keyPath: str,
+):
+    functionName = "uploadToSimpleSyllabus"
+    attempt = 0
+    maxRetries = 3
+    connected = False
+
+    sshClient = paramiko.SSHClient()
+    sshClient.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+    host = sftpConfig["host"]
+    port = sftpConfig["port"]
+    username = sftpConfig["username"]
+    remoteDir = sftpConfig["remote_dir"]
+
+    while not connected and attempt < maxRetries:
+        try:
+            localSetup.logger.info(
+                f"Connecting to Simple Syllabus SFTP — attempt {attempt + 1} …"
+            )
+            sshClient.connect(
+                hostname=host,
+                port=port,
+                username=username,
+                key_filename=keyPath,
+            )
+            connected = True
+            localSetup.logger.info("SFTP connection established.")
+        except Exception as connectionError:
+            attempt += 1
+            localSetup.logger.error(
+                f"SFTP connect attempt {attempt} failed: {connectionError}"
+            )
+
+            if attempt < maxRetries:
+                localSetup.logger.info("Retrying in 5 seconds …")
+                time.sleep(5)
+            else:
+                localSetup.logger.error(
+                    f"Could not connect to Simple Syllabus SFTP after {maxRetries} attempts."
+                )
+                raise
+
+    sftpClient = sshClient.open_sftp()
+    remotePath = f"{remoteDir}/{remoteFileName}"
+
+    try:
+        localSetup.logger.info(f"Uploading {localFilePath} → {remotePath}")
+        sftpClient.put(localFilePath, remotePath)
+        localSetup.logger.info(f"Upload complete: {remoteFileName}")
+    finally:
+        sftpClient.close()
+        sshClient.close()
+
+
+# ── Main Orchestrator ─────────────────────────────────────────────────────────
+
+## This function orchestrates the full Simple Syllabus catalog process:
+##  1. Reads scoped config values for CleanCatalog URLs, SFTP, and term labels
+##  2. Determines current and next school year using LocalSetup
+##  3. Builds the (subject, courseNumber) → Parent Organization map
+##  4. Downloads production (current-year) and staging (next-year) catalogs
+##  5. Builds graduate & undergraduate rows for both school years
+##  6. Writes the combined CSVs to disk
+##  7. Uploads the CSVs to Simple Syllabus via SFTP
+def sendCatalogToSimpleSyllabus():
+    functionName = "sendCatalogToSimpleSyllabus"
+    try:
+        # ---- Scoped config values from simpleSyllabusConfig ----
+        catalogProduction = simpleSyllabusConfig["catalogProduction"]
+        catalogStaging = simpleSyllabusConfig["catalogStaging"]
+        sftpConfig = simpleSyllabusConfig["sftp"]
+        termLabels = simpleSyllabusConfig["TERM_LABELS"]
+
+        prodGpsCatalogUrl = catalogProduction["gps"]
+        prodTugCatalogUrl = catalogProduction["tug"]
+        stagingGpsCatalogUrl = catalogStaging["gps"]
+        stagingTugCatalogUrl = catalogStaging["tug"]
+
+        ssKeyPath = os.path.join(
+            localSetup.configPath,
+            "Simple_Syllabus_Private_Key.txt"
+        )
+
+        # ---- Determine current and next school year (using LocalSetup) ----
+        # LocalSetup encodes NNU's school-year logic:
+        #   Fall (Aug-Dec)   → "current-next"  (startYear = that calendar year)
+        #   Spring/Summer    → "previous-current" (startYear = prior calendar year)
+        currentMonth = localSetup.dateDict["month"]
+        currentYear = localSetup.dateDict["year"]
+        currentTermName = localSetup._determineCurrentTerm(currentMonth)
+        startYear, _ = localSetup._getSchoolYearRange(currentTermName, currentYear)
+
+        currentSchoolYearStart = startYear
+        nextSchoolYearStart = startYear + 1
+
+        localSetup.logger.info(
+            "Generating Simple Syllabus catalog for school years "
+            f"{currentSchoolYearStart}-{currentSchoolYearStart + 1} and "
+            f"{nextSchoolYearStart}-{nextSchoolYearStart + 1}"
+        )
+
+        # ---- Step 1: Build (subject, course) → ParentOrg lookup ----
+        subjectOrgMap = buildSubjectOrgMap()
+
+        # ---- Step 2: Download production (current) and staging (next) catalogs ----
+        prodGpsCsvPath = os.path.join(outputDir, "prod_gps_catalog_raw.csv")
+        prodTugCsvPath = os.path.join(outputDir, "prod_tug_catalog_raw.csv")
+        stagingGpsCsvPath = os.path.join(outputDir, "staging_gps_catalog_raw.csv")
+        stagingTugCsvPath = os.path.join(outputDir, "staging_tug_catalog_raw.csv")
+
+        prodGpsDf = downloadCatalog(prodGpsCatalogUrl, prodGpsCsvPath)
+        prodTugDf = downloadCatalog(prodTugCatalogUrl, prodTugCsvPath)
+        stagingGpsDf = downloadCatalog(stagingGpsCatalogUrl, stagingGpsCsvPath)
+        stagingTugDf = downloadCatalog(stagingTugCatalogUrl, stagingTugCsvPath)
+
+        # ---- Step 3: Build output rows for both school years ----
+        allGraduateRows: list = []
+        allUndergradRows: list = []
+
+        # Current school year → production catalogs
+        for catalogDf in [prodGpsDf, prodTugDf]:
+            allGraduateRows.extend(
+                buildOutputRows(
+                    catalogDf,
+                    isGraduate=True,
+                    schoolYearStart=currentSchoolYearStart,
+                    subjectOrgMap=subjectOrgMap,
+                    termLabels=termLabels,
+                )
+            )
+            allUndergradRows.extend(
+                buildOutputRows(
+                    catalogDf,
+                    isGraduate=False,
+                    schoolYearStart=currentSchoolYearStart,
+                    subjectOrgMap=subjectOrgMap,
+                    termLabels=termLabels,
+                )
+            )
+
+        # Next school year → staging catalogs
+        for catalogDf in [stagingGpsDf, stagingTugDf]:
+            allGraduateRows.extend(
+                buildOutputRows(
+                    catalogDf,
+                    isGraduate=True,
+                    schoolYearStart=nextSchoolYearStart,
+                    subjectOrgMap=subjectOrgMap,
+                    termLabels=termLabels,
+                )
+            )
+            allUndergradRows.extend(
+                buildOutputRows(
+                    catalogDf,
+                    isGraduate=False,
+                    schoolYearStart=nextSchoolYearStart,
+                    subjectOrgMap=subjectOrgMap,
+                    termLabels=termLabels,
+                )
+            )
+
+        # ---- Step 4: Write output CSVs ----
+        outputColumns = [
+            "Term", "Subject", "Course Number", "Title",
+            "Parent Organization", "Class Program",
+            "Description", "Credits", "Prerequisites", "Corequisites",
         ]
 
-        allDfs = []
+        graduateDf = pd.DataFrame(allGraduateRows, columns=outputColumns)
+        undergradDf = pd.DataFrame(allUndergradRows, columns=outputColumns)
 
-        for environment, audience in combos:
-            url = _getCatalogUrlFromConfig(audience=audience, environment=environment)
-            localPath = os.path.join(
-                baseDir,
-                f"{environment}_{audience}_catalog.csv",
-            )
-
-            catalogDf = downloadCatalog(url, localPath)
-
-            # Tag with environment & audience
-            catalogDf["environment"] = environment
-            catalogDf["audience"] = audience
-
-            allDfs.append(catalogDf)
-
-        if not allDfs:
-            raise ValueError("\nNo catalog data downloaded")
-
-        combinedDf = pd.concat(allDfs, ignore_index=True)
-        logger.info(
-            f"\nCombined all catalogs into a single DataFrame with {len(combinedDf)} rows"
+        # De-duplicate in case the same course appears in multiple catalogs
+        graduateDf = graduateDf.drop_duplicates(
+            subset=["Term", "Subject", "Course Number"]
         )
-        return combinedDf
-
-    except Exception as Error:
-        errorHandler.sendError(p1_functionName, str(Error))
-        raise
-
-
-## This function uploads output rows to Simple Syllabus
-def uploadToSimpleSyllabus(p1_outputDf):
-    p1_functionName = "uploadToSimpleSyllabus"
-    try:
-        if p1_outputDf.empty:
-            raise ValueError("\nOutput DataFrame is empty")
-
-        logger.info(f"\nUploading {len(p1_outputDf)} courses to Simple Syllabus...")
-
-        # Define a local output directory inside the Simple_Syllabus internal path
-        outputDir = os.path.join(
-            localSetup.getInternalResourcePaths("Simple_Syllabus"),
-            "Catalog_Export",
-        )
-        os.makedirs(outputDir, exist_ok=True)
-
-        p2_outputFile = os.path.join(outputDir, "SimpleSyllabus_Catalog_Export.csv")
-        p1_outputDf.to_csv(p2_outputFile, index=False)
-        logger.info(
-            f"\nSuccessfully wrote {len(p1_outputDf)} courses to local file {p2_outputFile}"
+        undergradDf = undergradDf.drop_duplicates(
+            subset=["Term", "Subject", "Course Number"]
         )
 
-        # EXAMPLE: How you'd access SFTP config when you're ready to actually push the file
-        sftpConfig = simpleSyllabusConfig.get("sftp", {})
-        logger.info(
-            f"\nSimple Syllabus SFTP config loaded for future use: "
-            f"host={sftpConfig.get('host')}, remote_dir={sftpConfig.get('remote_dir')}"
+        # Sort for readability: by Term, then Subject, then Course Number
+        graduateDf = graduateDf.sort_values(
+            ["Term", "Subject", "Course Number"]
+        ).reset_index(drop=True)
+        undergradDf = undergradDf.sort_values(
+            ["Term", "Subject", "Course Number"]
+        ).reset_index(drop=True)
+
+        # File names span both school years for clarity
+        endYear = nextSchoolYearStart + 1
+        graduateFileName = f"Graduate_Catalog_{currentSchoolYearStart}-{endYear}.csv"
+        undergradFileName = f"Undergraduate_Catalog_{currentSchoolYearStart}-{endYear}.csv"
+
+        graduateLocalPath = os.path.join(outputDir, graduateFileName)
+        undergradLocalPath = os.path.join(outputDir, undergradFileName)
+
+        graduateDf.to_csv(graduateLocalPath, index=False)
+        undergradDf.to_csv(undergradLocalPath, index=False)
+
+        localSetup.logger.info(
+            f"Graduate CSV written: {len(graduateDf)} rows → {graduateLocalPath}"
+        )
+        localSetup.logger.info(
+            f"Undergraduate CSV written: {len(undergradDf)} rows → {undergradLocalPath}"
         )
 
-        # TODO: Implement actual SFTP upload using sftpConfig and LocalSetup-managed private key.
-
-        return True
-    except Exception as Error:
-        errorHandler.sendError(p1_functionName, str(Error))
-        return False
-
-
-## =========================================================================
-## MAIN ORCHESTRATION FUNCTION
-## =========================================================================
-
-## This function orchestrates the entire catalog synchronization process
-## Process flow:
-## 1. Load Simple Syllabus organizations from CSV
-## 2. Load all Canvas accounts for hierarchy lookup
-## 3. Download catalog from CleanCatalog (via simpleSyllabusConfig)
-## 4. Expand slash titles
-## 5. Build account-to-org mapping from catalog (KEY CHANGE)
-## 6. Build output rows using the mapping (with SIS filtering and prod/staging logic)
-## 7. Upload to Simple Syllabus
-def sendCatalogToSimpleSyllabus(
-    p1_catalogUrl=None,
-    audience="gps",           # used only if you pass a manual URL
-    environment="production", # used only if you pass a manual URL
-):
-    p1_functionName = "sendCatalogToSimpleSyllabus"
-    try:
-        logger.info("\n\nStarting catalog synchronization with Simple Syllabus...")
-
-        ## STEP 1: Load Simple Syllabus organizations from CSV
-        p2_simpSylNamesAndCanvasAccIdsDictDict = _loadsimpSylNamesAndCanvasAccIdsDictFromCsv()
-        if not p2_simpSylNamesAndCanvasAccIdsDictDict:
-            raise ValueError("\nFailed to load Simple Syllabus organizations")
-
-        ## STEP 2: Load all Canvas accounts for parent hierarchy lookup
-        p2_allAccountsDict = _loadAllCanvasAccounts()
-        if not p2_allAccountsDict:
-            raise ValueError("\nFailed to load Canvas accounts")
-
-        ## STEP 3: Download and combine ALL catalogs (prod/staging x gps/tug)
-        if p1_catalogUrl:
-            # Manual single-URL test path
-            p2_localDownloadPath = os.path.join(
-                localSetup.getInternalResourcePaths("Simple_Syllabus"),
-                "Catalog_Export",
-                "catalog_download_manual.csv",
-            )
-            p2_catalogDf = downloadCatalog(p1_catalogUrl, p2_localDownloadPath)
-            p2_catalogDf["environment"] = environment
-            p2_catalogDf["audience"] = audience
-        else:
-            p2_catalogDf = downloadAllCatalogs()
-
-        if p2_catalogDf.empty:
-            raise ValueError("\nDownloaded catalog is empty")
-
-        logger.info(f"\nDownloaded/combined {len(p2_catalogDf)} total catalog rows")
-
-        ## STEP 4: Expand slash titles
-        p2_expandedCatalogDf = expandSlashTitles(p2_catalogDf)
-        logger.info(
-            f"\nExpanded to {len(p2_expandedCatalogDf)} courses after slash expansion"
+        # ---- Step 5: Upload both CSVs to Simple Syllabus via SFTP ----
+        uploadToSimpleSyllabus(
+            graduateLocalPath, graduateFileName, sftpConfig, ssKeyPath
+        )
+        uploadToSimpleSyllabus(
+            undergradLocalPath, undergradFileName, sftpConfig, ssKeyPath
         )
 
-        ## STEP 5: Build account-to-org mapping from CATALOG ONLY
-        accountOrgMap = buildAccountOrgMap(
-            p2_allAccountsDict, p2_simpSylNamesAndCanvasAccIdsDictDict
+        localSetup.logger.info(
+            "sendCatalogToSimpleSyllabus completed successfully."
         )
-        if not accountOrgMap:
-            raise ValueError("\nFailed to build account-to-org mapping")
 
-        ## STEP 6: Build output rows (includes SIS filtering and prod/staging resolution)
-        p2_outputDf = buildOutputRows(
-            p2_expandedCatalogDf, accountOrgMap, p2_simpSylNamesAndCanvasAccIdsDictDict
-        )
-        if p2_outputDf.empty:
-            raise ValueError("\nNo valid output rows generated")
-
-        ## STEP 7: Upload to Simple Syllabus
-        p2_uploadSuccess = uploadToSimpleSyllabus(p2_outputDf)
-        if p2_uploadSuccess:
-            logger.info("\nCatalog synchronization completed successfully")
-            return True
-        else:
-            logger.error("\nCatalog upload failed")
-            return False
-    except Exception as Error:
-        errorHandler.sendError(p1_functionName, str(Error))
-        return False
+    except Exception as error:
+        errorHandler.sendError(functionName, error)
 
 
-## =========================================================================
-## MAIN ENTRY POINT
-## =========================================================================
+# ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    logger.info("\n\nStarting Send_Catalog_To_Simple_Syllabus script")
-    try:
-        p1_success = sendCatalogToSimpleSyllabus()
-        if p1_success:
-            logger.info("\nScript completed successfully")
-        else:
-            logger.error("\nScript completed with errors")
-    except Exception as Error:
-        errorHandler.sendError("main", str(Error))
-        logger.error(f"\nScript failed: {Error}")
+    sendCatalogToSimpleSyllabus()
 
 ## ===========================================================================
 ## FILE: ActionModules\Test.py
@@ -5133,7 +4998,7 @@ def changeCourseGradingStandard(
             }
         }
 
-        response, _ = makeApiCall(
+        response = makeApiCall(
             localSetup=localSetup,
             p1_apiUrl=updateCourseUrl,
             p1_payload=payload,
@@ -7021,7 +6886,7 @@ def getStuMostRecentGradedDiscussionPostDateRecursive(p2_stuCanvasId, p1_stuLast
 ## This function returns the user's most recent graded discussion post date
 def getStuMostRecentGradedDiscussionPostDate(p1_stuDiscussionListAPIUrl, p1_stuCanvasId):
     functionName = "Get a Student's Most Recent Graded Discussion Post Date"
-    stuDiscussionListObject, _ = makeApiCall(localSetup, p1_apiUrl=p1_stuDiscussionListAPIUrl)
+    stuDiscussionListObject = makeApiCall(localSetup, p1_apiUrl=p1_stuDiscussionListAPIUrl)
 
     if stuDiscussionListObject.status_code == 200:
         stuDiscussionList = json.loads(stuDiscussionListObject.text)
@@ -7032,7 +6897,7 @@ def getStuMostRecentGradedDiscussionPostDate(p1_stuDiscussionListAPIUrl, p1_stuC
             if "assignment" in discussion:
                 discussionCanvasId = discussion["id"]
                 viewUrl = f"{p1_stuDiscussionListAPIUrl}/{discussionCanvasId}/view"
-                viewObject, _ = makeApiCall(localSetup, p1_apiUrl=viewUrl)
+                viewObject = makeApiCall(localSetup, p1_apiUrl=viewUrl)
 
                 if viewObject.status_code == 200:
                     viewDict = json.loads(viewObject.text)
@@ -7051,7 +6916,7 @@ def updateCourseEndDate(courseId, newEndDate):
     functionName = "Update Course End Date"
 
     ## Make the API call to retrieve the current course object
-    courseObject, _ = makeApiCall(localSetup, p1_apiUrl=f"{coreCanvasApiUrl}/courses/{courseId}")
+    courseObject = makeApiCall(localSetup, p1_apiUrl=f"{coreCanvasApiUrl}/courses/{courseId}")
 
     ## If retrieval fails, log and return None
     if courseObject.status_code != 200:
@@ -7076,7 +6941,7 @@ def updateCourseEndDate(courseId, newEndDate):
     }
 
     ## Make the API call to update the course end date
-    updateResponse, _ = makeApiCall(localSetup,
+    updateResponse = makeApiCall(localSetup,
         p1_apiUrl=f"{coreCanvasApiUrl}/courses/{courseId}",
         p1_payload=payload,
         p1_apiCallType="put",
@@ -7114,7 +6979,7 @@ def getEnrollmentApiObject(enrollmentId, courseId, parentCourseId, stuId, enroll
             ## If parent course exists, ## try to find matching section
             if parentCourseId:
                 sectionApiUrl = f"{coreCanvasApiUrl}/courses/sis_course_id:{parentCourseId}/sections"
-                sectionResponse, _ = makeApiCall(localSetup, p1_apiUrl=sectionApiUrl)
+                sectionResponse = makeApiCall(localSetup, p1_apiUrl=sectionApiUrl)
 
                 if sectionResponse.status_code != 200:
                     localSetup.logger.warning(f"Failed to retrieve sections for parent course {parentCourseId}")
@@ -7134,7 +6999,7 @@ def getEnrollmentApiObject(enrollmentId, courseId, parentCourseId, stuId, enroll
                     payload["enrollment[course_section_id]"] = crosslistedSectionId
 
             ## Attempt to re-enroll the student
-            enrollmentObject, _ = makeApiCall(localSetup, 
+            enrollmentObject = makeApiCall(localSetup, 
                 p1_apiUrl=enrollmentApiUrl,
                 p1_payload=payload,
                 p1_apiCallType="post",
@@ -7152,7 +7017,7 @@ def getEnrollmentApiObject(enrollmentId, courseId, parentCourseId, stuId, enroll
                     originalEndDate, _ = updateCourseEndDate(f"sis_course_id:{targetCourseId}", futureEndDate)
 
                     ## Retry enrollment after unconcluding
-                    enrollmentObject, _ = makeApiCall(localSetup, 
+                    enrollmentObject = makeApiCall(localSetup, 
                         p1_apiUrl=enrollmentApiUrl,
                         p1_payload=payload,
                         p1_apiCallType="post",
@@ -7167,7 +7032,7 @@ def getEnrollmentApiObject(enrollmentId, courseId, parentCourseId, stuId, enroll
         ## If enrollment is not deleted, retrieve it normally
         else:
             enrollmentApiUrl = f"{coreCanvasApiUrl}/accounts/1/enrollments/{enrollmentId}"
-            enrollmentObject, _ = makeApiCall(localSetup, 
+            enrollmentObject = makeApiCall(localSetup, 
                 p1_apiUrl=enrollmentApiUrl,
             )
             return enrollmentObject, None
@@ -7187,7 +7052,7 @@ def getStudentAssignmentAnalytics(courseApiUrl, stuId):
     stuNumOfAssignmentsGradedZero = 0
 
     analyticsUrl = f"{courseApiUrl}analytics/users/sis_user_id:{stuId}/assignments"
-    analyticsObject, _ = makeApiCall(localSetup, p1_apiUrl=analyticsUrl)
+    analyticsObject = makeApiCall(localSetup, p1_apiUrl=analyticsUrl)
 
     if analyticsObject.status_code == 200:
         analyticsDict = json.loads(analyticsObject.text)
@@ -7216,7 +7081,7 @@ def getStudentParticipationDate(courseApiUrl, stuId):
     functionName = "Get Student Participation Date"
     participationDate = ""
     activityUrl = f"{courseApiUrl}analytics/users/sis_user_id:{stuId}/activity"
-    activityObject, _ = makeApiCall(localSetup, p1_apiUrl=activityUrl)
+    activityObject = makeApiCall(localSetup, p1_apiUrl=activityUrl)
 
     if activityObject.status_code == 200:
         activityDict = json.loads(activityObject.text)
@@ -7282,7 +7147,7 @@ def handleEnrollmentDeletion(stuId, enrollmentId, courseId, originalEndDate=""):
         payload = {"task": "delete"}
 
         ## Attempt to delete the enrollment
-        deletionResponse, _ = makeApiCall(localSetup, 
+        deletionResponse = makeApiCall(localSetup, 
             p1_apiUrl=deletionUrl,
             p1_payload=payload,
             p1_apiCallType="delete",
@@ -7373,7 +7238,7 @@ def getStuCourseData(
             for secondaryCourseId in p1_canvasEnrollmentsDf["course_id"].unique():
                 if not parentCourseId:
                     sectionApiUrl = f"{coreCanvasApiUrl}/courses/sis_course_id:{secondaryCourseId}/sections"
-                    sectionResponse, _ = makeApiCall(localSetup, p1_apiUrl=sectionApiUrl)
+                    sectionResponse = makeApiCall(localSetup, p1_apiUrl=sectionApiUrl)
                     if sectionResponse.status_code == 200:
                         sectionData = json.loads(sectionResponse.text)
                         for section in sectionData:
@@ -8380,7 +8245,7 @@ def assignmentIsPublishedCheck (p1_rubric_api_url, assignment_id):
     assignmentApiPayload = {"include": ["submission", "assignment_visibility"]}
 
     ## Make a variable to hold the course's rubric api object
-    assignmentApiObject, _ = makeApiCall(localSetup, p1_apiUrl = assignmentApiUlr, p1_payload = assignmentApiPayload)
+    assignmentApiObject = makeApiCall(localSetup, p1_apiUrl = assignmentApiUlr, p1_payload = assignmentApiPayload)
 
     ## Save the primary body of information retrieved by the API call
     assignmentApiText = assignmentApiObject.text
@@ -8415,7 +8280,7 @@ def rubricIsAttachedToAPublishedAssignmentCheck(p1_courseRubricApiUrl, p1_rubric
     rubricApiObject = None
     ## Try to get the api object, but count 404 errors as not attached to published assignment
     try:
-        rubricApiObject, _ = makeApiCall(localSetup, p1_apiUrl = rubricApiUlr, p1_payload = rubricApiPayload)
+        rubricApiObject = makeApiCall(localSetup, p1_apiUrl = rubricApiUlr, p1_payload = rubricApiPayload)
     except Exception as Error:
         msg = str(Error)
         ## If the error is a 404 error, the rubric may be in an unsaved state or deleted, so return false
@@ -8470,7 +8335,7 @@ def checkRubricOutcomeAlignment(p1_row, p1_targetCourseSisId, p1_uniqueAttachedO
         courseRubricApiUlr = coreCanvasApiUrl + "courses/sis_course_id:" + p1_targetCourseSisId + "/rubrics" + "?per_page=100"
             
         ## Make a variable to hold the course's rubric api object
-        courseRubricApiObject, _ = makeApiCall(localSetup, p1_apiUrl = courseRubricApiUlr)
+        courseRubricApiObject = makeApiCall(localSetup, p1_apiUrl = courseRubricApiUlr)
             
         ## Save the primary body of information retrieved by the API call
         course_rubrics_api_call_text_jsonString = courseRubricApiObject.text
@@ -8515,7 +8380,7 @@ def checkRubricOutcomeAlignment(p1_row, p1_targetCourseSisId, p1_uniqueAttachedO
                         outcomeApiUrl = f"{coreCanvasApiUrl}outcomes/{criterion['learning_outcome_id']}"
 
                         ## Make a variable to hold the outcome api object
-                        outcomeApiObject, _ = makeApiCall(localSetup, p1_apiUrl = outcomeApiUrl)
+                        outcomeApiObject = makeApiCall(localSetup, p1_apiUrl = outcomeApiUrl)
                         
                         ## Save the primary body of information retrieved by the API call
                         outcomeApiText = outcomeApiObject.text
@@ -9050,7 +8915,7 @@ def termCreateOutcomeComplianceReport(
                                     assignmentResultsApiUrl = f"{coreCanvasApiUrl}courses/sis_course_id:{targetCourseSisId}/assignments/{assignmentId}/submissions"
                                 
                                     ## Make a call to the assignment results api
-                                    assignmentResultsObject, _ = makeApiCall(
+                                    assignmentResultsObject = makeApiCall(
                                         localSetup
                                         , p1_apiUrl = assignmentResultsApiUrl
                                         , p1_payload = {"include[]": ['user']}
@@ -9741,7 +9606,7 @@ def termProcessOutcomeResults(p1_inputTerm
         accountOutcomeLinkApiUrl = f"{coreCanvasApiUrl}accounts/{targetCanvasAccountId}/outcome_group_links"
 
         ## Make an api call to get the outcome links related to the account id
-        accountOutcomeLinksObject, _ = makeApiCall(
+        accountOutcomeLinksObject = makeApiCall(
             localSetup,
             accountOutcomeLinkApiUrl
             )
@@ -11366,7 +11231,7 @@ class CanvasReport:
         apiUrl = f"{coreCanvasApiUrl}accounts/{self.accountCanvasID}/reports/{self.endpoint}" if self.accountCanvasID else self.apiUrl
 
         ## Get the first page of the index of reports to check for an already running report
-        # indexResponse, _ = makeApiCall(self.localSetup, p1_header=self.header, p1_apiUrl=apiUrl, p1_apiCallType="get", firstPageOnly=True)
+        # indexResponse = makeApiCall(self.localSetup, p1_header=self.header, p1_apiUrl=apiUrl, p1_apiCallType="get", firstPageOnly=True)
         # indexData = indexResponse.json()
         # activeReport = next((r for r in indexData if r.get('status') in ['running', 'pending']), None)
 
@@ -11382,7 +11247,7 @@ class CanvasReport:
         #     self.localSetup.logger.info(f"Found active report (ID: {reportID}). Monitoring progress...")
         # else:
             ## No active report, create a new one
-        response, _ = makeApiCall(self.localSetup, p1_header=self.header, p1_apiUrl=apiUrl, p1_payload=self.payload, p1_apiCallType="post")
+        response = makeApiCall(self.localSetup, p1_header=self.header, p1_apiUrl=apiUrl, p1_payload=self.payload, p1_apiCallType="post")
         if response.status_code != 200:
             self.localSetup.logger.error(f"Failed to create new report. Status: {response.status_code}")
             return None
@@ -11391,7 +11256,7 @@ class CanvasReport:
 
         # Poll the report status until it's ready
         while True:
-            statusResponse, _ = makeApiCall(self.localSetup, p1_header=self.header, p1_apiUrl=self.statusUrl, p1_apiCallType="get")
+            statusResponse = makeApiCall(self.localSetup, p1_header=self.header, p1_apiUrl=self.statusUrl, p1_apiCallType="get")
             statusData = json.loads(statusResponse.text)
             #if statusResponse.status_code != 200:
                 #raise Exception(f"Failed to get report status. HTTP {statusResponse.status_code}")
@@ -11427,7 +11292,7 @@ class CanvasReport:
     #     # Build index URL for this report type
     #     indexUrl = f"{coreCanvasApiUrl}accounts/{self.accountCanvasID}/reports/{self.endpoint}"
     #     self.localSetup.logger.info(f"Checking for existing {self.endpoint} reports...")
-    #     response, _ = makeApiCall(self.localSetup, p1_header=self.header, p1_apiUrl=indexUrl, p1_apiCallType="get", firstPageOnly=True)
+    #     response = makeApiCall(self.localSetup, p1_header=self.header, p1_apiUrl=indexUrl, p1_apiCallType="get", firstPageOnly=True)
 
     #     if response.status_code != 200:
     #         self.localSetup.logger.warning(f"Failed to retrieve report index for {self.endpoint}. Status: {response.status_code}")
@@ -11442,7 +11307,7 @@ class CanvasReport:
     #         statusUrl = f"{indexUrl}/{reportId}"
     #         self.localSetup.logger.info(f"Found active report (ID: {reportId}). Monitoring progress...")
     #         while True:
-    #             statusResponse, _ = makeApiCall(self.localSetup, p1_header=self.header, p1_apiUrl=statusUrl, p1_apiCallType="get")
+    #             statusResponse = makeApiCall(self.localSetup, p1_header=self.header, p1_apiUrl=statusUrl, p1_apiCallType="get")
     #             statusData = statusResponse.json()
     #             progress = statusData.get('progress', 0)
     #             self.localSetup.logger.info(f"Report progress: {progress}%")
@@ -11456,7 +11321,7 @@ class CanvasReport:
     #     # No active report, create a new one
     #     createUrl = indexUrl
     #     self.localSetup.logger.info(f"No active report found. Creating new {self.endpoint} report...")
-    #     createResponse, _ = makeApiCall(self.localSetup, p1_header=self.header, p1_apiUrl=createUrl, p1_payload=self.payload, p1_apiCallType="post")
+    #     createResponse = makeApiCall(self.localSetup, p1_header=self.header, p1_apiUrl=createUrl, p1_payload=self.payload, p1_apiCallType="post")
 
     #     if createResponse.status_code != 200:
     #         self.localSetup.logger.error(f"Failed to create new report. Status: {createResponse.status_code}")
@@ -11468,7 +11333,7 @@ class CanvasReport:
     #     self.localSetup.logger.info(f"New report created (ID: {reportId}). Monitoring progress...")
 
     #     while True:
-    #         statusResponse, _ = makeApiCall(self.localSetup, p1_header=self.header, p1_apiUrl=statusUrl, p1_apiCallType="get")
+    #         statusResponse = makeApiCall(self.localSetup, p1_header=self.header, p1_apiUrl=statusUrl, p1_apiCallType="get")
     #         statusData = statusResponse.json()
     #         progress = statusData.get('progress', 0)
     #         self.localSetup.logger.info(f"Report progress: {progress}%")
@@ -14155,7 +14020,7 @@ def getEncryptionKey(localSetup: LocalSetup):
 
 ## File Download Function
 @retry(max_attempts=5, delay=5, backoff=2.0)
-def downloadFile(localSetup: LocalSetup, fileLink, filePathWithName, mode = 'w'):
+def downloadFile(localSetup: LocalSetup, fileLink, filePathWithName, mode):
     """
     Downloads a file from the given URL to the specified path.
     Automatically retries on failure using the retry decorator.
@@ -14204,31 +14069,6 @@ def downloadFile(localSetup: LocalSetup, fileLink, filePathWithName, mode = 'w')
         localSetup.logger.error(f"Validation/repair step failed: {e}")
     return finalFilePathWithName
 
-## This function normalizes a Canvas API response (or list of responses) into a single list of JSON objects.
-def flattenApiObjectToJsonList(localSetup, apiObjectList, apiUrl):
-    functionName = "flattenApiObjectToJsonList"
-    try:
-        ## Flatten the json from all pages into a single list
-        flattenedJsonList = []
-
-        for responseObject in apiObjectList:
-            pageData = responseObject.json()
-
-            ## If the page data is a list, extend the flattened list
-            if isinstance(pageData, list):
-                flattenedJsonList.extend(pageData)
-            else:
-                ## If the page data is a dict or single object, append it
-                flattenedJsonList.append(pageData)
-
-        return flattenedJsonList
-
-    except Exception as Error:
-        ## Log the error here; the calling function can decide whether to send an error email
-        localSetup.logger.error(
-            f"{functionName}: Error while flattening API responses for URL {apiUrl}: {Error}"
-        )
-        raise
 
 ## This function takes a api header and url and returns the json object of the api call, recursively calling itself in a seperate instance up to 5 times if the call fails
 @retry(max_attempts=5, delay=5, backoff=2.0)
@@ -14284,7 +14124,7 @@ def makeApiCall(
                 localSetup.logger.warning(f"Received 409 Conflict for {p1_apiCallType.upper()} {p1_apiUrl}. Checking for active existing item...")
 
                 ## Make the GET call to retrieve current index
-                indexResponse, _ = makeApiCall(
+                indexResponse = makeApiCall(
                     localSetup,
                     p1_apiUrl=p1_apiUrl,
                     p1_header=p1_header,
@@ -14310,7 +14150,7 @@ def makeApiCall(
                     localSetup.logger.info("Found active report with matching parameters. Returning its status response instead of retrying.")
                     reportId = matchingReport["id"]
                     statusUrl = f"{p1_apiUrl}/{reportId}"
-                    statusResponse, _ = makeApiCall(
+                    statusResponse = makeApiCall(
                         localSetup,
                         p1_apiUrl=statusUrl,
                         p1_header=p1_header
@@ -14332,7 +14172,7 @@ def makeApiCall(
     if hasattr(p1_apiObject, 'links') and 'next' in getattr(p1_apiObject, 'links', {}) and not firstPageOnly:
         p1_apiObjectList.append(p1_apiObject)
         next_url = p1_apiObject.links["next"]["url"]
-        next_page, next_pageList = makeApiCall(
+        next_page = makeApiCall(
             localSetup,
             p1_apiUrl=next_url,
             p1_header=p1_header,
@@ -14341,12 +14181,12 @@ def makeApiCall(
             p1_apiCallType=p1_apiCallType,
             firstPageOnly=firstPageOnly
         )
-        if next_pageList:
-            p1_apiObjectList.extend(next_pageList)
+        if isinstance(next_page, list):
+            p1_apiObjectList.extend(next_page)
         elif next_page:
             p1_apiObjectList.append(next_page)
 
-    return p1_apiObject, p1_apiObjectList
+    return p1_apiObjectList if p1_apiObjectList else p1_apiObject
 
 ## Check if a file exists and was modified within the last X hours
 def isFileRecent(localSetup: LocalSetup, filePath, maxAgeHours=3.5):
