@@ -2,160 +2,49 @@
 # Last Updated by: Bryce Miller
 
 ## Import Generic Moduels
-from __future__ import print_function
-import traceback, os, sys, logging, requests, re, os, os.path, threading, math, json
+import os, sys, traceback, requests, re, threading, math, json
 from datetime import datetime, date, timedelta
 from dateutil import parser
 import pandas as pd
 
-## Set working directory
-os.chdir(os.path.dirname(__file__))
-
 ## Add Script repository to syspath
-sys.path.append(f"{os.getcwd()}\ResourceModules")
+sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules"))
 
 # Define the script name, purpose, and external requirements for logging and error reporting purposes
-scriptName = "Add Outcomes to Active Courses"
+scriptName = __file__.replace(".py", "")
 
 scriptPurpose = r"""
-The Outcome Exporter script is to copy the most recent relative outcome/s into the c ourses that need them.
+The Outcome Exporter script is to copy the most recent relative outcome/s into the courses that need them.
 """
 externalRequirements = r"""
 To function properly this script requires a spreadsheet of the most recent outcomes and the courses they are assigned to.
 """
 
-## Date Variables
-currentDate = datetime.now()
-todaysDateDateTime = datetime.combine(currentDate, datetime.min.time())
-currentMonth = currentDate.month
-currentYear = currentDate.year
-century = str(currentYear)[:2]
-decade = str(currentYear)[2:]
+## Initialize LocalSetup and resource helpers
+try: ## Irregular try clause, do not comment out in testing
+    from Local_Setup import LocalSetup
+    from TLC_Common import makeApiCall, flattenApiObjectToJsonList
+    from Canvas_Report import CanvasReport
+    from Error_Email import errorEmail
 
-# Time variables
-currentDate = date.today()
-current_year = currentDate.year
-lastYear = current_year - 1
-nextYear = current_year + 1
-century = str(current_year)[:2]
-decade = str(current_year)[2:]
+except ImportError:
+    from ResourceModules.Local_Setup import LocalSetup
+    from ResourceModules.TLC_Common import makeApiCall, flattenApiObjectToJsonList
+    from ResourceModules.Canvas_Report import CanvasReport
+    from ResourceModules.Error_Email import errorEmail
 
-## Set working directory
-fileDir = os.path.dirname(__file__)
-os.chdir(fileDir)
+# Create LocalSetup and localSetup.logger
+localSetup = LocalSetup(datetime.now(), __file__)
 
-## The relative path is used to provide a generic way of finding where the Scripts TLC folder has been placed
-## This provides a non-script specific manner of finding the vaiours related modules
-PFRelativePath = r".\\"
+## Bring in action module functions
+from Outcome_Attachment_Report import termOutcomeAttachmentReport
+from Outcome_Results_Report import termProcessOutcomeResults
+from Common_Configs import coreCanvasApiUrl
 
-## If the Scripts TLC folder is not in the folder the PFRelative path points to
-## look for it in the next parent folder
-while "Scripts TLC" not in os.listdir(PFRelativePath):
+## Setup error handlerF
+errorHandler = errorEmail(scriptName, scriptPurpose, externalRequirements, localSetup)
 
-    PFRelativePath = f"..\\{PFRelativePath}"
-
-## Change the relative path to an absolute path
-PFAbsolutePath = f"{os.path.abspath(PFRelativePath)}\\"
-
-## Add Input Modules to the sys path
-sys.path.append(f"{PFAbsolutePath}Scripts TLC\\ResourceModules")
-sys.path.append(f"{PFAbsolutePath}Scripts TLC\\ActionModules")
-
-## Import local modules
-from Error_Email_API import errorEmailApi
-from Make_Api_Call import makeApiCall
-from Get_Courses import createCoursesCSV
-from Get_Active_Outcome_Courses import create_csv_of_active_Outcome_courses
-from Get_Terms import termGetTerms
-
-## Local Path Variables
-baseLogPath = f"{PFAbsolutePath}Logs\\{scriptName}\\"
-configPath = f"{PFAbsolutePath}\\Configs TLC\\"
-baseLocalInputPath = f"{PFAbsolutePath}Canvas Resources\\"
-
-## External Path Variables
-
-## Define a variable to hold the base external input path which is where the sis input files are stored
-baseExternalInputPath = None 
-## Open Base_External_Paths.json from the config path and get the baseExternalInputPath value
-with open (f"{configPath}Base_External_Paths.json", "r") as file:
-    fileJson = json.load(file)
-    baseExternalInputPath = fileJson["baseExternalInputPath"]
-
-## Canvas Instance Url
-coreCanvasApiUrl = None
-## Open the Core_Canvas_Url.txt from the config path
-with open (f"{configPath}Core_Canvas_Url.txt", "r") as file:
-    coreCanvasApiUrl = file.readlines()[0]
-
-## Define a variable to hold the Canvas Access Token
-canvasAccessToken = ""
-
-## Open and retrieve the Canvas Access Token
-with open (fr"{configPath}Canvas_Access_Token.txt", "r") as file:
-    canvasAccessToken = file.readlines()[0]
-
-## Begin logger set up
-
-## If the base log path doesn't already exist, create it
-if not (os.path.exists(baseLogPath)):
-    os.makedirs(baseLogPath, mode=0o777, exist_ok=False)
-
-## Log configurations
-logger = logging.getLogger(__name__)
-rootFormat = ("%(asctime)s %(levelname)s %(message)s")
-FORMAT = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-logging.basicConfig(format=rootFormat, filemode = "a", level=logging.INFO)
-
-## Info Log Handler
-infoLogFile = f"{baseLogPath}\\Info Log.txt"
-logInfo = logging.FileHandler(infoLogFile, mode = 'a')
-logInfo.setLevel(logging.INFO)
-logInfo.setFormatter(FORMAT)
-logger.addHandler(logInfo)
-
-## Warning Log handler
-warningLogFile = f"{baseLogPath}\\Warning Log.txt"
-logWarning = logging.FileHandler(warningLogFile, mode = 'a')
-logWarning.setLevel(logging.WARNING)
-logWarning.setFormatter(FORMAT)
-logger.addHandler(logWarning)
-
-## Error Log handler
-errorLogFile = f"{baseLogPath}\\Error Log.txt"
-logError = logging.FileHandler(errorLogFile, mode = 'a')
-logError.setLevel(logging.ERROR)
-logError.setFormatter(FORMAT)
-logger.addHandler(logError)
-
-## This variable enables the except function to only send
-## an error email the first time the function triggeres an error
-## by tracking what functions have already been recorded as having errors
-setOfFunctionsWithErrors = set()
-
-## This function handles function errors
-def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
-    functionName = "error_handler"
-
-    ## Log the error
-    logger.error (f"     \nA script error occured while running {p1_ErrorLocation}. " +
-                     f"Error: {str(p1_ErrorInfo)}")
-
-    ## If the function with the error has not already been processed send an email alert
-    if (p1_ErrorLocation not in setOfFunctionsWithErrors):
-        errorEmailApi.sendEmailError(p2_ScriptName = scriptName, p2_ScriptPurpose = scriptPurpose, 
-                                     p2_ExternalRequirements = externalRequirements, 
-                                     p2_ErrorLocation = p1_ErrorLocation, p2_ErrorInfo = f"{p1_ErrorInfo}: \n\n {traceback.format_exc()}")
-        
-        ## Add the function name to the set of functions with errors
-        setOfFunctionsWithErrors.add(p1_ErrorLocation)
-        
-        ## Note that an error email was sent
-        logger.error (f"     \nError Email Sent")
-    
-    ## Otherwise log the fact that an error email as already been sent
-    else:
-        logger.error (f"     \nError email already sent")
+todaysDateDateTime = datetime.now()
 
 ## This function takes in a start date and end date and returns what course week the course is currently in and what week the final week is
 def determineCourseWeek (p1_startDate, p2_endDate):
@@ -179,37 +68,23 @@ def determineCourseWeek (p1_startDate, p2_endDate):
 ## This function retrieves the data neccessary for determining and sending out relevent communication
 def retrieveDataForRelevantCommunication (p2_inputTerm
                                           , p3_targetDesignator
-                                          , p1_header
                                           ):
     
     functionName = "Retrieve Data For Relevant Communication"
+
+    ## Define an auxillary data dict and auxillary df dict
+    auxillaryDFDict = {}
+    completeActiveCanvasCoursesDF = pd.DataFrame()
     
     try:
-    
-        ## Define an auxillary data dict and auxillary df dict
-        auxillaryDataDict = {}
-        auxillaryDFDict = {}
 
-        ## Define the current school year by whether it is before or during/after september
-        if re.search("AF|FA|GF", p2_inputTerm):
-            ## Fall terms are the first terms of a new school year so FA20 is part of the 2020-21 school year.
-            auxillaryDataDict["Target School Year"] = f"{century}{p2_inputTerm[2:]}-{int(p2_inputTerm[2:]) + 1}"
-        if re.search("SP|GS|AS|SG|SA|SU", p2_inputTerm):
-            ## Spring and Summer terms belong in the same school year as the fall terms before them, so SP21 is part of the same 2020-21 school year as FA20.
-            auxillaryDataDict["Target School Year"] = f"{century}{int(p2_inputTerm[2:]) - 1}-{p2_inputTerm[2:]}"
-            
-        ## Define a school year related path
-        schoolYearPath = f"{baseLocalInputPath}{auxillaryDataDict['Target School Year']}\\"
+        ## Get the year of the term
+        termYear = int(f"{localSetup.dateDict['century']}{p2_inputTerm[2:]}")
+        termPrefix = p2_inputTerm[:2]
+        termWord = localSetup._determineTermName(termPrefix)
 
-        ## Define the relevant grad term
-        relevantGradTerm = p2_inputTerm.replace("FA", "GF").replace("SP", "GS").replace("SU", "SG")
-        
-        ## Define the term related paths
-        undgTermPath = f"{schoolYearPath}{p2_inputTerm}\\"
-        gradTermPath = f"{schoolYearPath}{relevantGradTerm}\\"
-
-        ## Retrieve the csv of Active GE courses which includes course code, required outcome/s, and the relevant instructor name/s, id/s, and email/s
-        rawActiveOutcomeCourseDf = pd.read_excel(create_csv_of_active_Outcome_courses(p2_inputTerm, p3_targetDesignator))
+        ## Retrieve the df of Active outcome courses which includes course code, required outcome/s, and the relevant instructor name/s, id/s, and email/s
+        rawActiveOutcomeCourseDf = CanvasReport.getActiveOutcomeCoursesDf(localSetup, p2_inputTerm, p3_targetDesignator)
 
         ## If the raw active outcome course df is empty
         if rawActiveOutcomeCourseDf.empty:
@@ -219,17 +94,17 @@ def retrieveDataForRelevantCommunication (p2_inputTerm
         
         ## Make a list of the unique outcomes that are not blank 
         ## and a dict to hold the course id of the course named after each outcome
-        auxillaryDFDict["Unique Outcomes"], auxillaryDFDict["Outcome Course Dict"] = getUniqueOutcomesAndOutcomeCoursesDict(rawActiveOutcomeCourseDf, p1_header)
+        auxillaryDFDict["Unique Outcomes"], auxillaryDFDict["Outcome Canvas Data Dict"] = getUniqueOutcomesAndOutcomeCoursesDict(p2_inputTerm, rawActiveOutcomeCourseDf, p3_targetDesignator)
         
         ## Remove any outcomes that don't have corresponding courses
         auxillaryDFDict["Active Outcome Courses DF"] = removeMissingOutcomes (
             rawActiveOutcomeCourseDf
             , auxillaryDFDict["Unique Outcomes"]
-            , auxillaryDFDict["Outcome Course Dict"]
+            , auxillaryDFDict["Outcome Canvas Data Dict"]
             )
         
         ## Retrieve the csv of courses being uploaded to Canvas
-        rawTermSisCoursesDF = pd.read_csv(f"{baseExternalInputPath}canvas_course.csv")
+        rawTermSisCoursesDF = pd.read_csv(f"{localSetup.getExternalResourcePath('SIS')}canvas_course.csv")
 
         ## Keep only the courses with a status of active and a term_id of the input term
         activeSisCoursesDF = rawTermSisCoursesDF[(rawTermSisCoursesDF["status"] == "active") 
@@ -238,44 +113,8 @@ def retrieveDataForRelevantCommunication (p2_inputTerm
         ## Remove all columns from the active Sis courses df except the course_id column, the start_date, and the end_date
         reducedActiveSisCoursesDF = activeSisCoursesDF[["course_id", "start_date", "end_date"]]
 
-        ## Define an empty rawTermUndgCanvasCoursesDF
-        rawTermUndgCanvasCoursesDF = pd.DataFrame()
-
-        #try to retrieve the Undg csv of term related Canvas courses from the term path
-        try: ## Irregular try clause, do not comment out in testing
-            
-            ## Retrieve the Undg csv of term related Canvas courses from the term path
-            rawTermUndgCanvasCoursesDF = pd.read_csv(createCoursesCSV(p1_header, p2_inputTerm))
-
-        ## Otherwise
-        except: ## Irregular except clause, do not comment out in testing
-            
-            ## Log the fact that there is no undg courses csv for this term
-            logger.warning(f"\nNo Undg Courses CSV for {p2_inputTerm}")
-
-        ## Define an empty rawTermGradCanvasCoursesDF
-        rawTermGradCanvasCoursesDF = pd.DataFrame()
-
-        #try to retrieve the Grad csv of term related Canvas courses from the term path
-        try: ## Irregular try clause, do not comment out in testing
-            
-            ## Retrieve the grad csv of term related Canvas courses from the term path
-            rawTermGradCanvasCoursesDF = pd.read_csv(createCoursesCSV(p1_header, relevantGradTerm))
-
-        ## Otherwise
-        except: ## Irregular except clause, do not comment out in testing
-            
-            ## Log the fact that there is no grad courses csv for this term
-            logger.warning(f"\nNo Grad Courses CSV for {relevantGradTerm}")
-    
-        ## Combine the Undg and Grad csvs of related canvas courses
-        rawTermCanvasCoursesDF = pd.concat([rawTermUndgCanvasCoursesDF, rawTermGradCanvasCoursesDF])
-
-        ## If the raw term canvas courses df is empty
-        if rawTermCanvasCoursesDF.empty:
-
-            ## Return an empty dataframe for the active outcome courses df and the auxillary df dict
-            return rawTermCanvasCoursesDF, auxillaryDFDict
+        ## Get the raw term canvas courses df
+        rawTermCanvasCoursesDF = CanvasReport.getCoursesDf(localSetup, p2_inputTerm)
 
         ## Reset the index to ensure unique indices
         rawTermCanvasCoursesDF.reset_index(drop=True, inplace=True)
@@ -309,7 +148,7 @@ def retrieveDataForRelevantCommunication (p2_inputTerm
             targetCourseSisId = None
 
             ## If there is a parent course id
-            if pd.notna(row["Parent_Course_sis_id"]):
+            if not pd.isna(row["Parent_Course_sis_id"]) and row["Parent_Course_sis_id"] not in ["", None]:
 
                 ## Define the target course sis id as the parent course id
                 targetCourseSisId = row["Parent_Course_sis_id"]
@@ -327,7 +166,7 @@ def retrieveDataForRelevantCommunication (p2_inputTerm
             rawCompleteActiveCanvasCoursesDF.at[index, "Parent_Course_sis_id"] = row["Parent_Course_sis_id"]
 
         ## Retrieve the all terms file
-        allCanvasTermsDf = pd.read_csv(termGetTerms(p2_inputTerm))
+        allCanvasTermsDf = CanvasReport.getTermsDf(localSetup)
 
         ## Drop the temporary columns
         rawCompleteActiveCanvasCoursesDF.drop(columns=['start_date_sis', 'end_date_sis'], inplace=True)
@@ -350,8 +189,9 @@ def retrieveDataForRelevantCommunication (p2_inputTerm
         for index, row in completeActiveCanvasCoursesDF.iterrows():
 
             ## If there is a parent course sis id
-            if (pd.notna(row["Parent_Course_sis_id"]) 
-            and row["Parent_Course_sis_id"] != ""
+            if (
+               not pd.isna(row["Parent_Course_sis_id"]) 
+                and row["Parent_Course_sis_id"] not in ["", None]
                     ):
 
                 ## Find the index of the parent course sis id
@@ -398,39 +238,17 @@ def retrieveDataForRelevantCommunication (p2_inputTerm
             
             ## Return an empty dataframe for the active outcome courses df and the auxillary df dict
             return completeActiveCanvasCoursesDF, auxillaryDFDict
-        
-        ## Define the term related path to the courses without attached outcomes report 
-        outcomeCoursesWithoutAttachmentPath = f"{undgTermPath}{p2_inputTerm}_{p3_targetDesignator}_Courses_Without_Required_Outcome_Attached.csv"
-
-        ## If there is a courses without attached outcomes report for this term
-        if os.path.exists(outcomeCoursesWithoutAttachmentPath):
-
-            ## Retrieve the list of courses that do not have their outcome/s attached to a published assignment
-            auxillaryDFDict["Outcome Courses Without Attachments DF"] = pd.read_csv(outcomeCoursesWithoutAttachmentPath)
             
-        ## Otherwise
-        else:
-            
-            ## Create an empty dataframe for the courses without attached outcomes
-            auxillaryDFDict["Outcome Courses Without Attachments DF"] = pd.DataFrame()
+        ## Define the term related path to the outcome attachment report
+        termOutcomeAttachmentReportPath = termOutcomeAttachmentReport(p2_inputTerm, p3_targetDesignator)
+        auxillaryDFDict["Outcome Courses Without Attachments DF"] = pd.read_csv(termOutcomeAttachmentReportPath)
 
-        ## Define the term related path to the courses without outcome data report
-        outcomeCoursesWithoutDataPath = f"{undgTermPath}{p2_inputTerm}_{p3_targetDesignator}_Outcome_Results_Course_Data.xlsx"
+        ## Define the term related path to the outcome results report
+        termProcessOutcomeResultsPath = termProcessOutcomeResults(p2_inputTerm, p3_targetDesignator)[0]
+        outcomeCoursesDataDF = pd.read_excel(termProcessOutcomeResultsPath)
 
-        ## If there is a file at f"{baseLocalInputPath}{targetSchoolYear}\\{p2_inputTerm}\\{p2_inputTerm}_Courses_Without_Required_Outcome_Attached.csv"
-        if os.path.exists(outcomeCoursesWithoutDataPath):
-            
-            ## Retrieve the list of courses that do not have the required outcome Results
-            outcomeCoursesDataDF = pd.read_excel(outcomeCoursesWithoutDataPath)
-
-            ## Filter the GE Outcomess data report to only those courses that did not record GE dataf
-            auxillaryDFDict["Unassessed Outcome Courses DF"] = outcomeCoursesDataDF[outcomeCoursesDataDF["Assessment_Status"] != "Assessed"]
-            
-        ## Otherwise
-        else:
-            
-            ## Create an empty dataframe for the courses without outcome data
-            auxillaryDFDict["Unassessed Outcome Courses DF"] = pd.DataFrame()
+        ## Create a df of outcome courses that have not been assessed
+        auxillaryDFDict["Unassessed Outcome Courses DF"] = outcomeCoursesDataDF[outcomeCoursesDataDF["Assessment_Status"] != "Assessed"]
             
         ## Create a new "Course Week" column and a "Course Final Week" column in the complete active canvas courses df by sending the start and end dates to determineCourseWeek
         completeActiveCanvasCoursesDF["Course Week"], completeActiveCanvasCoursesDF["Course Final Week"] = zip(
@@ -446,19 +264,20 @@ def retrieveDataForRelevantCommunication (p2_inputTerm
         ## Return the active outcome courses df, the complete active canvas courses df, and the auxillary df dict
         return completeActiveCanvasCoursesDF, auxillaryDFDict
 
-    except Exception as error:
-        error_handler (functionName, p1_ErrorInfo = error)
+    except Exception as Error:
+        errorHandler.sendError(functionName, Error)
+        return completeActiveCanvasCoursesDF, auxillaryDFDict 
 
 ## This function processes the rows of the CSV file and sends on the relavent data to process_course
 def addOutcomeToCourse (targetCourseDataDict
                         , auxillaryDFDict
-                        , p1_header
                         ):
     functionName = "Add Outcome/s to courses"
 
     try:
         
-        ## If the targetCourseDataDict's course_sis_id is not in the aux df dict's active outcome course df, or if it is empty, skip it
+        ## If the targetCourseDataDict's course_sis_id is not in the aux df dict's active outcome course df,
+        ## or if it is empty, skip it
         if (targetCourseDataDict['course_id'] not in auxillaryDFDict["Active Outcome Courses DF"]["Course_sis_id"].values 
             or not targetCourseDataDict['course_id']):
             return
@@ -477,14 +296,8 @@ def addOutcomeToCourse (targetCourseDataDict
 
         ## If there is a parent course id
         if (
-            pd.notna(
-                targetCourseDataDict[
-                    'Parent_Course_sis_id'
-                    ]
-                ) 
-            and targetCourseDataDict[
-                'Parent_Course_sis_id'
-                ] != ""
+            pd.isna(targetCourseDataDict["Parent_Course_sis_id"]) 
+            and targetCourseDataDict["Parent_Course_sis_id"] not in ["", None]
             ):
 
                 ## Define the target course sis id as the parent course id
@@ -497,24 +310,24 @@ def addOutcomeToCourse (targetCourseDataDict
             targetCourseSisId = targetCourseDataDict['course_id']
             
         ## Log the start of the process
-        logger.info("\n     Course:" + targetCourseDataDict['course_id'])
+        localSetup.logger.info("\n     Course:" + targetCourseDataDict['course_id'])
 
-        ## Create the base and specific course API urls
-        baseCourseApiUrl = coreCanvasApiUrl + "courses/sis_course_id:" + targetCourseSisId
-        contentMigrationApiUrl = baseCourseApiUrl + "/content_migrations"
+        ## Create the base course API urls
+        baseCourseApiUrl = f"{coreCanvasApiUrl}courses/sis_course_id:{targetCourseSisId}"
+        # contentMigrationApiUrl = baseCourseApiUrl + "/content_migrations"
         
-        ## Make a content migration API call to find out what content has already been copied to the course
-        courseMigrationsObject = makeApiCall (p1_header = p1_header, p1_apiUrl = contentMigrationApiUrl)
+        # ## Make a content migration API call to find out what content has already been copied to the course
+        # courseMigrationsObject, _ = makeApiCall(localSetup, p1_apiUrl=contentMigrationApiUrl)
         
-        ## If the API status code is anything other than 200 it is an error, so log it and skip
-        if (courseMigrationsObject.status_code != 200):
-            logger.error("\nCourse Error: " + str(courseMigrationsObject.status_code))
-            logger.error(contentMigrationApiUrl)
-            logger.error(courseMigrationsObject.url)
-            return
+        # ## If the API status code is anything other than 200 it is an error, so log it and skip
+        # if (courseMigrationsObject.status_code != 200):
+        #     localSetup.logger.error("\nCourse Error: " + str(courseMigrationsObject.status_code))
+        #     localSetup.logger.error(contentMigrationApiUrl)
+        #     localSetup.logger.error(courseMigrationsObject.url)
+        #     return
         
-        ## If the API status code is 200, save the result as courseMigrations
-        courseMigrations = courseMigrationsObject.json()
+        # ## If the API status code is 200, save the result as courseMigrations
+        # courseMigrations = courseMigrationsObject.json()
         
         ## For each outcome in the targetCourseDataDict
         for outcome in outcomeKeys:
@@ -523,88 +336,188 @@ def addOutcomeToCourse (targetCourseDataDict
             if pd.isna(targetCourseActiveOutcomeCourseDataDict[outcome]) or not targetCourseActiveOutcomeCourseDataDict[outcome] or not outcome or pd.isna(outcome):
                 continue
 
-            ## Get the canvas course id from the outcomeCourseDict
-            outcomeCourseCanvasId = auxillaryDFDict[
-                "Outcome Course Dict"
+            ## Get the outcome canvas data dict from the auxillary df dict
+            outcomeCanvasData = auxillaryDFDict[
+                "Outcome Canvas Data Dict"
                 ][
                     targetCourseActiveOutcomeCourseDataDict[
                         outcome
                         ]
                     ]
+
+            ## Define the API url to get the outcome groups of the course
+            courseOutcomeGroupsApiUrl = f"{baseCourseApiUrl}/outcome_groups"
+
+            ## Make the API call to get the outcome groups of the course
+            courseOutcomeGroupsObject, _ = makeApiCall(localSetup, p1_apiUrl=courseOutcomeGroupsApiUrl)
+
+            ## If the API status code is anything other than 200 it is an error, so log it and skip
+            if (courseOutcomeGroupsObject.status_code != 200):
+                localSetup.logger.error("\nCourse Error: " + str(courseOutcomeGroupsObject.status_code))
+                localSetup.logger.error(courseOutcomeGroupsApiUrl)
+                localSetup.logger.error(courseOutcomeGroupsObject.url)
+                continue
+
+            ## Define a variable to hold the whether the course already has the outcome group and another to hold its canvas id
+            outcomeGroupAlreadyInCourse = False
+            outcomeGroupCanvasIdInCourse = None
+
+            ## Define a variable to hold the outcome group id of the course itself in case the outcome group needs to be added to the course
+            courseOutcomeGroupCanvasId = None
+
+            ## For each outcome group in the course outcome groups object
+            for courseOutcomeGroup in courseOutcomeGroupsObject.json():
+                
+                ## If the title contains the target sis id 
+                if targetCourseSisId in courseOutcomeGroup['title']:
+                    ## Set the course outcome group canvas id to the id of the outcome group
+                    courseOutcomeGroupCanvasId = courseOutcomeGroup['id']
+                    if outcomeCanvasData["Outcome Group is Root Account"]:
+                        outcomeGroupAlreadyInCourse = True
+                        outcomeGroupCanvasIdInCourse = courseOutcomeGroup['id']
+
+
+                ## Else if the the title is equal to the outcome group title from the outcome canvas data dict
+                elif courseOutcomeGroup['title'] == outcomeCanvasData["Outcome Group Title"] or courseOutcomeGroup['title'] == outcomeCanvasData["Outcome Group Id"]:
+                    ## Set the outcome group already in course variable to true
+                    outcomeGroupAlreadyInCourse = True
+                    outcomeGroupCanvasIdInCourse = courseOutcomeGroup['id']
+                    ## Break out of the loop
+                    break
+
+            if courseOutcomeGroupCanvasId is None:
+                rootOutcomeGroupApiUrl = f"{baseCourseApiUrl}/root_outcome_group"
+
+                rootOutcomeGroupObject, _ = makeApiCall(localSetup, p1_apiUrl=rootOutcomeGroupApiUrl)
+
+                if (rootOutcomeGroupObject.status_code != 200):
+                    localSetup.logger.error("\nCourse Error: " + str(rootOutcomeGroupObject.status_code))
+                    localSetup.logger.error(rootOutcomeGroupApiUrl)
+                    localSetup.logger.error(rootOutcomeGroupObject.url)
+                    continue
+
+                courseOutcomeGroupCanvasId = rootOutcomeGroupObject.json()['id']
+
+            ## If the outcome group is not already in the course
+            if not outcomeGroupAlreadyInCourse:
+
+                ## Define the API url to add the outcome group to the course using the course outcome group canvas id
+                addOutcomeGroupToCourseApiUrl = f"{baseCourseApiUrl}/outcome_groups/{courseOutcomeGroupCanvasId}/import"
+
+                ## Define the API payload to add the outcome group to the course
+                addOutcomeGroupToCourseApiPayload = {
+                    "source_outcome_group_id": outcomeCanvasData["Outcome Group Id"],
+                    }
+
+                ## Make the API call to add the outcome group to the course
+                addOutcomeGroupToCourseObject, _ = makeApiCall(
+                    localSetup, 
+                    p1_apiUrl=addOutcomeGroupToCourseApiUrl, 
+                    p1_payload=addOutcomeGroupToCourseApiPayload, 
+                    p1_apiCallType="post"
+                    )
+
+                ## If the API status code is anything other than 200 it is an error, so log it and skip
+                if (addOutcomeGroupToCourseObject.status_code != 200):
+                    localSetup.logger.error("\nCourse Error: " + str(addOutcomeGroupToCourseObject.status_code))
+                    localSetup.logger.error(addOutcomeGroupToCourseApiUrl)
+                    localSetup.logger.error(addOutcomeGroupToCourseObject.url)
+                    continue
+
+                ## Log the fact that the outcome group has been added to the course
+                localSetup.logger.info(f"\n {targetCourseSisId} has been added outcome group {outcomeCanvasData['Outcome Group Title']}")
+
+                ## Retrieve the ooutcomeGroupCanvasIdInCourse from the API call response
+                outcomeGroupCanvasIdInCourse = addOutcomeGroupToCourseObject.json()['id']
+
+            ## Define the API url to add the outcome to the course outcome group
+            addOutcomeToCourseApiUrl = f"{baseCourseApiUrl}/outcome_groups/{outcomeGroupCanvasIdInCourse}/outcomes/{outcomeCanvasData['Outcome Canvas Id']}"
+
+            ## Make the API call to add the outcome to the course
+            addOutcomeToCourseObject, _ = makeApiCall(localSetup, p1_apiUrl=addOutcomeToCourseApiUrl, p1_apiCallType="put")
+
+            ## If the API status code is anything other than 200 it is an error, so log it and skip
+            if (addOutcomeToCourseObject.status_code != 200):
+                localSetup.logger.error("\nCourse Error: " + str(addOutcomeToCourseObject.status_code))
+                localSetup.logger.error(addOutcomeToCourseApiUrl)
+                localSetup.logger.error(addOutcomeToCourseObject.url)
+                continue
+
+            ## Log the fact that the outcome has been added to the course
+            localSetup.logger.info(f"\n {targetCourseSisId} has had outcome {targetCourseActiveOutcomeCourseDataDict[outcome]} added")
             
             ## If a migration that has settings has the outcome name in the migration's setting's source course name and has a status of completed
-            if any([migration['settings']['source_course_id'] == outcomeCourseCanvasId and migration['workflow_state'] == 'completed' for migration in courseMigrations if 'settings' in migration.keys()]):
+            # if any([migration['settings']['source_course_id'] == outcomeCourseCanvasId and migration['workflow_state'] == 'completed' for migration in courseMigrations if 'settings' in migration.keys()]):
 
-                ## Log the fact that the outcome has already been copied in
-                logger.info(f"\n {targetCourseSisId} already has {targetCourseActiveOutcomeCourseDataDict[outcome]}")
+            #     ## Log the fact that the outcome has already been copied in
+            #     localSetup.logger.info(f"\n {targetCourseSisId} already has {targetCourseActiveOutcomeCourseDataDict[outcome]}")
 
-                ## Skip to the next outcome
-                continue
+            #     ## Skip to the next outcome
+            #     continue
 
             ## Create the API Payload from the outcome sis id
-            payload = {'migration_type': 'course_copy_importer', 'settings[source_course_id]': [outcomeCourseCanvasId], 'selective_import': True}
+            #payload = {'migration_type': 'course_copy_importer', 'settings[source_course_id]': [outcomeCourseCanvasId], 'selective_import': True}
                 
             ## Make the API call and save the result as course_object
-            #courseCopyObject = requests.post(contentMigrationApiUrl, headers = header, params = payload)
-            courseCopyObject = makeApiCall (p1_header = p1_header, p1_apiUrl = contentMigrationApiUrl, p1_payload = payload, apiCallType = "post")
+            # courseCopyObject, _ = makeApiCall(localSetup, p1_apiUrl=contentMigrationApiUrl, p1_payload=payload, p1_apiCallType="post")
             
-            ## Turn the text of the API call into a json object
-            courseCopy = courseCopyObject.json()
+            # ## Turn the text of the API call into a json object
+            # courseCopy = courseCopyObject.json()
 
-            ## Define the list items endpoint api url using the migration id
-            listSelectiveImportItemsApiUrl = f"{contentMigrationApiUrl}/{courseCopy['id']}/selective_data"
+            # ## Define the list items endpoint api url using the migration id
+            # listSelectiveImportItemsApiUrl = f"{contentMigrationApiUrl}/{courseCopy['id']}/selective_data"
 
-            ## Make a get request to the list items endpoint
-            listSelectiveImportItemsObject = requests.get(listSelectiveImportItemsApiUrl, headers = p1_header)
+            # ## Make a get request to the list items endpoint
+            # listSelectiveImportItemsObject, _ = makeApiCall(localSetup, p1_apiUrl=listSelectiveImportItemsApiUrl)
 
-            ## If the API status code is anything other than 200 it is an error, so log it and skip
-            if (listSelectiveImportItemsObject.status_code != 200):
-                logger.error("\nCourse Error: " + str(listSelectiveImportItemsObject.status_code))
-                logger.error(listSelectiveImportItemsApiUrl)
-                logger.error(listSelectiveImportItemsObject.url)
-                continue
+            # ## If the API status code is anything other than 200 it is an error, so log it and skip
+            # if (listSelectiveImportItemsObject.status_code != 200):
+            #     localSetup.logger.error("\nCourse Error: " + str(listSelectiveImportItemsObject.status_code))
+            #     localSetup.logger.error(listSelectiveImportItemsApiUrl)
+            #     localSetup.logger.error(listSelectiveImportItemsObject.url)
+            #     continue
             
-            ## Turn the text of the API call into a json object
-            listSelectiveImportItems = listSelectiveImportItemsObject.json()
+            # ## Turn the text of the API call into a json object
+            # listSelectiveImportItems = listSelectiveImportItemsObject.json()
 
-            ## Find the list item that has the learning_outcomes as the value of the type key
-            learningOutcomesListItem = [item for item in listSelectiveImportItems if item['type'] == 'learning_outcomes'][0]
+            # ## Find the list item that has the learning_outcomes as the value of the type key
+            # learningOutcomesListItem = [item for item in listSelectiveImportItems if item['type'] == 'learning_outcomes'][0]
 
-            ## Save the value of the property key of the learning_outcomes list item as as the selected import item
-            selectedImportItem = learningOutcomesListItem['property']
+            # ## Save the value of the property key of the learning_outcomes list item as as the selected import item
+            # selectedImportItem = learningOutcomesListItem['property']
 
-            ## Define a payload with the selected import item = 1
-            updateContentMigrationApiPayload = {selectedImportItem: 1}
+            # ## Define a payload with the selected import item = 1
+            # updateContentMigrationApiPayload = {selectedImportItem: 1}
 
-            ## Define the update content migration api url using the course copy id
-            updateContentMigrationApiUrl = f"{contentMigrationApiUrl}/{courseCopy['id']}"
+            # ## Define the update content migration api url using the course copy id
+            # updateContentMigrationApiUrl = f"{contentMigrationApiUrl}/{courseCopy['id']}"
 
-            ## Make a put request to the update content migration api url with the update content migration api payload
-            updateContentMigrationObject = requests.put(updateContentMigrationApiUrl, headers = p1_header, params = updateContentMigrationApiPayload)
+            # ## Make a put request to the update content migration api url with the update content migration api payload
+            # updateContentMigrationObject, _ = makeApiCall(localSetup, p1_apiUrl=updateContentMigrationApiUrl, p1_payload=updateContentMigrationApiPayload, p1_apiCallType="put")
 
-            ## If the API status code is anything other than 200 it is an error, so log it and skip
-            if (updateContentMigrationObject.status_code != 200):
-                logger.error("\nCourse Error: " + str(updateContentMigrationObject.status_code))
-                logger.error(updateContentMigrationApiUrl)
-                logger.error(updateContentMigrationObject.url)
-                continue
+            # ## If the API status code is anything other than 200 it is an error, so log it and skip
+            # if (updateContentMigrationObject.status_code != 200):
+            #     localSetup.logger.error("\nCourse Error: " + str(updateContentMigrationObject.status_code))
+            #     localSetup.logger.error(updateContentMigrationApiUrl)
+            #     localSetup.logger.error(updateContentMigrationObject.url)
+            #     continue
 
-            ## Log the fact that the outcome has been copied in
-            logger.info(f"\n {targetCourseSisId} has {targetCourseActiveOutcomeCourseDataDict[outcome]}")
+            # ## Log the fact that the outcome has been copied in
+            # localSetup.logger.info(f"\n {targetCourseSisId} has {targetCourseActiveOutcomeCourseDataDict[outcome]}")
 
 
 
-    except Exception as error:
-        error_handler (functionName, error)
+    except Exception as Error:
+        errorHandler.sendError (functionName, Error)
 
 ## This function removes any outcomes that don't have corresponding courses
-def removeMissingOutcomes (p1_activeOutcomeCourseDf, p1_uniqueOutcomes, p1_outcomeCourseDict):
+def removeMissingOutcomes (p1_activeOutcomeCourseDf, p1_uniqueOutcomes, p1_outcomeCanvasDataDict):
     functionName = "Remove Missing Outcomes"
 
     try:
 
-        ## Get a list of all unique outcomes that are not in the keys of the outcomeCourseDict
-        missingOutcomes = [outcome for outcome in p1_uniqueOutcomes if outcome not in p1_outcomeCourseDict.keys()]
+        ## Get a list of all unique outcomes that are not in the keys of the outcomeCanvasDataDict
+        missingOutcomes = [outcome for outcome in p1_uniqueOutcomes if outcome not in p1_outcomeCanvasDataDict.keys()]
         
         ## If there are missing outcomes
         if missingOutcomes:
@@ -625,7 +538,7 @@ def removeMissingOutcomes (p1_activeOutcomeCourseDf, p1_uniqueOutcomes, p1_outco
                         p1_activeOutcomeCourseDf.loc[index, outcome] = ""
 
                         ## Send an error email about the missing outcome
-                        error_handler (f"External Input Error: {functionName}", f"Outcome Missing Import Course: {row[outcome]}")
+                        errorHandler.sendError (f"External Input Error: {functionName}", f"Outcome Missing Import Course: {row[outcome]}")
                         
                 ## If all outcome values in the row are blank strings
                 if all([pd.isna(row[outcome]) for outcome in outcomesColumns]):
@@ -636,109 +549,272 @@ def removeMissingOutcomes (p1_activeOutcomeCourseDf, p1_uniqueOutcomes, p1_outco
         ## Return the active outcome course df
         return p1_activeOutcomeCourseDf
     
-    except Exception as error:
-        error_handler (functionName, error)
+    except Exception as Error:
+        errorHandler.sendError (functionName, Error)
 
 ## This function returns a dict with the course id of the course named after each outcome
-def getUniqueOutcomesAndOutcomeCoursesDict (p1_activeOutcomeCourseDf, p2_header):
+def getUniqueOutcomesAndOutcomeCoursesDict (p3_inputTerm, p1_activeOutcomeCourseDf, p4_targetDesignator):
     functionName = "Get Unique Outcomes And Outcome Courses Dict"
     
     try:
 
         ## Make a df with one collumn where all outcome columns that don't have area in the name are stacked
-        outcomesDF = p1_activeOutcomeCourseDf[[col for col in p1_activeOutcomeCourseDf.columns if "Outcome" in col and "Area" not in col]].stack().reset_index(drop=True)
+        targetOutcomesDF = p1_activeOutcomeCourseDf[[col for col in p1_activeOutcomeCourseDf.columns if "Outcome" in col and "Area" not in col]].stack().reset_index(drop=True)
         
         ## Make a list of the unique outcomes that are not blank
-        uniqueOutcomes = [outcome for outcome in outcomesDF.unique() if outcome]
+        uniqueTargetOutcomes = [outcome for outcome in targetOutcomesDF.unique() 
+                          if (
+                              pd.notna(outcome)
+                              and str(outcome).strip() not in ("", "nan", "none", "NaN", "None")
+                              )
+                          ]
 
-        ## Open the relevant All_Canvas_Courses.csv as a df
-        allCanvasCoursesDF = pd.read_csv(createCoursesCSV(p2_header, p1_inputTerm = "All"))
-        
-        ## Replace all '​' in the long_name column with ''
-        allCanvasCoursesDF['long_name'] = allCanvasCoursesDF['long_name'].str.replace('​', '')
+        ## Retrieve the Automated Outcome Tool Variables excel file as a df    
+        automatedOutcomeToolVariablesDf = pd.read_excel(
+            os.path.join(
+                localSetup.getExternalResourcePath("TLC"), 
+                "Automated Outcome Tool Variables.xlsx"
+                )
+        )
 
-        ## Make a dict to hold the course id of the course named after each outcome
-        outcomeCourseDict = {}
-        
-        ## For each outcome in the unique outcomes list
-        for outcome in uniqueOutcomes:
-            
-            ## Define a variable to hold the courseIndex
-            courseIndex = None
+        ## Get the account name associated with the target designator
+        targetAccountName = automatedOutcomeToolVariablesDf.loc[
+            automatedOutcomeToolVariablesDf["Target Designator"] == p4_targetDesignator, 
+            "Outcome Location Account Name"
+            ].values[0]
 
-            try: ## Irregular try clause, do not comment out in testing
+        ## Open the p4_targetDesignator relevant outcome df
+        targetDesignatorCanvasOutcomeDf = CanvasReport.getOutcomesDf(localSetup, p3_inputTerm, targetAccountName, p4_targetDesignator)
 
-                ## Make a list of the indexes where the long_name column is equal to the outcome (there should only be 1)
-                courseIndexSearch = allCanvasCoursesDF[allCanvasCoursesDF['long_name'] == outcome].index
+        ## Open the accounts df
+        accountsDf = CanvasReport.getAccountsDf(localSetup)
 
-                ## If the courseIndexs is not empty
-                if not courseIndexSearch.empty:
+        ## Get the target account id from the accounts df using the target account name
+        targetCanvasAccountId = (
+            1 if targetAccountName == "NNU"
+            else accountsDf.loc[accountsDf["name"] == targetAccountName, "canvas_account_id"].values[0]
+            )
 
-                    ## Get the first index from the courseIndexSearch
-                    courseIndex = courseIndexSearch[0]
+        ## Define a dict to hold tail of the api url to add the outcome to a course
+        uniqueOutcomesCanvasData = {}
 
-            
-                ## Set the courseIndex to the index of the course with the outcome as the long name
-                courseIndex = allCanvasCoursesDF[allCanvasCoursesDF['long_name'] == outcome].index[0]
-            
-            ## If no course is found with the outcome as the long name
-            except: ## Irregular except clause, do not comment out in testing
+        ## For each outcome in the unique target outcomes list
+        for outcome in uniqueTargetOutcomes:
+
+            ## Get the index of the outcome from the title column of the targetDesignatorCanvasOutcomeDf
+            outcomeIndexSearch = targetDesignatorCanvasOutcomeDf[targetDesignatorCanvasOutcomeDf['title'] == outcome].index
+
+            ## If the outcomeIndexs is empty
+            if outcomeIndexSearch.empty:
                 
-                ## Make a list of the indexes where the short_name column is equal to the outcome (there should only be 1)
-                courseIndexeSearch = allCanvasCoursesDF[allCanvasCoursesDF['short_name'] == outcome].index
-
-                ## If the courseIndexs is not empty
-                if not courseIndexeSearch.empty:
-
-                    ## Get the first index from the courseIndexSearch
-                    courseIndex = courseIndexeSearch[0]
-                
-            ## Finally
-            finally:
-
-                ## If there is still no course index
-                if courseIndex == None:
-
-                    ## Log the fact that the course was not found
-                    logger.error(f"\nOutcome not found: {outcome}")
+                ## Log the fact that the outcome was not found
+                localSetup.logger.error(f"\nOutcome not found: {outcome}")
                     
-                    ## Email the fact that the course was not found
-                    error_handler (f"External Input Error: {functionName}", f"Outcome course not found: {outcome}")
+                ## Email the fact that the outcome was not found
+                errorHandler.sendError (f"External Input Error: {functionName}", f"Outcome not found: {outcome}")
+                ## Skip to the next outcome
+                continue
 
-                    ## Skip to the next outcome
-                    continue
-                
-            ## Use the course index to get the canvas course id from the course with the outcome as the name
-            courseCanvasId = allCanvasCoursesDF.loc[courseIndex, 'canvas_course_id']
-                
-            ## Add the course id to the outcomeCourseDict
-            outcomeCourseDict[outcome] = courseCanvasId
+            ## Use the outcome index to get the vendor_guid from the outcome with the outcome as the title
+            outcomeParentGuid = targetDesignatorCanvasOutcomeDf.loc[outcomeIndexSearch[0], 'parent_guids']
 
-        ## Return the outcomeCourseDict
-        return uniqueOutcomes, outcomeCourseDict    
+            ## Define the API url to add the outcome to the course using the target canvas account id 
+            ## and the outcome parent guid and outcome vendor guid
+            outcomeGroupsApiUrl = f"{coreCanvasApiUrl}accounts/{targetCanvasAccountId}/outcome_groups"
+
+            ## Make an API call to get the outcome groups in the target account
+            outcomeGroupsObject, outcomeGroupsObjectList = makeApiCall(localSetup, p1_apiUrl=outcomeGroupsApiUrl)
+
+            ## If the API status code is anything other than 200 it is an error, so log it and skip`
+            if (outcomeGroupsObject.status_code != 200):
+                localSetup.logger.error("\nCourse Error: " + str(outcomeGroupsObject.status_code))
+                localSetup.logger.error(outcomeGroupsApiUrl)
+                localSetup.logger.error(outcomeGroupsObject.url)
+                continue
+
+            ## If the the api response was paginated a list of the responses will have been returned
+            outcomeGroupsJsonList = []
+            if outcomeGroupsObjectList:
+                ## Paginated: flatten all pages
+                outcomeGroupsJsonList = flattenApiObjectToJsonList(
+                    localSetup,
+                    outcomeGroupsObjectList,
+                    outcomeGroupsApiUrl
+                )
+            else:
+                ## Non-paginated: just use the single response's json
+                singlePageData = outcomeGroupsObject.json()
+                if isinstance(singlePageData, list):
+                    outcomeGroupsJsonList = singlePageData
+                else:
+                    outcomeGroupsJsonList = [singlePageData]
+
+
+            ## Define a variable to hold the outcome group Canvas id
+            outcomeGroupCanvasId = None
+
+            ## For each outcome group in the outcome groups json list
+            for outcomeGroup in outcomeGroupsJsonList:
+                
+                ## If the outcomeParentGuid is nan
+                if (
+                    pd.isna(outcomeParentGuid) 
+                    or not outcomeParentGuid 
+                    or str(outcomeParentGuid).strip() in ("", "nan", "none", "NaN", "None")
+                    ):
+                    ## The outcome is in the root outcome group, so test if the title is equal to the target account name
+                    if outcomeGroup['title'] == targetAccountName:
+                        ## Set the outcome group canvas id to the id of the outcome group
+                        outcomeGroupCanvasId = outcomeGroup['id']
+                        ## Break out of the loop
+                        break
+                
+                ## If the outcome group's vendor guid is equal to the outcome parent guid
+                if outcomeGroup['vendor_guid'] == outcomeParentGuid:
+                    ## Set the outcome group canvas id to the id of the outcome group
+                    outcomeGroupCanvasId = outcomeGroup['id']
+                    ## Break out of the loop
+                    break
+
+            ## Define an outcome api url by tagging on the outcome group canvas id 
+            ## and /outcomes to the end of the outcome groups api url
+            outcomesApiUrl = f"{outcomeGroupsApiUrl}/{outcomeGroupCanvasId}/outcomes"
+
+            ## Make an API call to the outcomes api url to get the outcomes in the outcome group
+            outcomesObjects, _ = makeApiCall(localSetup, p1_apiUrl=outcomesApiUrl)
+
+            ## If the API status code is anything other than 200 it is an error, so log it and skip
+            if (outcomesObjects.status_code != 200):
+                localSetup.logger.error("\nCourse Error: " + str(outcomesObjects.status_code))
+                localSetup.logger.error(outcomesApiUrl)
+                localSetup.logger.error(outcomesObjects.url)
+                continue
+
+            ## Use the outcome index to get the vendor_guid from the outcome with the outcome as the title
+            outcomeVendorGuid = targetDesignatorCanvasOutcomeDf.loc[outcomeIndexSearch[0], 'vendor_guid']
+
+            ## Define a variable to hold the outcome canvas id
+            outcomeCanvasId = None
+
+            ## For each outcome in the outcomes object
+            for outcomeData in [
+                outcomeObject["outcome"] 
+                for outcomeObject in outcomesObjects.json() 
+                if "outcome" in outcomeObject
+                ]:
+                ## If the outcome's vendor guid is equal to the outcome vendor guid
+                ## Or if the outcomeData id is equal to the outcome vendor guid when split by ':'
+                if (
+                    outcomeData['vendor_guid'] == outcomeVendorGuid 
+                    or str(outcomeData["id"]) == str(outcomeVendorGuid.split(':')[1])
+                    ):
+                    ## Set the outcome canvas id to the id of the outcome
+                    outcomeCanvasId = outcomeData['id']
+                    ## Break out of the loop
+                    break
+
+            ## If the outcome canvas id is not found
+            if outcomeCanvasId is None:
+                ## Log the fact that the outcome was not found in the outcome group
+                localSetup.logger.error(f"\nOutcome not found in outcome group: {outcome}")
+                    
+                ## Email the fact that the outcome was not found in the outcome group
+                errorHandler.sendError (f"External Input Error: {functionName}", f"Outcome not found in outcome group: {outcome}")
+                ## Skip to the next outcome
+                continue
+
+            ## Use the outcome Parent guide to find the index of the outcome group 
+            ## with the same parent guid in the outcome groups object for the target account
+            outcomeGroupIndexSearch = (
+                targetDesignatorCanvasOutcomeDf[targetDesignatorCanvasOutcomeDf['vendor_guid'] == outcomeParentGuid].index
+                )
+
+            ## Use the outcome group index to get the outcome group title 
+            ## from the outcome group column in the targetDesignatorCanvasOutcomeDf
+            outcomeGroupTitle = (
+                targetAccountName if str(outcomeParentGuid).strip() == "nan" 
+                else targetDesignatorCanvasOutcomeDf.loc[outcomeGroupIndexSearch[0], 'title']
+                )
+
+            ## Make a dict for the outcome with the outcome group title and outcome canvas id
+            uniqueOutcomesCanvasData[outcome] = {
+                "Outcome Group Title": outcomeGroupTitle,
+                "Outcome Canvas Id": outcomeCanvasId,
+                "Outcome Group Id": outcomeGroupCanvasId,
+                "Outcome Group is Root Account" : True if outcomeGroupTitle == targetAccountName else False
+            }
+
+
+        return uniqueTargetOutcomes, uniqueOutcomesCanvasData
+
+        # ## Make a dict to hold the course id of the course named after each outcome
+        # outcomeCanvasDataDict = {}
+        
+        # ## For each outcome in the unique outcomes list
+        # for outcome in uniqueOutcomes:
+            
+        #     ## Define a variable to hold the courseIndex
+        #     courseIndex = None
+
+        #     try: ## Irregular try clause, do not comment out in testing
+
+        #         ## Make a list of the indexes where the long_name column is equal to the outcome (there should only be 1)
+        #         courseIndexSearch = allCanvasCoursesDF[allCanvasCoursesDF['long_name'] == outcome].index
+
+        #         ## If the courseIndexs is not empty
+        #         if not courseIndexSearch.empty:
+
+        #             ## Get the first index from the courseIndexSearch
+        #             courseIndex = courseIndexSearch[0]
+
+            
+        #         ## Set the courseIndex to the index of the course with the outcome as the long name
+        #         courseIndex = allCanvasCoursesDF[allCanvasCoursesDF['long_name'] == outcome].index[0]
+            
+        #     ## If no course is found with the outcome as the long name
+        #     except: ## Irregular except clause, do not comment out in testing
+                
+        #         ## Make a list of the indexes where the short_name column is equal to the outcome (there should only be 1)
+        #         courseIndexeSearch = allCanvasCoursesDF[allCanvasCoursesDF['short_name'] == outcome].index
+
+        #         ## If the courseIndexs is not empty
+        #         if not courseIndexeSearch.empty:
+
+        #             ## Get the first index from the courseIndexSearch
+        #             courseIndex = courseIndexeSearch[0]
+                
+        #     ## Finally
+        #     finally:
+
+        #         ## If there is still no course index
+        #         if courseIndex is None:
+
+        #             ## Log the fact that the course was not found
+        #             localSetup.logger.error(f"\nOutcome not found: {outcome}")
+                    
+        #             ## Email the fact that the course was not found
+        #             errorHandler.sendError (f"External Input Error: {functionName}", f"Outcome course not found: {outcome}")
+
+        #             ## Skip to the next outcome
+        #             continue
+                
+        #     ## Use the course index to get the canvas course id from the course with the outcome as the name
+        #     courseCanvasId = allCanvasCoursesDF.loc[courseIndex, 'canvas_course_id']
+                
+        #     ## Add the course id to the outcomeCanvasDataDict
+        #     outcomeCanvasDataDict[outcome] = courseCanvasId
+
+        # ## Return the outcomeCanvasDataDict
+        # return uniqueOutcomes, outcomeCanvasDataDict    
     
-    except Exception as error:
-        error_handler (functionName, error)
+    except Exception as Error:
+        errorHandler.sendError (functionName, Error)
 
 # This function checks whether a term's outcome courses have their associated outcomes and adds them if they don't
 def termOutcomeExporter(p1_inputTerm, p1_targetDesignator):
     functionName = "outcome_exporter"
 
     try:    
-
-        ## Define the API Call header using the retreived Canvas Token
-        header = {'Authorization' : f"Bearer {canvasAccessToken}"}
-
-        ## Define the target school year
-        targetSchoolYear = None
-
-        ## Define the current school year by whether it is before or during/after september
-        if re.search("AF|FA|GF", p1_inputTerm):
-            ## Fall terms are the first terms of a new school year so FA20 is part of the 2020-21 school year.
-            targetSchoolYear = f"{century}{p1_inputTerm[2:]}-{int(p1_inputTerm[2:]) + 1}"
-        if re.search("SP|GS|AS|SG|SA|SU", p1_inputTerm):
-            ## Spring and Summer terms belong in the same school year as the fall terms before them, so SP21 is part of thZe same 2020-21 school year as FA20.
-            targetSchoolYear = f"{century}{int(p1_inputTerm[2:]) - 1}-{p1_inputTerm[2:]}"
 
         ## Make a list to hold the active add outcome threads
         activeThreads = []
@@ -748,7 +824,6 @@ def termOutcomeExporter(p1_inputTerm, p1_targetDesignator):
             retrieveDataForRelevantCommunication(
                 p2_inputTerm = p1_inputTerm
                 , p3_targetDesignator = p1_targetDesignator
-                , p1_header = header
                 )
             )
 
@@ -756,7 +831,7 @@ def termOutcomeExporter(p1_inputTerm, p1_targetDesignator):
         if completeActiveCanvasCoursesDF.empty:
 
             ## Log the fact that there are no active courses
-            logger.info(f"\nNo {p1_targetDesignator} active courses within {p1_inputTerm}")
+            localSetup.logger.info(f"\nNo {p1_targetDesignator} active courses within {p1_inputTerm}")
 
             ## Return
             return
@@ -770,7 +845,6 @@ def termOutcomeExporter(p1_inputTerm, p1_targetDesignator):
             addOutcomeThread = threading.Thread(target=addOutcomeToCourse
                                                 , args=(row
                                                         , auxillaryDFDict
-                                                        , header
                                                         )
                                                 )
             
@@ -786,8 +860,8 @@ def termOutcomeExporter(p1_inputTerm, p1_targetDesignator):
             ## Wait for the thread to finish
             thread.join()    
      
-    except Exception as error:
-        error_handler (functionName, error)
+    except Exception as Error:
+        errorHandler.sendError (functionName, Error)
 
 if __name__ == "__main__":
 

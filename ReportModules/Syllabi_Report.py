@@ -1,22 +1,15 @@
-# Author: Bryce Miller - brycezmiller@nnu.edu
-# Last Updated by: Bryce Miller
+## Author: Bryce Miller - brycezmiller@nnu.edu
+## Last Updated by: Bryce Miller
 
 ## Import Generic Moduels
-
 import traceback, os, sys, logging, csv, requests, json, pdfkit, re, os, shutil, os.path, re, threading, time
 from datetime import date
 import pandas as pd
 
-## Set working directory
-os.chdir(os.path.dirname(__file__))
-
-## Add Script repository to syspath
-sys.path.append(f"{os.getcwd()}\ResourceModules")
-
-# Define the script name, purpose, and external requirements for logging and error reporting purposes
+## Define the script name, purpose, and external requirements for logging and error reporting purposes
 scriptName = "Syllabi Report"
 
-# Script file identifier
+## Script file identifier
 scriptRequirementMissingFolderIdentifier = "Missing_Syllabi"
 
 scriptPurpose = r"""
@@ -28,73 +21,14 @@ To function properly, this script requires that syllabi be placed in the Canvas 
 If the syllabus is in a document, the document needs to have "Syllabus" in the file title (which can only be changed prior to the file being uploaded to Canvas).
 """
 
-
-# Time variablesff
-currentDate = date.today()
-currentMonth = currentDate.month
-currentYear = currentDate.year
-lastYear = currentYear - 1
-nextYear = currentYear + 1
-century = str(currentYear)[:2]
-decade = str(currentYear)[2:]
-
-#pdfkit (which enables the script to convert html code into .pdf and save it) needs to access wkhtmltopdf.exe which is easier if it has a direct path configured instead of :ing to find it generally
-path_wkhtmltopdf = r'C:\Program Files\wkhtmltopdf\bin\wkhtmltopdf.exe' #This is the default location of wkhtmltopdf.exe and would need to be changed if the default installation location for wkhtmltopdf was edited.
+##pdfkit (which enables the script to convert html code into .pdf and save it) needs to access wkhtmltopdf.exe which is easier if it has a direct path configured instead of :ing to find it generally
+path_wkhtmltopdf = r'Program Files\wkhtmltopdf\bin\wkhtmltopdf.exe' ##This is the default location of wkhtmltopdf.exe and would need to be changed if the default installation location for wkhtmltopdf was edited.
 config = pdfkit.configuration(wkhtmltopdf=path_wkhtmltopdf)
 
-## Set working directory
-fileDir = os.path.dirname(__file__)
-os.chdir(fileDir)
-
-## The relative path is used to provide a generic way of finding where the Scripts TLC folder has been placed
-## This provides a non-script specific manner of finding the vaiours related modules
-PFRelativePath = r".\\"
-
-## If the Scripts TLC folder is not in the folder the PFRelative path points to
-## look for it in the next parent folder
-while "Scripts TLC" not in os.listdir(PFRelativePath):
-
-    PFRelativePath = f"..\\{PFRelativePath}"
-
-## Change the relative path to an absolute path
-PFAbsolutePath = f"{os.path.abspath(PFRelativePath)}\\"
-
-## Add Input Modules to the sys path
-sys.path.append(f"{PFAbsolutePath}Scripts TLC\\ResourceModules")
-
 ## Import local modules
-from Error_Email_API import errorEmailApi
 from Download_File import downloadFile
 from Core_Microsoft_Api import downloadSharedMicrosoftFile
-from Create_Sub_Account_Save_Path import determineDepartmentSavePath
 
-## Local Path Variables
-baseLogPath = f"{PFAbsolutePath}Logs\\{scriptName}\\"
-configPath = f"{PFAbsolutePath}\\Configs TLC\\"
-baseLocalInputPath = f"{PFAbsolutePath}Canvas Resources\\"
-
-## External Path Variables
-
-## Define a variable to hold the base external input path and output path 
-baseExternalOutputPath = None ## Where the output files are stored
-
-## Open Base_External_Paths.json from the config path and get the baseExternalInputPath and baseExternalOutputPath values
-with open (f"{configPath}Base_External_Paths.json", "r") as file:
-    fileJson = json.load(file)
-    baseExternalOutputPath = fileJson["baseTlcUniversitySyllabiDataExternalOutputPath"]
-
-## Canvas Instance Url
-coreCanvasApiUrl = None
-## Open the Core_Canvas_Url.txt from the config path
-with open (f"{configPath}Core_Canvas_Url.txt", "r") as file:
-    coreCanvasApiUrl = file.readlines()[0]
-
-## If the script is run as main the folder with the access token is in the parent directory
-canvasAccessToken = ""
-
-## Open and retrieve the Canvas Access Token
-with open (fr"{configPath}Canvas_Access_Token.txt", "r") as file:
-    canvasAccessToken = file.readlines()[0]
 
 ## List of courses that don't need a syllabus. Syllabi for such courses are still gathered but they are not listed in the missing_syllabi.csv
 list_of_courses_that_dont_need_syllabi = []
@@ -103,72 +37,6 @@ with open(f"{configPath}List_of_uneeded_syllabi.csv", 'r') as tempCsvFile:
     for row in tempcsvReader:
         list_of_courses_that_dont_need_syllabi.append(row['course_id'])
     tempCsvFile.close()
-
-#Primary API call header and payload
-header = {'Authorization' : 'Bearer ' + canvasAccessToken}
-payload = {'include[]': ['syllabus_body', 'term', 'account', 'teachers', 'sections', 'total_students']}
-
-## Begin logger set up
-
-## If the base log path doesn't already exist, create it
-if not (os.path.exists(baseLogPath)):
-    os.makedirs(baseLogPath, mode=0o777, exist_ok=False)
-
-## Log configurations
-logger = logging.getLogger(__name__)
-rootFormat = ("%(asctime)s %(levelname)s %(message)s")
-FORMAT = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-logging.basicConfig(format=rootFormat, filemode = "a", level=logging.INFO)
-
-## Info Log Handler
-infoLogFile = f"{baseLogPath}\\Info Log.txt"
-logInfo = logging.FileHandler(infoLogFile, mode = 'a')
-logInfo.setLevel(logging.INFO)
-logInfo.setFormatter(FORMAT)
-logger.addHandler(logInfo)
-
-## Warning Log handler
-warningLogFile = f"{baseLogPath}\\Warning Log.txt"
-logWarning = logging.FileHandler(warningLogFile, mode = 'a')
-logWarning.setLevel(logging.WARNING)
-logWarning.setFormatter(FORMAT)
-logger.addHandler(logWarning)
-
-## Error Log handler
-errorLogFile = f"{baseLogPath}\\Error Log.txt"
-logError = logging.FileHandler(errorLogFile, mode = 'a')
-logError.setLevel(logging.ERROR)
-logError.setFormatter(FORMAT)
-logger.addHandler(logError)
-
-## This variable enables the except function to only send
-## an error email the first time the function triggeres an error
-## by tracking what functions have already been recorded as having errors
-setOfFunctionsWithErrors = set()
-
-## This function handles function errors
-def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
-    functionName = "error_handler"
-
-    ## Log the error
-    logger.error (f"     \nA script error occured while running {p1_ErrorLocation}. " +
-                     f"Error: {str(p1_ErrorInfo)}")
-
-    ## If the function with the error has not already been processed send an email alert
-    if (p1_ErrorLocation not in setOfFunctionsWithErrors):
-        errorEmailApi.sendEmailError(p2_ScriptName = scriptName, p2_ScriptPurpose = scriptPurpose, 
-                                     p2_ExternalRequirements = externalRequirements, 
-                                     p2_ErrorLocation = p1_ErrorLocation, p2_ErrorInfo = f"{p1_ErrorInfo}: \n\n {traceback.format_exc()}")
-        
-        ## Add the function name to the set of functions with errors
-        setOfFunctionsWithErrors.add(p1_ErrorLocation)
-        
-        ## Note that an error email was sent
-        logger.error (f"     \nError Email Sent")
-    
-    ## Otherwise log the fact that an error email as already been sent
-    else:
-        logger.error (f"     \nError email already sent")
 
 ## This function clears the syllabi folders connected to the relavent terms
 def clearRelaventSyllabiFolders(inputTerm):
@@ -230,10 +98,10 @@ def clearRelaventSyllabiFolders(inputTerm):
                                     if "Other_Course_Files" not in item and "Missing_Syllabi" not in item:
                                         try: ## Irregular try clause, do not comment out in testing
                                             os.remove(firstLvlDepartmentTargetTermPath + item)
-                                            logger.info (item + " removed from " + firstLvlDepartmentTargetTermPath)
-                                        except Exception as error: ## Irregular except clause, do not comment out in testing
-                                            logger.info ("/n" + item + " not deleted due to error: " + str(error))
-                                logger.info ("Files cleared from " + firstLvlDepartmentTargetTermPath)
+                                            localSetup.logger.info (item + " removed from " + firstLvlDepartmentTargetTermPath)
+                                        except Exception as Error: ## Irregular except clause, do not comment out in testing
+                                            localSetup.logger.info ("/n" + item + " not deleted due to error: " + str(error))
+                                localSetup.logger.info ("Files cleared from " + firstLvlDepartmentTargetTermPath)
 
                         ## For non-wholistic colleges go down another folder level each
                         elif "Graduate" in firstLvlDepartment_folder_contents or "Undergraduate" in firstLvlDepartment_folder_contents:
@@ -266,10 +134,10 @@ def clearRelaventSyllabiFolders(inputTerm):
                                             if "Other_Course_Files" not in item and "Missing_Syllabi" not in item:
                                                 try: ## Irregular try clause, do not comment out in testing
                                                     os.remove(secondtLvlDepartmentTargetTermPath + item)
-                                                    logger.info (item + " removed from " + secondtLvlDepartmentTargetTermPath)
-                                                except Exception as error: ## Irregular except clause, do not comment out in testing
-                                                    logger.info ("/n" + item + " not deleted due to error: " + str(error))
-                                        logger.info ("Files cleared from " + secondtLvlDepartmentTargetTermPath)
+                                                    localSetup.logger.info (item + " removed from " + secondtLvlDepartmentTargetTermPath)
+                                                except Exception as Error: ## Irregular except clause, do not comment out in testing
+                                                    localSetup.logger.info ("/n" + item + " not deleted due to error: " + str(error))
+                                        localSetup.logger.info ("Files cleared from " + secondtLvlDepartmentTargetTermPath)
                                 else:
 
                                     ## Check for the presence of third level departments
@@ -304,12 +172,12 @@ def clearRelaventSyllabiFolders(inputTerm):
                                                         if "Other_Course_Files" not in item and "Missing_Syllabi" not in item:
                                                             try: ## Irregular try clause, do not comment out in testing
                                                                 os.remove(thirdtLvlDepartmentTargetTermPath + item)
-                                                                logger.info (item + " removed from " + thirdtLvlDepartmentTargetTermPath)
-                                                            except Exception as error: ## Irregular except clause, do not comment out in testing
-                                                                logger.info ("/n" + item + " not deleted due to error: " + str(error))
-                                                    logger.info ("Files cleared from " + thirdtLvlDepartmentTargetTermPath)
-    except Exception as error:
-        error_handler (functionName, error)
+                                                                localSetup.logger.info (item + " removed from " + thirdtLvlDepartmentTargetTermPath)
+                                                            except Exception as Error: ## Irregular except clause, do not comment out in testing
+                                                                localSetup.logger.info ("/n" + item + " not deleted due to error: " + str(error))
+                                                    localSetup.logger.info ("Files cleared from " + thirdtLvlDepartmentTargetTermPath)
+    except Exception as Error:
+        errorHandler.sendError (functionName, Error)
 
 """ 
  This fuction saves the course ID and other identifiers of the course in question.
@@ -374,8 +242,8 @@ def syllabiReportSaveCourseInfo(p1_save_location, p1_collegeReportLocation, p1_c
                 csvWriter.writerow({"courseName": p1_courseName, "Issue": issue, "Required Action": required_action, "Instructor Name": p1_instructor_name, "start_date": p1_start_date, "end_date": p1_end_date, "department": p1_department})
                 csvFile_2.close()
         return deptmentMissingRequirementCsv, collegeMissingRequirementCsv
-    except Exception as error:
-        error_handler (functionName, error)
+    except Exception as Error:
+        errorHandler.sendError (functionName, Error)
         return "", ""
 
 ## This function processes the urls found within the course syllabus tab and downloads course files and microsoft files
@@ -395,7 +263,7 @@ def process_url_matches (p1_all_url_matches, p2_courseName, p1_save_location):
         for element in p1_all_url_matches:
             ## Skip previously encountered URLs
             if (element in processed_urls):
-                logger.info("Link Skipped: Previously processed URL")
+                localSetup.logger.info("Link Skipped: Previously processed URL")
             ## URL has not been seen before - attempt to process it.
             else:
                 ## Creating a file_number out of the length of download_order when length is greater than 1 enables the script to differentiate
@@ -405,7 +273,7 @@ def process_url_matches (p1_all_url_matches, p2_courseName, p1_save_location):
                 file_number = ""
                 if download_number > 1:
                     file_number = "_" + str(download_number)
-                logger.info(f"\n     {p2_courseName}: {element}")
+                localSetup.logger.info(f"\n     {p2_courseName}: {element}")
                 processed_urls.add(str(element))
                 ## Check if the URL is to a course file
                 course_file = re.findall(r'courses/\d+/files/\d+', element)
@@ -417,7 +285,7 @@ def process_url_matches (p1_all_url_matches, p2_courseName, p1_save_location):
                 ## Skip previously processed files
                 if (course_file):
                     if (course_file[0] in processed_files):
-                        logger.info(f"\n     {p2_courseName} Link Skipped: Previously processed course file\
+                        localSetup.logger.info(f"\n     {p2_courseName} Link Skipped: Previously processed course file\
                         {str(course_file[0])}")
                     ## We have not yet downloaded this course file - attempt to download it.
                     else:
@@ -426,7 +294,7 @@ def process_url_matches (p1_all_url_matches, p2_courseName, p1_save_location):
                         file_object = requests.get(course_file_API_url, headers = header)
                         if not (file_object.status_code == 200):
                             ## Unable to fetch course file info from Canvas. API error.
-                            logger.info (f"     \n{p2_courseName} Course File Error: {str(file_object.status_code)}\
+                            localSetup.logger.info (f"     \n{p2_courseName} Course File Error: {str(file_object.status_code)}\
                                 {course_file_API_url}")
                         else:
                             ## Course File info was successfully fetched from Canvas.
@@ -436,14 +304,14 @@ def process_url_matches (p1_all_url_matches, p2_courseName, p1_save_location):
                             mime_class = file_jsonObject["mime_class"]
                             content_type = file_jsonObject["content-type"]
                             course_file_download_url = (file_jsonObject["url"])
-                            logger.info(f"\n     {p2_courseName} Course File: " + str(display_name))
+                            localSetup.logger.info(f"\n     {p2_courseName} Course File: " + str(display_name))
                             if ((re.search(r'Addendum' or r'addendum', display_name)) or (re.search(r'image', mime_class))):
                                 if re.search(r'Addendum' or r'addendum', display_name):
                                     ## Filename (display_name) identifies this course file as the syllabus addendum. Skip it.
-                                    logger.info(f"\n     {p2_courseName} Course File Skipped: Syllabus Addendum")
+                                    localSetup.logger.info(f"\n     {p2_courseName} Course File Skipped: Syllabus Addendum")
                                 elif re.search(r'image', mime_class):
                                     ## This is an image file. Skip it.
-                                    logger.info(f"\n     {p2_courseName} Course File Skipped: {content_type}")
+                                    localSetup.logger.info(f"\n     {p2_courseName} Course File Skipped: {content_type}")
                             else:
                                 if (re.search('syll' or 'syllabus' or 'syllabi', display_name, re.IGNORECASE)):
                                     ## Filename indicates that this is a syllabus. Download and put it into the primary department directory.
@@ -469,24 +337,24 @@ def process_url_matches (p1_all_url_matches, p2_courseName, p1_save_location):
                                     if ((file_extension != ".pdf") and (len(list_of_syllabi_downloaded) < 1)):
                                         try: ## Irregular try clause, do not comment out in testing
                                             os.remove(p1_save_location + "\\" + p2_courseName + ".pdf")
-                                            logger.info (f"     \n{p2_courseName} old .pdf file removed")
+                                            localSetup.logger.info (f"     \n{p2_courseName} old .pdf file removed")
                                         except: ## Irregular except clause, do not comment out in testing
-                                            logger.info ("no old .pdf file found")
-                                    logger.info(f"\n     {p2_courseName} Download: Probable Syllabus")
+                                            localSetup.logger.info ("no old .pdf file found")
+                                    localSetup.logger.info(f"\n     {p2_courseName} Download: Probable Syllabus")
                                 else:
                                     ## File name did not indicate syllabus. Download it anyway, but put it into Other_Course_Files.
                                     download_order.append(display_name)
                                     raw_file_name = p2_courseName + "---" + file_number + "-" + display_name
                                     file_name = raw_file_name.replace(':','-')
                                     downloadFile(course_file_download_url, p1_save_location + "\Other_Course_Files\\" + file_name, "w")
-                                    logger.info(f"\n     {p2_courseName} Download: Other Course File")
+                                    localSetup.logger.info(f"\n     {p2_courseName} Download: Other Course File")
                 elif (external_addendum):
                     ## This URL match is the University_Syllabus_Addendum
-                    logger.info(f"\n     {p2_courseName} Link Skipped: Syllabus Addendum")
+                    localSetup.logger.info(f"\n     {p2_courseName} Link Skipped: Syllabus Addendum")
                 elif (microsoftFile):
                     ## This URL match is a OneDrive file.
                     if (microsoftFile[0] in processed_files):
-                        logger.info(f"\n     {p2_courseName} Link Skipped: Previously processed One Drive file\
+                        localSetup.logger.info(f"\n     {p2_courseName} Link Skipped: Previously processed One Drive file\
                         \n{str(microsoftFile[0])}")
                     else:
                         ## We have not yet downloaded this microsoft file - attempt to download it.
@@ -494,7 +362,7 @@ def process_url_matches (p1_all_url_matches, p2_courseName, p1_save_location):
                         download_order.append(element)
 
                         ## Download the microsoft file
-                        microsoftFile = downloadSharedMicrosoftFile(p1_microsoftUserName = "lmsservice@nnu.edu"
+                        microsoftFile = downloadSharedMicrosoftFile(p1_microsoftUserName = serviceEmailAccount
                                                                     , p1_fileShareUrl = element
                                                                     , p1_downloadSavePath = p1_save_location)
                         
@@ -515,14 +383,14 @@ def process_url_matches (p1_all_url_matches, p2_courseName, p1_save_location):
                             else:
                                 list_of_syllabi_downloaded.append(microsoftFile)
                         else:
-                            logger.warning(f"\n     {p2_courseName} Link Skipped: Unable to download microsoft file")
+                            localSetup.logger.warning(f"\n     {p2_courseName} Link Skipped: Unable to download microsoft file")
 
                 else:
                     ## This URL match is not a recognizable file source. Skip it.
-                    logger.info(f"\n     {p2_courseName} Link Skipped: URL is niether course file nor microsoft Doc")
+                    localSetup.logger.info(f"\n     {p2_courseName} Link Skipped: URL is niether course file nor microsoft Doc")
         return list_of_syllabi_downloaded
-    except Exception as error:
-        error_handler (functionName, f"{error} \nCourse: {p2_courseName}")
+    except Exception as Error:
+        errorHandler.sendError (functionName, f"{Error} \nCourse: {p2_courseName}")
         return ""
 
 ## This function makes a get call to the course API URL and processes the course listed on the most recent 
@@ -557,9 +425,9 @@ def courseSyllabiReport (p1_row, p2_inputTerm, p1_departmentSavePaths, p1_Colleg
         courseName = p1_row['short_name'].replace("<", " ").replace(">", " ").replace(":", " ").replace('"', " ")\
             .replace("/", " ").replace("\\", " ").replace("|", " ").replace("?", " ").replace("*", " ") 
 
-        # Begin a new course entry: in the log (the --'s are to increase the readability of the log file by adding
-        # easy to see seperations between each course entry:
-        logger.info("\n     Course: " + courseSisId)
+        ## Begin a new course entry: in the log (the --'s are to increase the readability of the log file by adding
+        ## easy to see seperations between each course entry:
+        localSetup.logger.info("\n     Course: " + courseSisId)
             
         ## Create the URL the API call will be made to
         course_API_url = coreCanvasApiUrl + "courses/sis_course_id:" + courseSisId
@@ -570,7 +438,7 @@ def courseSyllabiReport (p1_row, p2_inputTerm, p1_departmentSavePaths, p1_Colleg
         ## If the API status code is anything other than 200 it means the call was unsucessful
         ## In such cases log the error and skip the course
         if (course_object.status_code != 200):
-            logger.info(f"\n     {courseName} Error: {str(course_object.status_code)}" \
+            localSetup.logger.info(f"\n     {courseName} Error: {str(course_object.status_code)}" \
                 + f"\n{course_API_url})" \
                 + f"\n{course_object.url}")
             requirementMet = True
@@ -586,7 +454,7 @@ def courseSyllabiReport (p1_row, p2_inputTerm, p1_departmentSavePaths, p1_Colleg
         
             ## Skip the course if it doesn't have students
             if (courseTextDict['total_students'] == 0):
-                logger.info(f"\n     {courseName} Skipped: No students so no need for a syllabi")
+                localSetup.logger.info(f"\n     {courseName} Skipped: No students so no need for a syllabi")
                 return
         
             ## From courseTextJsonString, isolate the course's syllabus body
@@ -614,7 +482,7 @@ def courseSyllabiReport (p1_row, p2_inputTerm, p1_departmentSavePaths, p1_Colleg
 
             ## If the determined path has the manually created courses parent account name in it, skip the course
             if "Manually-Created Courses" in courseDepartmentPath:
-                logger.info(f"\n     {courseName} Skipped: Manually created course so no need for a syllabi")
+                localSetup.logger.info(f"\n     {courseName} Skipped: Manually created course so no need for a syllabi")
                 return
             
             ## Isolate the college piece of the department file path and save it as courseCollegePath.
@@ -654,7 +522,7 @@ def courseSyllabiReport (p1_row, p2_inputTerm, p1_departmentSavePaths, p1_Colleg
             if not (os.path.exists(save_location + "\Other_Course_Files")):
                 ## Create the sub-account & department specific directory if it doesn't already exist.
                 os.makedirs(save_location + "\Other_Course_Files", mode=0o777, exist_ok=False)
-                logger.info(f"\n     {save_location}\Other_Course_Files: directories created")
+                localSetup.logger.info(f"\n     {save_location}\Other_Course_Files: directories created")
         
             ## Make note of whether or not the course is on the list of courses that don't need syllabi
             course_needs_syllabi = True
@@ -672,11 +540,11 @@ def courseSyllabiReport (p1_row, p2_inputTerm, p1_departmentSavePaths, p1_Colleg
                         p1_instructor_name = course_teacher_1_name, p1_start_date = start_date, p1_end_date = end_date, p1_term_id = p2_inputTerm, \
                         p1_department = courseAccountId, p2_collegeOrDeptMissingRequirement = p1_CollegeOrDeptMissingRequirement)
 
-                    logger.info(f"\n     {courseName} Course Skipped: No Syllabus_Body")
+                    localSetup.logger.info(f"\n     {courseName} Course Skipped: No Syllabus_Body")
                     
                     requirementMet = False
                 else:
-                    logger.info (f"     \n{courseName} Course does not have a syllabus but doesn't need one.")
+                    localSetup.logger.info (f"     \n{courseName} Course does not have a syllabus but doesn't need one.")
                     requirementMet = True
             else:
                 ## If the course has a template syllabus body, skip it and add the relavent info to the Missing_Syllabi.csv file.
@@ -688,11 +556,11 @@ def courseSyllabiReport (p1_row, p2_inputTerm, p1_departmentSavePaths, p1_Colleg
                             p1_instructor_name = course_teacher_1_name, p1_start_date = start_date, p1_end_date = end_date, p1_term_id = p2_inputTerm, \
                             p1_department = courseAccountId, p2_collegeOrDeptMissingRequirement = p1_CollegeOrDeptMissingRequirement)
                         
-                        logger.info(f"\n     {courseName} Course Skipped: Template Syllabus Body")
+                        localSetup.logger.info(f"\n     {courseName} Course Skipped: Template Syllabus Body")
                         
                         requirementMet = False
                     else:
-                        logger.info (f"     \n{courseName} Course doesn't have a syllabus but doesn't need one.")
+                        localSetup.logger.info (f"     \n{courseName} Course doesn't have a syllabus but doesn't need one.")
                         requirementMet = True
                 else:
                     ## Find all http and https links. Beginning the search with " helps ensure that only valid urls are found.
@@ -707,15 +575,15 @@ def courseSyllabiReport (p1_row, p2_inputTerm, p1_departmentSavePaths, p1_Colleg
                         syllabi_downloaded.extend(process_url_matches (all_url_matches, courseName, save_location))
                     else:
                         ## JSON.syllabus_body did not contain any URLs
-                        logger.info(f"\n     {courseName} No url matches")
+                        localSetup.logger.info(f"\n     {courseName} No url matches")
                     if (syllabi_downloaded):
                         ## At least one potential syllabus was found.
-                        logger.info(f"\n     {courseName} Syllabi Downloaded: " + str(syllabi_downloaded))
+                        localSetup.logger.info(f"\n     {courseName} Syllabi Downloaded: " + str(syllabi_downloaded))
                         requirementMet = True
                     else:
                         ## None of the URL matches (i.e. links in the HTML) were a course or microsoft file containing the word syllabus in the filename
                         ## or there were just no URLs. Either way, save the json.syllabus_body retrieved earlier and convert it to PDF.
-                        logger.info(f"\n     {courseName} No known Syllabi downloaded")
+                        localSetup.logger.info(f"\n     {courseName} No known Syllabi downloaded")
                         try: ## Irregular try clause, do not comment out in testing
                             if (len(syllabusBody) < 1500):
                                 ## The syllabus body is short. It is probably bogus so make note of it by saving the courseName
@@ -729,34 +597,34 @@ def courseSyllabiReport (p1_row, p2_inputTerm, p1_departmentSavePaths, p1_Colleg
                                         p1_instructor_name = course_teacher_1_name, p1_start_date = start_date, p1_end_date = end_date, p1_term_id = p2_inputTerm, \
                                         p1_department = courseAccountId, p2_collegeOrDeptMissingRequirement = p1_CollegeOrDeptMissingRequirement)
                                     
-                                    logger.info(f"\n     {courseName} Download: Short Syllabus Body to converted pdf")
+                                    localSetup.logger.info(f"\n     {courseName} Download: Short Syllabus Body to converted pdf")
                                     
                                     requirementMet = False
                                 else:
-                                    logger.info (f"     \n{courseName} has a short syllabus but doesn't need one.")
+                                    localSetup.logger.info (f"     \n{courseName} has a short syllabus but doesn't need one.")
                                     requirementMet = True
                             else:
                                 ## Convert HTML to PDF and download. Save to Probable_Syllabus.
                                 pdfkit.from_string("<meta charset='utf-8'>" + courseName + syllabusBody, save_location + "\\" + courseName + ".pdf", configuration=config)
-                                logger.info(f"\n     {courseName} Download: Syllabus Body converted to pdf")
+                                localSetup.logger.info(f"\n     {courseName} Download: Syllabus Body converted to pdf")
                                 requirementMet = True
                                 departmentReportLocation = f"{save_location}{scriptRequirementMissingFolderIdentifier}\\"
                                 collegeReportLocation = collegeReportLocation
-                        except Exception as error: ## Irregular except clause, do not comment out in testing
-                            logger.warning ("Saving the syllabus_body as a pdf", f" {error} \nCourse: {courseName}")
+                        except Exception as Error: ## Irregular except clause, do not comment out in testing
+                            localSetup.logger.warning ("Saving the syllabus_body as a pdf", f" {Error} \nCourse: {courseName}")
             
             ## Track the results and actions of the call to support the collegeOrDeptMissingRequirement list
             if (requirementMet == False):
                 if departmentReportLocation not in p1_CollegeOrDeptMissingRequirement:
                     p1_CollegeOrDeptMissingRequirement.append(departmentReportLocation)
-                    logger.info (f"     \nMissing Syllabi csv created at {departmentReportLocation}")
+                    localSetup.logger.info (f"     \nMissing Syllabi csv created at {departmentReportLocation}")
 
                 if (collegeReportLocation):
                     if collegeReportLocation not in p1_CollegeOrDeptMissingRequirement:
                         p1_CollegeOrDeptMissingRequirement.append(collegeReportLocation)
-                        logger.info ("Missing Syllabi csv created at " + collegeReportLocation)
-    except Exception as error:
-        error_handler (f"functionName Course: {courseName}", error)
+                        localSetup.logger.info ("Missing Syllabi csv created at " + collegeReportLocation)
+    except Exception as Error:
+        errorHandler.sendError (f"functionName Course: {courseName}", error)
 
 ## This function processes the rows of the CSV file and sends on the relavent data to process_course
 def termSyllabiReport (p1_inputTerm):
@@ -813,10 +681,10 @@ def termSyllabiReport (p1_inputTerm):
             thread.join()
 
         ## Apply courseSyllabiReport to each row
-        #termCoursesDF.apply(courseSyllabiReport, args=(p1_inputTerm, departmentSavePaths, collegeOrDeptMissingRequirement,), axis=1)
+        ##termCoursesDF.apply(courseSyllabiReport, args=(p1_inputTerm, departmentSavePaths, collegeOrDeptMissingRequirement,), axis=1)
 
-    except Exception as error:
-        error_handler (functionName, error)
+    except Exception as Error:
+        errorHandler.sendError (functionName, Error)
 
 ## This function opens the CSV file, the save locations json file, sends the information on, and closes both files
 def runSyllabiReport(inputTerm = ""):
@@ -843,8 +711,8 @@ def runSyllabiReport(inputTerm = ""):
 
         termSyllabiReport (p1_inputTerm = currentTerm)
      
-    except Exception as error:
-        error_handler (functionName, error)
+    except Exception as Error:
+        errorHandler.sendError (functionName, Error)
 
 if __name__ == "__main__":
 

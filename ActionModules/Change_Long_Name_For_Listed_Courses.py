@@ -1,10 +1,10 @@
-# Author: Bryce Miller - brycezmiller@nnu.edu
-# Last Updated by: Bryce Miller
+## Author: Bryce Miller - brycezmiller@nnu.edu
+## Last Updated by: Bryce Miller
 
 import traceback, os, sys, logging, requests, threading, time, pandas as pd
 from datetime import datetime
 
-# Define the script name, purpose, and external requirements for logging and error reporting purposes
+## Define the script name, purpose, and external requirements for logging and error reporting purposes
 scriptName = "Change_Long_Name_For_Listed_Courses"
 
 scriptPurpose = r"""
@@ -15,9 +15,9 @@ To function properly, this script requires a valid access header and URL, and a 
 """
 
 ## Date Variables
-currentDate = datetime.now()
-currentMonth = currentDate.month
-currentYear = currentDate.year
+currentDateTime = datetime.now()
+currentMonth = currentDateTime.month
+currentYear = currentDateTime.year
 
 ## Set working directory
 os.chdir(os.path.dirname(__file__))
@@ -31,24 +31,24 @@ while "Scripts TLC" not in os.listdir(PFRelativePath):
     PFRelativePath = f"..\\{PFRelativePath}"
 
 ## Change the relative path to an absolute path
-PFAbsolutePath = f"{os.path.abspath(PFRelativePath)}\\"
+absolutePath = f"{os.path.abspath(PFRelativePath)}\\"
 
 ## Local Path Variables
-baseLogPath = f"{PFAbsolutePath}Logs\\{scriptName}\\"
-baseLocalInputPath = f"{PFAbsolutePath}Canvas Resources\\"
-configPath = f"{PFAbsolutePath}Configs TLC\\"
+baseLogPath = f"{absolutePath}Logs\\{scriptName}\\"
+baseLocalInputPath = f"{absolutePath}Canvas Resources\\"
+configPath = f"{absolutePath}Configs TLC\\"
 
 ## If the base log path doesn't already exist, create it
 if not os.path.exists(baseLogPath):
     os.makedirs(baseLogPath, mode=0o777, exist_ok=False)
 
 ## Add Input Modules to the sys path
-sys.path.append(f"{PFAbsolutePath}Scripts TLC\\ResourceModules")
-sys.path.append(f"{PFAbsolutePath}Scripts TLC\\ActionModules")
+sys.path.append(f"{absolutePath}Scripts TLC\\ResourceModules")
+sys.path.append(f"{absolutePath}Scripts TLC\\ActionModules")
 
 ## Import local modules
-from Error_Email_API import errorEmailApi  # Import errorEmailApi
-from Make_Api_Call import makeApiCall  # Import makeApiCall
+from Error_Email_API import errorEmailApi  ## Import errorEmailApi
+from Make_Api_Call import makeApiCall  ## Import makeApiCall
 
 ## Canvas Instance Url
 coreCanvasApiUrl = None
@@ -74,30 +74,30 @@ infoLogFile = f"{baseLogPath}\\Info Log.txt"
 logInfo = logging.FileHandler(infoLogFile, mode='a')
 logInfo.setLevel(logging.INFO)
 logInfo.setFormatter(FORMAT)
-logger.addHandler(logInfo)
+localSetup.logger.addHandler(logInfo)
 
 ## Warning Log handler
 warningLogFile = f"{baseLogPath}\\Warning Log.txt"
 logWarning = logging.FileHandler(warningLogFile, mode='a')
 logWarning.setLevel(logging.WARNING)
 logWarning.setFormatter(FORMAT)
-logger.addHandler(logWarning)
+localSetup.logger.addHandler(logWarning)
 
 ## Error Log handler
 errorLogFile = f"{baseLogPath}\\Error Log.txt"
 logError = logging.FileHandler(errorLogFile, mode='a')
 logError.setLevel(logging.ERROR)
 logError.setFormatter(FORMAT)
-logger.addHandler(logError)
+localSetup.logger.addHandler(logError)
 
-## The variable below holds a set of the functions that have had errors. This enables the except function to only send
+## Setup the error handler
 ## an error email the first time the function triggers an error
-setOfFunctionsWithErrors = set()
+errorHandler = errorEmailApi(scriptName, scriptPurpose, externalRequirements, localSetup)
 
 ## This function handles function errors
-def  except(p1_ErrorLocation, p1_ErrorInfo, sendOnce=True):
-    functionName = "error_handler"
-    logger.error(f"\nA script error occurred while running {p1_ErrorLocation}. Error: {str(p1_ErrorInfo)}")
+def errorHandler (p1_ErrorLocation, p1_ErrorInfo, sendOnce=True):
+    functionName = "## errorHandler.sendError"
+    localSetup.logger.error(f"\nA script error occurred while running {p1_ErrorLocation}. Error: {str(p1_ErrorInfo)}")
 
     ## If the function with the error has not already been processed send an email alert
     if p1_ErrorLocation not in setOfFunctionsWithErrors:
@@ -105,9 +105,9 @@ def  except(p1_ErrorLocation, p1_ErrorInfo, sendOnce=True):
                                      p2_ExternalRequirements=externalRequirements,
                                      p2_ErrorLocation=p1_ErrorLocation, p2_ErrorInfo=p1_ErrorInfo)
         setOfFunctionsWithErrors.add(p1_ErrorLocation)
-        logger.error(f"\nError Email Sent")
+        localSetup.logger.error(f"\nError Email Sent")
     else:
-        logger.error(f"\nError email already sent")
+        localSetup.logger.error(f"\nError email already sent")
 
 ## This function sets the long name for a course given its Canvas course ID and long name
 def setCourseLongName(p1_header, p1_courseId, p1_longName):
@@ -115,15 +115,15 @@ def setCourseLongName(p1_header, p1_courseId, p1_longName):
     try:
         setLongNameApiUrl = f"{coreCanvasApiUrl}courses/{p1_courseId}"
         payload = {"course": {"name": p1_longName}}
-        response = makeApiCall(p1_header=p1_header, p1_apiUrl=setLongNameApiUrl, p1_payload=payload, apiCallType="put")
+        response, _ = makeApiCall(localSetup, p1_header=p1_header, p1_apiUrl=setLongNameApiUrl, p1_payload=payload, p1_apiCallType="put")
 
         if response.status_code == 200:
-            logger.info(f"Successfully set long name for course with ID: {p1_courseId}")
+            localSetup.logger.info(f"Successfully set long name for course with ID: {p1_courseId}")
         else:
-            logger.warning(f"Failed to set long name for course with ID: {p1_courseId}. Status code: {response.status_code}")
+            localSetup.logger.warning(f"Failed to set long name for course with ID: {p1_courseId}. Status code: {response.status_code}")
 
-    except Exception as error:
-        except(functionName, error)
+    except Exception as Error:
+        except(functionName, Error)
 
 ## This function reads the CSV file and sets the long name for the listed courses
 def setListedCoursesLongName():
@@ -166,8 +166,8 @@ def setListedCoursesLongName():
         for thread in ongoingSetLongNameThreads:
             thread.join()
 
-    except Exception as error:
-        except(functionName, error)
+    except Exception as Error:
+        except(functionName, Error)
 
 if __name__ == "__main__":
     ## Set working directory

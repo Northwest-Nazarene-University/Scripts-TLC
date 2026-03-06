@@ -1,13 +1,24 @@
-# Author: Bryce Miller - brycezmiller@nnu.edu
-# Last Updated by: Bryce Miller
+## Author: Bryce Miller - brycezmiller@nnu.edu
+## Last Updated by: Bryce Miller
 
 from datetime import datetime
 import paramiko, traceback,  os, logging, sys, requests, json, re, threading, time
-import pandas as pd #External Download from https://pypi.org/project/pandas/
+import pandas as pd ##External Download from https://pypi.org/project/pandas/
 import numpy as np
 
-# Define the script name, purpose, and external requirements for logging and error reporting purposes
-scriptName = "Incoming Student Report"
+## Add ResourceModules to the system path
+sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules"))
+
+## New resource modules
+from Local_Setup import LocalSetup
+from TLC_Common import makeApiCall
+from Canvas_Report import CanvasReport
+from Common_Configs import coreCanvasApiUrl, canvasAccessToken, undgTermsCodesToWordsDict, gradTermsCodesToWordsDict
+from Error_Email import errorEmail
+from Get_Slate_Info import getSlateInfo
+
+## Define the script name, purpose, and external requirements for logging and error reporting purposes
+scriptName = os.path.basename(__file__).replace(".py", "")
 
 scriptPurpose = r"""
 This script (Incoming_Student_Report) connects to the NNU's primary Canvas instance and gets the last login date
@@ -17,115 +28,13 @@ externalRequirements = r"""
 To function properly this script requires access to the institutions Canvas instance via an Active Canvas Bearer Token
 """
 
-## Date Variables
-currentDate = datetime.now()
-currentDateDatetime = datetime.now().date()
-currentMonth = currentDate.month
-currentYear = currentDate.year
-century = str(currentYear)[:2]
-decade = str(currentYear)[2:]
+## Create the localsetup variable
+localSetup = LocalSetup(datetime.now(), __file__)  ## sets cwd, paths, logs, date parts
 
-## Relative Path (this changes depending on the working directory of the main script)
-PFRelativePath = r".\\"
+## Setup the error handler
+errorHandler = errorEmail(scriptName, scriptPurpose, externalRequirements, localSetup)
 
-## If the Canvas directory is not in the folder the relative path points to
-## find the Canvas directory and set the relative path to its parent folder
-while "Scripts TLC" not in os.listdir(PFRelativePath):
-
-    PFRelativePath = f"..\\{PFRelativePath}"
-
-## Change the relative path to an absolute path
-PFAbsolutePath = f"{os.path.abspath(PFRelativePath)}\\"
-
-## Add Input Modules to the sys path
-sys.path.append(f"{PFAbsolutePath}Scripts TLC\\ResourceModules")
-
-## Import local modules
-from Error_Email_API import errorEmailApi
-from Get_Courses import termGetCourses
-from Get_Slate_Info import getSlateInfo
-
-## Local Path Variables
-baseLogPath = f"{PFAbsolutePath}Logs\\{scriptName}\\"
-baseLocalInputPath = f"{PFAbsolutePath}Slate Resources\\"  ## This is only the base path as the real path requires the requested term
-configPath = f"{PFAbsolutePath}\\Configs TLC\\"
-
-## External Path Variables
-
-## Define a variable to hold the base external input path which is where the sis input files are stored
-baseExternalInputPath = None 
-## Open Base_External_Paths.json from the config path and get the baseExternalInputPath value
-with open (f"{configPath}Base_External_Paths.json", "r") as file:
-    fileJson = json.load(file)
-    baseExternalInputPath = fileJson["baseExternalInputPath"]
-
-## If the base log path doesn't already exist, create it
-if not (os.path.exists(baseLogPath)):
-    os.makedirs(baseLogPath, mode=0o777, exist_ok=False)
-
-## Canvas Instance Url
-coreCanvasApiUrl = None
-## Open the Core_Canvas_Url.txt from the config path
-with open (f"{configPath}Core_Canvas_Url.txt", "r") as file:
-    coreCanvasApiUrl = file.readlines()[0]
-
-## If the script is run as main the folder with the access token is in the parent directory
-canvasAccessToken = ""
-
-## Open and retrieve the Canvas Access Token
-with open (f"{configPath}Canvas_Access_Token.txt", "r") as file:
-    canvasAccessToken = file.readlines()[0]
-
-## Log configurations
-logger = logging.getLogger(__name__)
-rootFormat = ("%(asctime)s %(levelname)s %(message)s")
-FORMAT = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-logging.basicConfig(format=rootFormat, filemode = "a", level=logging.INFO)
-
-## Info Log Handler
-infoLogFile = f"{baseLogPath}\\Info Log.txt"
-logInfo = logging.FileHandler(infoLogFile, mode = 'a')
-logInfo.setLevel(logging.INFO)
-logInfo.setFormatter(FORMAT)
-logger.addHandler(logInfo)
-
-## Warning Log handler
-warningLogFile = f"{baseLogPath}\\Warning Log.txt"
-logWarning = logging.FileHandler(warningLogFile, mode = 'a')
-logWarning.setLevel(logging.WARNING)
-logWarning.setFormatter(FORMAT)
-logger.addHandler(logWarning)
-
-## Error Log handler
-errorLogFile = f"{baseLogPath}\\Error Log.txt"
-logError = logging.FileHandler(errorLogFile, mode = 'a')
-logError.setLevel(logging.ERROR)
-logError.setFormatter(FORMAT)
-logger.addHandler(logError)
-
-## The variable below holds a set of the functions that have had errors. This enables the except function to only send
-## an error email the first time the function triggeres an error
-setOfFunctionsWithErrors = set()
-
-## This function handles function errors
-def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
-    functionName = "error_handler"
-    logger.error (f"     \nA script error occured while running {p1_ErrorLocation}. " +
-                     f"Error: {str(p1_ErrorInfo)}")
-    ## If the function with the error has not already been processed send an email alert
-    if (p1_ErrorLocation not in setOfFunctionsWithErrors):
-        errorEmailApi.sendEmailError(p2_ScriptName = scriptName, p2_ScriptPurpose = scriptPurpose, 
-                                     p2_ExternalRequirements = externalRequirements, 
-                                     p2_ErrorLocation = p1_ErrorLocation, p2_ErrorInfo = f"{p1_ErrorInfo}: \n\n {traceback.format_exc()}")
-        setOfFunctionsWithErrors.add(p1_ErrorLocation)
-        ## Note that an error email was sent
-        logger.error (f"     \nError Email Sent")
-    ## Otherwise log the fact that an error email as already been sent
-    else:
-        logger.error (f"     \nError email already sent")
-
-
-## This function 
+## This function gets the incoming student info for a given row in the slate data df
 def getTargetIncomingStudentInfo (row
                             , rowIndex
                             , p2_inputTerm
@@ -210,17 +119,17 @@ def getTargetIncomingStudentInfo (row
                 if userLastLoginDate:
                     targetSlateDataDF.loc[rowIndex, "Last Login Date Yes/No"] = "Yes"
 
-                logger.info (f"{studentSisId} data saved")
+                localSetup.logger.info (f"{studentSisId} data saved")
 
             ## Otherwise
             else:
 
                 ## The user does not have a valid nnu email/username, so return
-                logger.info (f"{studentSisId} does not have a valid NNU email/username")
+                localSetup.logger.info (f"{studentSisId} does not have a valid NNU email/username")
                 return
 
         else:
-            logger.info (f"{studentSisId} not in Canvas")
+            localSetup.logger.info (f"{studentSisId} not in Canvas")
             return
 
         ## Define a variable to track whether the user is already enrolled in the target orientation
@@ -299,25 +208,25 @@ def getTargetIncomingStudentInfo (row
             if enrollObject.status_code == 200 and enrollOrientationSectionObject.status_code == 200 and enrollMajorSectionObject.status_code == 200:
 
                 ## Log the successful enrollment
-                logger.info (f"{studentSisId} enrolled in {p1_targetOrientation}")
+                localSetup.logger.info (f"{studentSisId} enrolled in {p1_targetOrientation}")
 
             ## Otherwise, if the enrollment failed
             else:
 
                 ## If the first enrollment attempt failed, log the error and return
                 if enrollObject.status_code != 200:
-                    logger.error (f"{studentSisId} enrollment in {p1_targetOrientation} failed: {enrollObject.text}")
+                    localSetup.logger.error (f"{studentSisId} enrollment in {p1_targetOrientation} failed: {enrollObject.text}")
 
                 ## If the second enrollment attempt failed, log the error and return
                 if enrollOrientationSectionObject.status_code != 200:
-                    logger.error (f"{studentSisId} enrollment in {p1_targetOrientation} failed: {enrollOrientationSectionObject.text}")
+                    localSetup.logger.error (f"{studentSisId} enrollment in {p1_targetOrientation} failed: {enrollOrientationSectionObject.text}")
                 
                 ## If the third enrollment attempt failed, log the error and return
                 if enrollMajorSectionObject.status_code != 200:
-                    logger.error (f"{studentSisId} enrollment in {p1_targetOrientation} failed: {enrollMajorSectionObject.text}")
+                    localSetup.logger.error (f"{studentSisId} enrollment in {p1_targetOrientation} failed: {enrollMajorSectionObject.text}")
 
                 ## Send out an error email
-                error_handler(f"{scriptName} - {functionName}", f"Error enrolling {studentSisId} in {p1_targetOrientation}", sendOnce = True)
+                errorHandler.sendError(f"{scriptName} - {functionName}", f"Error enrolling {studentSisId} in {p1_targetOrientation}", sendOnce = True)
 
                 return
 
@@ -353,7 +262,7 @@ def getTargetIncomingStudentInfo (row
                     tenthDayPoint = tenthDayPoint.date()
     
                 ## Check if the tenth day point has passed
-                if tenthDayPoint <= currentDateDatetime:
+                if tenthDayPoint <= localSetup.initialDateTime.date():
         
                     ## If the most recent tenth day point is None or the current tenth day point is greater than the most recent
                     if mostRecentTenthDayPoint is None or tenthDayPoint > mostRecentTenthDayPoint:
@@ -383,7 +292,7 @@ def getTargetIncomingStudentInfo (row
                     if not targetDataActivityCourseDF.empty and not pd.isnull(targetDataActivityCourseDF['Last Course Participation'].values[0]):
 
                         ## Convert the last course participation date to a date
-                        targetCourseLastParticipationDate = datetime.strptime(f"{currentYear}-{targetDataActivityCourseDF['Last Course Participation'].values[0]}", '%Y-%m-%d').date()
+                        targetCourseLastParticipationDate = datetime.strptime(f"{str(localSetup.dateDict['year'])}-{targetDataActivityCourseDF['Last Course Participation'].values[0]}", '%Y-%m-%d').date()
 
                         ## If the row's activity date is equal to or after the most recent tenth day point
                         if targetCourseLastParticipationDate >= mostRecentTenthDayPoint:
@@ -404,8 +313,8 @@ def getTargetIncomingStudentInfo (row
             ## Set the Student Participated On Or After 10 Days (Y/N) value in the target slate data df to the has participated after tenth day value
             targetSlateDataDF.loc[rowIndex, "Student Participated On Or After 10 Days (Y/N)"] = hasParticipatedAfterTenthDay        
 
-    except Exception as error:
-        error_handler (functionName, p1_ErrorInfo = error)
+    except Exception as Error:
+        errorHandler.sendError(functionName, Error)
 
 def studentTypeGetIncomingStudentsInfo(p1_targetOrientation, p1_slateFile, p1_inputTerm):
     functionName = "Term Get Incoming Undergrad Student Info"
@@ -440,23 +349,33 @@ def studentTypeGetIncomingStudentsInfo(p1_targetOrientation, p1_slateFile, p1_in
             targetFileDateTime = datetime.fromtimestamp(targetFileTimestamp)
 
             ## Subtract the file's datetime from the current datetime
-            targetFileHoursOld = int((currentDate - targetFileDateTime).total_seconds() // 3600)
+            targetFileHoursOld = int((localSetup.initialDateTime - targetFileDateTime).total_seconds() // 3600)
 
             ## If it has been less than 3 and a half hours since the target was updated
             if targetFileHoursOld < 3.5:
 
-                ## logger.info that the file is up to date and return
-                logger.info (f"     \n {updatedSlateFilePathWithName} is up to date")
+                ## localSetup.logger.info that the file is up to date and return
+                localSetup.logger.info (f"     \n {updatedSlateFilePathWithName} is up to date")
                 return
 
         ## Define the p1_header for all subsequent canvas api calls
         header = {'Authorization' : 'Bearer ' + canvasAccessToken}
 
         ## Retrieve (and update if neccessary) the term relavent canvas courses file path
-        orientationCourseTermLocationDf = pd.read_csv(termGetCourses("All"))
+        orientationCourseTermLocationDf = CanvasReport.getCoursesDf(localSetup, "All")
 
-        ## Find the "canvas_course_id" by looking for the target orientation sis id in "course_id"
-        targetOrientationCanvasCourseId = orientationCourseTermLocationDf.loc[orientationCourseTermLocationDf['short_name'] == p1_targetOrientation, 'canvas_course_id'].values[0]
+        nameTarget = 'name'
+        ## If neither column nor index has 'name' set the name target to long_name
+        if 'name' not in orientationCourseTermLocationDf.columns and 'name' not in orientationCourseTermLocationDf.index.names:
+            nameTarget = 'long_name'
+
+
+        ## Find the "canvas_course_id" by looking for the target orientation sis id in "course_id"targetCourseLastParticipationDate = datetime.strptime(f"{str(localSetup.dateDict[
+        targetOrientationCanvasCourseId = None
+        try: ## Irregular try clause, do not comment out in testing
+            targetOrientationCanvasCourseId = orientationCourseTermLocationDf.loc[orientationCourseTermLocationDf[nameTarget] == p1_targetOrientation, 'canvas_course_id'].values[0]
+        except: ## Irregular except clause, do not comment out in testing
+            localSetup.logger.error(f"Could not find Canvas Course ID for orientation course with SIS ID: {p1_targetOrientation}")
          
         ## Define the orientation course's base api url
         orientationCourseApiUrl = f"{coreCanvasApiUrl}courses/{targetOrientationCanvasCourseId}"
@@ -476,17 +395,22 @@ def studentTypeGetIncomingStudentsInfo(p1_targetOrientation, p1_slateFile, p1_in
         ## If there are more pages to the enrollment response get them as well
         while "next" in orientationCourseEnrollmentObject.links:
             nextOrientationPageUrl = orientationCourseEnrollmentObject.links["next"]["url"]
-            orientationCourseEnrollmentObject = requests.get(nextOrientationPageUrl, headers=header)  # Fetch the next page
+            orientationCourseEnrollmentObject = requests.get(nextOrientationPageUrl, headers=header)  ## Fetch the next page
             nextOrientationPage_jsonObject = orientationCourseEnrollmentObject.json()
-            p1_targetOrientationStudentObjects.extend(nextOrientationPage_jsonObject)  # Collect students and add them to the first orientationCourse_jsonObject
+            p1_targetOrientationStudentObjects.extend(nextOrientationPage_jsonObject)  ## Collect students and add them to the first orientationCourse_jsonObject
 
         ## Record the student's ids
         p1_targetOrientationStudents = []
 
         for studentObject in p1_targetOrientationStudentObjects:
-            p1_targetOrientationStudents.append(studentObject["sis_user_id"])
+            try: ## Irregular except clause, don't comment out in testing
+                p1_targetOrientationStudents.append(studentObject["sis_user_id"])
+            except: ## Irregular except clause, don't comment out in testing
+                ## Primary exception is when the sis_user_id isn't an int 
+                #which indicts they aren't a regular incoming student and so can be skipped
+                continue 
 
-        logger.info ("Target Orientation Students recorded")
+        localSetup.logger.info ("Target Orientation Students recorded")
 
         ## Define the api url to get the target's sections
         orientationCourseSectionApiUrl = f"{orientationCourseApiUrl}/sections"
@@ -497,7 +421,7 @@ def studentTypeGetIncomingStudentsInfo(p1_targetOrientation, p1_slateFile, p1_in
         ## Define a variable to hold the target orientation's sections
         p1_targetOrientationSections = orientationCourseSectionObject.json()
 
-        logger.info ("Target Orientation Sections recorded")
+        localSetup.logger.info ("Target Orientation Sections recorded")
 
         ## Make an api call to get a list of user sis ids for those that have submitted the final quiz and when they took it
         ## This marks the completion of the orientation
@@ -576,7 +500,7 @@ def studentTypeGetIncomingStudentsInfo(p1_targetOrientation, p1_slateFile, p1_in
         ## If there are more pages to the submission response get them as well
         while "next" in quizzSubmissionsObject.links:
             nextSubmissionPageUrl = quizzSubmissionsObject.links["next"]["url"]
-            quizzSubmissionsObject = requests.get(nextSubmissionPageUrl, headers=header)  # Fetch the next page
+            quizzSubmissionsObject = requests.get(nextSubmissionPageUrl, headers=header)  ## Fetch the next page
             nextSubmissionsPage_jsonObject = quizzSubmissionsObject.json()
             
             ## Iterate through the keys and values of nextSubmissionsPage_jsonObject
@@ -626,7 +550,7 @@ def studentTypeGetIncomingStudentsInfo(p1_targetOrientation, p1_slateFile, p1_in
                 if submission["user"]["sis_user_id"]:
                     p1_targetOrientationFinalQuizSubmissionDatesAndIds[int(submission["user"]["sis_user_id"])] = submission['submitted_at']
 
-        logger.info ("Target Orientation Submissions recorded")
+        localSetup.logger.info ("Target Orientation Submissions recorded")
  
         ## Read the current Slate 
         slateDataDF = pd.read_csv(p1_slateFile, converters = {"SlateID": str, "SlateAppID": str})
@@ -639,8 +563,8 @@ def studentTypeGetIncomingStudentsInfo(p1_targetOrientation, p1_slateFile, p1_in
         slateDataDF["Final Quiz Date Taken Yes/No"] = "No"
 
         ## Open the current SIS Feed Enrollment and Course CSVs
-        rawSisFeedEnrollmentDf = pd.read_csv(f"{baseExternalInputPath}canvas_enroll.csv")
-        rawSisFeedCourseDf = pd.read_csv(f"{baseExternalInputPath}canvas_course.csv")
+        rawSisFeedEnrollmentDf = pd.read_csv(f"{localSetup.getExternalResourcePath('SIS')}canvas_enroll.csv")
+        rawSisFeedCourseDf = pd.read_csv(f"{localSetup.getExternalResourcePath('SIS')}canvas_course.csv")
         
         ## Filter the SIS Feed Enrollment DF to only contain students
         sisFeedEnrollmentDf = rawSisFeedEnrollmentDf[rawSisFeedEnrollmentDf['role'] == "student"]
@@ -661,14 +585,14 @@ def studentTypeGetIncomingStudentsInfo(p1_targetOrientation, p1_slateFile, p1_in
         startEndDict = sisFeedCourseDf.groupby('start/end').agg({'start_date': 'first', 'end_date': 'first'}).to_dict(orient='index')
 
         ## Open up the enrollment data activity file
-        enrollmentDataActivityDF = pd.read_csv(f"{baseExternalInputPath}output\\pharos\\Enrollment_Data_Activity.csv", delimiter='|')
+        enrollmentDataActivityDF = pd.read_csv(f"{localSetup.getExternalResourcePath('SIS')}output\\pharos\\Enrollment_Data_Activity.csv", delimiter='|')
  
         ongoingStudentThreads = []
 
         ## Define input threading objects
         for index, row in slateDataDF.iterrows():
 
-            #if row['StudentID'] == 190996:
+            ##if row['StudentID'] == 190996:
 
                 newThread = threading.Thread(target=getTargetIncomingStudentInfo
                                              , args=(row
@@ -700,8 +624,8 @@ def studentTypeGetIncomingStudentsInfo(p1_targetOrientation, p1_slateFile, p1_in
         ## Define a veriable to hold the slate creds json file
         slateCreds = None
 
-        ## Open the slate creds json file from the configPath
-        with open(f"{configPath}Slate_Creds.json", "r") as file:
+        ## Open the slate creds json file from the localSetup.configPath
+        with open(os.path.join(localSetup.configPath, "Slate_Creds.json"), "r") as file:
 
             ## Load the json file
             slateCreds = json.load(file)
@@ -711,9 +635,9 @@ def studentTypeGetIncomingStudentsInfo(p1_targetOrientation, p1_slateFile, p1_in
         ASPort = slateCreds["ASPort"]
         ASUsername = slateCreds["ASUsername"]
         ASPassword = slateCreds["ASPassword"]
-        ASPublicKeyPath = f"{configPath}Slate_Public_Key.txt"
+        ASPublicKeyPath = os.path.join(localSetup.configPath, "Slate_Public_Key.txt")
  
-        # Create an SSH client
+        ## Create an SSH client
         ssh_client = paramiko.SSHClient()
         ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
@@ -725,31 +649,31 @@ def studentTypeGetIncomingStudentsInfo(p1_targetOrientation, p1_slateFile, p1_in
 
         ## While the connection is not established
         while not connected:
-            #try to connect to the SFTP server
+            ## try to connect to the SFTP server
             try: ## Irregular except clause, do not comment out in testing
                 ## Connect to the SFTP server
-                ssh_client.connect(hostname=ASHost, port=ASPort, username=ASUsername, password=ASPassword, key_filename=ASPublicKeyPath)#, command=ASCommandLine)
+                ssh_client.connect(hostname=ASHost, port=ASPort, username=ASUsername, password=ASPassword, key_filename=ASPublicKeyPath)##, command=ASCommandLine)
                 connected = True
             ## If the connection fails
-            except Exception as error: ## Irregular except clause, do not comment out in testing
+            except Exception as Error: ## Irregular except clause, do not comment out in testing
                 ## Log the error
-                logger.error (f"     \nError connecting to SFTP server: {error}")
+                localSetup.logger.error (f"     \nError connecting to SFTP server: {Error}")
                 ## Increment the attempt counter
                 attemptCounter += 1
                 ## If the attempt counter is greater than 3
                 if attemptCounter > 3:
                     ## Log the fact that the connection failed
-                    logger.error (f"     \nFailed to connect to SFTP server after 3 attempts")
+                    localSetup.logger.error (f"     \nFailed to connect to SFTP server after 3 attempts")
                     ## Break the loop
                     break
                 ## Otherwise
                 else:
                     ## Log that the connection will be attempted again
-                    logger.error (f"     \nAttempting to connect to SFTP server again")
+                    localSetup.logger.error (f"     \nAttempting to connect to SFTP server again")
                     ## Wait 5 seconds
                     time.sleep(5)
  
-        # Create an SFTP client from the SSH client
+        ## Create an SFTP client from the SSH client
         sftp_client = ssh_client.open_sftp()
  
         updatedSlateDataFile_remote_file_path = None
@@ -763,80 +687,67 @@ def studentTypeGetIncomingStudentsInfo(p1_targetOrientation, p1_slateFile, p1_in
             updatedSlateDataFile_remote_file_path = f'./Incoming//Canvas//Undergrad_canvas_data.csv'
 
         try: ## Irregular try clause, do not comment out in testing
-            # Upload the file
+            ## Upload the file
             sftp_client.put(updatedSlateFilePathWithName, updatedSlateDataFile_remote_file_path)
-            logger.info("File uploaded successfully.")
+            localSetup.logger.info("File uploaded successfully.")
         finally:
-            # Close the SFTP client and SSH connection
+            ## Close the SFTP client and SSH connection
             sftp_client.close()
             ssh_client.close()
  
-    except Exception as error:
-        error_handler (functionName, p1_ErrorInfo = error)
+    except Exception as Error:
+        errorHandler.sendError(functionName, Error)
 
 def termGetIncomingStudentsInfo(inputTerm = ""):
     functionName = "Term Get Incoming Student Information"
 
     try:
+        ## Extract term code prefix and decade
+        termCodePrefix = inputTerm[:2]  ## ## e.g., "FA", "SP", "SU"
 
-        ## Determine and save the term's school year
-        targetSchoolYear = None
-        if re.search("AF|FA|GF", inputTerm):
-            ## Fall terms are the first terms of a new school year so FA20 is part of the 2020-21 school year.
-            targetSchoolYear = (century + inputTerm[2:] + "-" + str(int(inputTerm[2:]) + 1))
-        elif re.search("SP|GS|AS|SG|SA|SU", inputTerm):
-            ## Spring and Summer terms belong in the same school year as the fall terms before them, so SP21 is part of the same 2020-21 school year as FA20.
-            targetSchoolYear = (century + str(int(inputTerm[2:]) - 1) + "-" + inputTerm[2:])
+        ## Convert term code to word using your new dictionary
+        termWord = gradTermsCodesToWordsDict[termCodePrefix] if termCodePrefix in gradTermsCodesToWordsDict.keys() else undgTermsCodesToWordsDict[termCodePrefix]
+
+        ## Use LocalSetup to get the school year dynamically
+        targetSchoolYear = localSetup.getSchoolYear(termWord, int(str(localSetup.dateDict['century']) + str(inputTerm[2:])))
 
         ## Define the incoming School Year input path
-        incomingSchoolYearInputPath = f"{baseLocalInputPath}{targetSchoolYear}\\"
+        incomingSchoolYearInputPath = os.path.join(localSetup.getInternalResourcePaths("Slate"), targetSchoolYear)
 
-        ## If the term is SU, 
-        if "SU" in inputTerm:
-
-            ## Change it to SP as currently summer students use the spring orientation course
+        ## If the term is Summer, change it to Spring (orientation logic)
+        if termCodePrefix == "SU":
             inputTerm = inputTerm.replace("SU", "SP")
-
-        ## Define the fall, spring, or summer term word (fall if fa in input term)
-        termWord = "Fall" if ("FA" in inputTerm or "GF" in inputTerm) else "Spring" if ("SP" in inputTerm or "GS" in inputTerm) else "Summer"
-                
+   
         ## Define a variable to hold the target orientation course name
         targetOrientation = None
 
         ## If the input term is undg
-        if re.search("FA|SP|SU", inputTerm):
+        if termCodePrefix in undgTermsCodesToWordsDict.keys():
             
             ## Set the target orientation to the undergraduate orientation course    
-            targetOrientation = f"{termWord} {currentYear} - NNU Pre-Launch Orientation"
+            targetOrientation = f"{termWord} {str(localSetup.dateDict['year'])} - NNU Pre-Launch Orientation"
 
         ## Otherwise
         else:
             
             ## Set the target orientation to the graduate/professional orientation course
             targetOrientation = f"Graduate & Professional Student Hub"
-        
-        ## If the input term is in ["FA25", "GF25"] or is =< GS26 or SP26
-        if inputTerm in ["SP25", "GS25", "SU25", "SG25"]:
-
-            ## Set the targetUndgOrientation to the old Graduate & Professional Student Hub title
-            targetOrientation = f"GPS Online Academic Orientation (2024-25)"
 
         ## Define the term specific output path
-        incomingTermInputPath = f"{incomingSchoolYearInputPath}{inputTerm}\\Incoming\\"
+        incomingTermInputPath = os.path.join(incomingSchoolYearInputPath, inputTerm, "Incoming")
 
         ## If the incomingTermInputPath doesn't already exist, create it
         if not (os.path.exists(incomingTermInputPath)):
             os.makedirs(incomingTermInputPath, mode=0o777, exist_ok=False)
 
-        # Get a list of the files from slate and work through them
+        ## Get a list of the files from slate and work through them
         slateFiles = getSlateInfo(inputTerm)
-        #slateFiles = os.listdir(incomingTermInputPath)
 
         ## If there are no files in slate files list
         if not slateFiles:
 
             ## Log that there are no files in the slate files list
-            logger.info ("No files in slate files to process")
+            localSetup.logger.info ("No files in slate files to process")
             return
 
         ## Define a list to hold the subsequent threads used to work through the files from slate
@@ -845,7 +756,7 @@ def termGetIncomingStudentsInfo(inputTerm = ""):
         ## For each file from slate
         for slateFile in slateFiles:
 
-            #studentTypeGetIncomingStudentsInfo (targetGradOrientation, slateFile, inputTerm)
+            ##studentTypeGetIncomingStudentsInfo (targetGradOrientation, slateFile, inputTerm)
            
             ## Define the get student info report thread
             getStudentInfoThread = None
@@ -877,6 +788,7 @@ def termGetIncomingStudentsInfo(inputTerm = ""):
 
         ## Define the outgoing term input path
         outgoingTermInputPath = incomingTermInputPath.replace("Incoming", "Outgoing")
+        os.makedirs(outgoingTermInputPath, mode=0o777, exist_ok=True)
 
         ## Define a verible to hold the names of the ougoing term input files
         outgoingTermInputFiles = os.listdir(outgoingTermInputPath)
@@ -888,11 +800,11 @@ def termGetIncomingStudentsInfo(inputTerm = ""):
             if not any(slateFile.replace('_canvas_data', '') in filePath.split('\\')[-1] for filePath in slateFiles):
 
                 ## Delete the file
-                os.remove(f"{outgoingTermInputPath}{slateFile}")
+                os.remove(os.path.join(outgoingTermInputPath,slateFile))
 
 
-    except Exception as error:
-        error_handler (functionName, p1_ErrorInfo = error)
+    except Exception as Error:
+        errorHandler.sendError(functionName, Error)
 
 if __name__ == "__main__":
 

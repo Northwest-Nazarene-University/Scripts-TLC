@@ -1,20 +1,28 @@
-# Author: Bryce Miller - brycezmiller@nnu.edu
-# Last Updated by: Bryce Miller
+## Author: Bryce Miller - brycezmiller@nnu.edu
+## Last Updated by: Bryce Miller
 
-## Import Generic Moduels
-
+## External libraries
 import traceback, os, sys, logging, threading, csv, requests, json, pdfkit, re, os, os.path, time
 from datetime import date, datetime
 import pandas as pd
 
-## Set working directory
-os.chdir(os.path.dirname(__file__))
-
 ## Add Script repository to syspath
-sys.path.append(f"{os.getcwd()}\ResourceModules")
+sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules"))
+
+## New resource modules
+from Local_Setup import LocalSetup
+from TLC_Common import makeApiCall, isFileRecent
+from Canvas_Report import CanvasReport
+from Common_Configs import coreCanvasApiUrl, canvasAccessToken
+from Error_Email import errorEmail
+
+## Create the localsetup variable
+localSetup = LocalSetup(datetime.now(), __file__)  ## sets cwd, paths, logs, date parts
+
+from Common_Configs import undgTermsCodesToWordsDict, gradTermsCodesToWordsDict
 
 ## Define the script name, purpose, and external requirements for logging and error reporting purposes
-scriptName = "Outcome Attachment Report"
+scriptName = os.path.basename(__file__).replace(".py", "")
 
 scriptPurpose = r"""
 The Course Addendum Checker Script was written by NNU's IDT department to check whether NNU's canavs courses have the static Syllabus Addendum link, make .csv lista of the courses that do not have the link, and store the .csv files under \Employees-Read Only\University Syllabi by college and department.
@@ -23,137 +31,9 @@ externalRequirements = r"""
 To function properly, this script requires that the static Syllabus Addendum link "https://my.nnu.edu/ics/syllabus_addendum.aspx" (which redirects to the current addendum) be placed in the Canvas Syllabus tab.
 """
 
-## Date Variables
-currentDateTime = datetime.now()
-currentYear = currentDateTime.year
-currentMonth = currentDateTime.month
-lastYear = currentYear - 1
-nextYear = currentYear + 1
-century = str(currentYear)[:2]
-decade = str(currentYear)[2:]
+## Setup the error handler
+errorHandler = errorEmail(scriptName, scriptPurpose, externalRequirements, localSetup)
 
-## Set working directory
-fileDir = os.path.dirname(__file__)
-os.chdir(fileDir)
-
-## The relative path is used to provide a generic way of finding where the Scripts TLC folder has been placed
-## This provides a non-script specific manner of finding the vaiours related modules
-PFRelativePath = r".\\"
-
-## If the Scripts TLC folder is not in the folder the PFRelative path points to
-## look for it in the next parent folder
-while "Scripts TLC" not in os.listdir(PFRelativePath):
-
-    PFRelativePath = f"..\\{PFRelativePath}"
-
-## Change the relative path to an absolute path
-PFAbsolutePath = f"{os.path.abspath(PFRelativePath)}\\"
-
-## Add Input Modules to the sys path
-sys.path.append(f"{PFAbsolutePath}Scripts TLC\\ResourceModules")
-sys.path.append(f"{PFAbsolutePath}Scripts TLC\\ActionModules")
-
-## Import local modules
-from Error_Email_API import errorEmailApi
-from Create_Sub_Account_Save_Path import determineDepartmentSavePath
-from Get_Outcomes import termGetOutcomes
-from Make_Api_Call import makeApiCall
-
-## Local Path Variables
-baseLogPath = f"{PFAbsolutePath}Logs\\{scriptName}\\"
-configPath = f"{PFAbsolutePath}\\Configs TLC\\"
-baseLocalInputPath = f"{PFAbsolutePath}Canvas Resources\\"  ## This is only the base path as the real path requires the requested term
-baseLocalOutputPath = f"{PFAbsolutePath}Canvas Resources\\" ## This is only the base path as the real path requires the requested term
-
-## External Path Variables
-
-## Define a variable to hold the base external input path and output path 
-baseExternalInputPath = None ## Where the sis input files are stored
-baseExternalOutputPath = None ## Where the syllabus repository will be created and relavent reports stored
-
-## Open Base_External_Paths.json from the config path and get the baseExternalInputPath and baseExternalOutputPath values
-with open (f"{configPath}Base_External_Paths.json", "r") as file:
-    fileJson = json.load(file)
-    baseExternalInputPath = fileJson["baseExternalInputPath"]
-    baseExternalOutputPath = fileJson["baseTlcUniversitySyllabiDataExternalOutputPath"]
-
-## Canvas Instance Url
-coreCanvasApiUrl = None
-## Open the Core_Canvas_Url.txt from the config path
-with open (f"{configPath}Core_Canvas_Url.txt", "r") as file:
-    coreCanvasApiUrl = file.readlines()[0]
-
-## If the script is run as main the folder with the access token is in the parent directory
-canvasAccessToken = ""
-
-## Open and retrieve the Canvas Access Token
-with open (fr"{configPath}Canvas_Access_Token.txt", "r") as file:
-    canvasAccessToken = file.readlines()[0]
-
-##Primary API call header and payload
-header = {'Authorization' : 'Bearer ' + canvasAccessToken}
-
-## Begin logger set up
-
-## If the base log path doesn't already exist, create it
-if not (os.path.exists(baseLogPath)):
-    os.makedirs(baseLogPath, mode=0o777, exist_ok=False)
-
-## Log configurations
-logger = logging.getLogger(__name__)
-rootFormat = ("%(asctime)s %(levelname)s %(message)s")
-FORMAT = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-logging.basicConfig(format=rootFormat, filemode = "a", level=logging.INFO)
-
-## Info Log Handler
-infoLogFile = f"{baseLogPath}\\Info Log.txt"
-logInfo = logging.FileHandler(infoLogFile, mode = 'a')
-logInfo.setLevel(logging.INFO)
-logInfo.setFormatter(FORMAT)
-logger.addHandler(logInfo)
-
-## Warning Log handler
-warningLogFile = f"{baseLogPath}\\Warning Log.txt"
-logWarning = logging.FileHandler(warningLogFile, mode = 'a')
-logWarning.setLevel(logging.WARNING)
-logWarning.setFormatter(FORMAT)
-logger.addHandler(logWarning)
-
-## Error Log handler
-errorLogFile = f"{baseLogPath}\\Error Log.txt"
-logError = logging.FileHandler(errorLogFile, mode = 'a')
-logError.setLevel(logging.ERROR)
-logError.setFormatter(FORMAT)
-logger.addHandler(logError)
-
-## This variable enables the except function to only send
-## an error email the first time the function triggeres an error
-## by tracking what functions have already been recorded as having errors
-setOfFunctionsWithErrors = set()
-
-## This function handles function errors
-def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
-    functionName = "error_handler"
-
-    ## Log the error
-    logger.error (f"     \nA script error occured while running {p1_ErrorLocation}. " +
-                     f"Error: {str(p1_ErrorInfo)}")
-
-    ## If the function with the error has not already been processed send an email alert
-    if (p1_ErrorLocation not in setOfFunctionsWithErrors):
-        errorEmailApi.sendEmailError(p2_ScriptName = scriptName, p2_ScriptPurpose = scriptPurpose, 
-                                     p2_ExternalRequirements = externalRequirements, 
-                                     p2_ErrorLocation = p1_ErrorLocation, p2_ErrorInfo = f"{p1_ErrorInfo}: \n\n {traceback.format_exc()}")
-        
-        ## Add the function name to the set of functions with errors
-        setOfFunctionsWithErrors.add(p1_ErrorLocation)
-        
-        ## Note that an error email was sent
-        logger.error (f"     \nError Email Sent")
-    
-    ## Otherwise log the fact that an error email as already been sent
-    else:
-        logger.error (f"     \nError email already sent")
 
 """ 
  This fuction saves the course ID and other identifiers of the course in question.
@@ -196,8 +76,8 @@ def saveOutcomeAttachmentCourseInfo(saveLocation, fileName, p1_course_name, p1_r
                                     , "Instructor Email": p1_instructor_email})
             csvFile_2.close()
 
-    except Exception as error:
-        error_handler (functionName, error)
+    except Exception as Error:
+        errorHandler.sendError (functionName, Error)
 
 ## This function processes an assignment that an outcome is attached to to ensure that it is published
 ## and assigned to the primary course section
@@ -211,7 +91,7 @@ def assignmentIsPublishedCheck (p1_rubric_api_url, assignment_id):
     assignmentApiPayload = {"include": ["submission", "assignment_visibility"]}
 
     ## Make a variable to hold the course's rubric api object
-    assignmentApiObject = makeApiCall(p1_header = header, p1_apiUrl = assignmentApiUlr, p1_payload = assignmentApiPayload)
+    assignmentApiObject, _ = makeApiCall(localSetup, p1_apiUrl = assignmentApiUlr, p1_payload = assignmentApiPayload)
 
     ## Save the primary body of information retrieved by the API call
     assignmentApiText = assignmentApiObject.text
@@ -243,7 +123,18 @@ def rubricIsAttachedToAPublishedAssignmentCheck(p1_courseRubricApiUrl, p1_rubric
     rubricApiPayload = {"include": ["assessments", "graded_assessments", "assignment_associations"]}
 
     ## Make a variable to hold the course's rubric api object
-    rubricApiObject = makeApiCall(p1_header = header, p1_apiUrl = rubricApiUlr, p1_payload = rubricApiPayload)
+    rubricApiObject = None
+    ## Try to get the api object, but count 404 errors as not attached to published assignment
+    try:
+        rubricApiObject, _ = makeApiCall(localSetup, p1_apiUrl = rubricApiUlr, p1_payload = rubricApiPayload)
+    except Exception as Error:
+        msg = str(Error)
+        ## If the error is a 404 error, the rubric may be in an unsaved state or deleted, so return false
+        if "HTTP 404" in msg or "Rubric not found" in msg:
+            return False
+        else:
+            raise
+
                     
     ## Save the primary body of information retrieved by the API call
     rubricApiText = rubricApiObject.text
@@ -290,7 +181,7 @@ def checkRubricOutcomeAlignment(p1_row, p1_targetCourseSisId, p1_uniqueAttachedO
         courseRubricApiUlr = coreCanvasApiUrl + "courses/sis_course_id:" + p1_targetCourseSisId + "/rubrics" + "?per_page=100"
             
         ## Make a variable to hold the course's rubric api object
-        courseRubricApiObject = makeApiCall(p1_header = header, p1_apiUrl = courseRubricApiUlr)
+        courseRubricApiObject, _ = makeApiCall(localSetup, p1_apiUrl = courseRubricApiUlr)
             
         ## Save the primary body of information retrieved by the API call
         course_rubrics_api_call_text_jsonString = courseRubricApiObject.text
@@ -335,7 +226,7 @@ def checkRubricOutcomeAlignment(p1_row, p1_targetCourseSisId, p1_uniqueAttachedO
                         outcomeApiUrl = f"{coreCanvasApiUrl}outcomes/{criterion['learning_outcome_id']}"
 
                         ## Make a variable to hold the outcome api object
-                        outcomeApiObject = makeApiCall(p1_header = header, p1_apiUrl = outcomeApiUrl)
+                        outcomeApiObject, _ = makeApiCall(localSetup, p1_apiUrl = outcomeApiUrl)
                         
                         ## Save the primary body of information retrieved by the API call
                         outcomeApiText = outcomeApiObject.text
@@ -369,13 +260,13 @@ def checkRubricOutcomeAlignment(p1_row, p1_targetCourseSisId, p1_uniqueAttachedO
                         p1_uniqueAttachedOutcomes[outcome] = True
 
     ## If there is an error
-    except Exception as error:
-        error_handler (functionName, error)
+    except Exception as Error:
+        errorHandler.sendError (functionName, Error)
 
 ## This function checks the rubrics in each course on the list to see which, if any, have the required outcome/s 
 ## and if those rubrics are attached to a published assignment. It adds the course to the naughty list if any of 
 ## these checks come back false
-def outcomeAttachmentReport(row, p1_termLocalOutputPath, p1_outcomesLocationPath, p1_outcomeCoursesMissingAttachmentsDataDict):
+def outcomeAttachmentReport(row, p1_rawOutcomesDF, p1_outcomeCoursesMissingAttachmentsDataDict):
     functionName = "Check Outcome Attachments"
 
     try:
@@ -391,7 +282,9 @@ def outcomeAttachmentReport(row, p1_termLocalOutputPath, p1_outcomesLocationPath
         targetCourseSisId = None
 
         ## If there is a parent course id
-        if pd.notna(row["Parent_Course_sis_id"]):
+        if (not pd.isna(row["Parent_Course_sis_id"]) 
+        and row["Parent_Course_sis_id"] not in ["", None]
+        ):
             
             ## Set the target course id to the parent course id
             targetCourseSisId = row["Parent_Course_sis_id"]
@@ -401,52 +294,18 @@ def outcomeAttachmentReport(row, p1_termLocalOutputPath, p1_outcomesLocationPath
             
             ## Set the target course id to the course id
             targetCourseSisId = courseSisId
-        
+
         ## Make a dict of the unique outcomes associated with the course
         uniqueAttachedOutcomes = {row[key]: False for key in row.index 
-                      if "Outcome" in key 
-                      and "Area" not in key 
-                      and str(row[key]) != "nan"
-                      }
+            if "Outcome" in key 
+            and "Area" not in key 
+            and str(row[key]) != "nan"
+            }
             
-        ## Read the outcomes csv into a pandas dataframe
-        rawOutcomesDF = pd.DataFrame()
-
-        readRawOutcomesCsvAttempt = 0
-
-        ## While the rawOutcomesDF is empty
-        while rawOutcomesDF.empty and readRawOutcomesCsvAttempt < 5:
-
-            try: ## Irregular try clause, do not comment out in testing
-            
-                ## Read the outcomes csv into a pandas dataframe
-                rawOutcomesDF = pd.read_csv(p1_outcomesLocationPath, encoding='utf-8')
-                
-            except Exception as error: ## Irregular except clause, do not comment out in testing
-
-                ## Log a warning that the csv file could not be read with the exception
-                logger.warning (f"     \n {p1_outcomesLocationPath} could not be read. Error: {error}")
-
-                ## Wait for 5 seconds
-                time.sleep(5)
-
-            ## Increment the readRawOutcomesCsvAttempt
-            readRawOutcomesCsvAttempt += 1    
-
-        ## if the rawOutcomesDF is still empty
-        if rawOutcomesDF.empty:
-
-            ## log a warning and return
-            logger.warning (f"     \n {p1_outcomesLocationPath} is empty")
-            return
-        
-        ## Remove the unicode character from the title column
-        rawOutcomesDF['title'] = rawOutcomesDF['title'].str.replace('\u200b', '')
-        
         ## Make a filtered df by keeping only the rows where the outcome is in the uniqueAttachedOutcomes and the row['Outcome Area'] is in the title
-        outcomesDF = rawOutcomesDF[
-            (rawOutcomesDF['title'].isin(uniqueAttachedOutcomes.keys()))
-             & (rawOutcomesDF['title'].str.contains(row['Outcome Area']))
+        outcomesDF = p1_rawOutcomesDF[
+            (p1_rawOutcomesDF['title'].isin(uniqueAttachedOutcomes.keys()))
+             & (p1_rawOutcomesDF['title'].str.contains(row['Outcome Area']))
              ]
         
             
@@ -457,7 +316,7 @@ def outcomeAttachmentReport(row, p1_termLocalOutputPath, p1_outcomesLocationPath
         checkRubricOutcomeAlignment(row, targetCourseSisId, uniqueAttachedOutcomes, uniqueAttachedOutcomesVendorGuidDict)
 
         ## If any of the unique outcomes attached to the course are still false
-        #if False in uniqueAttachedOutcomes.values():
+        ##if False in uniqueAttachedOutcomes.values():
 
             ## Check the new quizzes in the course for the desired outcomes
 
@@ -509,8 +368,8 @@ def outcomeAttachmentReport(row, p1_termLocalOutputPath, p1_outcomesLocationPath
             p1_outcomeCoursesMissingAttachmentsDataDict["Instructor Name"].append(instructorNamesString)
             p1_outcomeCoursesMissingAttachmentsDataDict["Instructor Email"].append(instructorEmailsString)
 
-    except Exception as error:
-        error_handler (functionName, error)
+    except Exception as Error:
+        errorHandler.sendError (functionName, Error)
                     
   
 ## This function processes the rows of the CSV file and sends on the relavent data to process_course
@@ -520,100 +379,46 @@ def termOutcomeAttachmentReport (p1_inputTerm
     functionName = "Term OutcomeAttachment Report"
 
     try:
-        
-        ## Determine and save the term's school year
-        schoolYear = None
-        if re.search("AF|FA|GF", p1_inputTerm):
-            ## Fall terms are the first terms of a new school year so FA20 is part of the 2020-21 school year.
-            schoolYear = (century + p1_inputTerm[2:] + "-" + str(int(p1_inputTerm[2:]) + 1))
-        elif re.search("SP|GS|AS|SG|SA|SU", p1_inputTerm):
-            ## Spring and Summer terms belong in the same school year as the fall terms before them, so SP21 is part of the same 2020-21 school year as FA20.
-            schoolYear = (century + str(int(p1_inputTerm[2:]) - 1) + "-" + p1_inputTerm[2:])
+       
+        ## Extract term prefix and decade
+        ## Extract term prefix and decade
+        termCodePrefix = p1_inputTerm[:2]  ## e.g., "FA", "SP", "SU"
+        termWord = undgTermsCodesToWordsDict.get(termCodePrefix, gradTermsCodesToWordsDict.get(termCodePrefix))
+        termYear = int(str(localSetup.dateDict["century"]) + p1_inputTerm[2:])
 
-        ## Define the school year input paths
-        localSchoolYearInputPath = f"{baseLocalOutputPath}{schoolYear}\\"
+        ## Build local paths  
+        designatorLocalOutputPath = localSetup.getTargetDesignatedOutputPath(termWord, termYear, p1_targetDesignator)
 
-        ## Define the term specific input path
-        termLocalInputPath = f"{localSchoolYearInputPath}{p1_inputTerm}\\"
+        ## Ensure directories exist
+        os.makedirs(designatorLocalOutputPath, exist_ok=True)
 
-        ## Determine term related output paths
-        termLocalOutputPath = f"{baseLocalOutputPath}{schoolYear}\\{p1_inputTerm}\\"
-        termExternalOutputPath = f"{baseExternalOutputPath}{schoolYear}\\{p1_inputTerm}\\"
-        
-        ## Retrieve the Automated Outcome Tool Variables excel file as a df    
-        automatedOutcomeToolVariablesDf = pd.read_excel(f"{baseExternalInputPath}Internal Tool Files\\Automated Outcome Tool Variables.xlsx")
+        ## Define the output file name
+        termOutputFileName = f"{p1_inputTerm}_{p1_targetDesignator}_Outcome_Attachment_Report.csv"
 
-        ## Get the account name associated with the target designator
-        targetAccountName = automatedOutcomeToolVariablesDf.loc[automatedOutcomeToolVariablesDf["Target Designator"] == p1_targetDesignator, "Outcome Location Account Name"].values[0]
-        
-        ## Open the accounts csv as a df
-        accountInfoDF = pd.read_csv(f"{baseLocalInputPath}Canvas_Accounts.csv")
+        ## Build the designated internal output path
+        targetDestinationFilePath = os.path.join(designatorLocalOutputPath, termOutputFileName)
 
-        # Get the canvas account id associated with the targetAccountName
-        targetCanvasAccountId = 1 if p1_targetDesignator in ["GE", "CAP"] else ( ## GE outcomes are located at the root account level which is not in the accounts csv
-            accountInfoDF.loc[
-                accountInfoDF["name"] == targetAccountName
-                , "canvas_account_id"
-                ].values[0]
-            )
-        
-        ## If the targetCanvasAccountId is 1
-        if targetCanvasAccountId != 1:
+        ## If the file is recent return
+        if isFileRecent(localSetup, targetDestinationFilePath):
+            return targetDestinationFilePath
             
-            ## Use the targetCanvasAccountId to determine the department specific path element
-            departmentSpecifcPathElement = determineDepartmentSavePath(targetCanvasAccountId)
-            
-            ## Use the targetCanvasAccountId to get the external save paths
-            termExternalOutputPath = (
-                f"{baseExternalOutputPath}{departmentSpecifcPathElement}\\{schoolYear}\\{p1_inputTerm}\\"
-                )
-            
-        ## If the termExternalOutputPath doesn't exist
-        if not os.path.exists(termExternalOutputPath):
+        ## Retrieve Automated Outcome Tool Variables
+        automatedOutcomeToolVariablesDf = pd.read_excel(
+            os.path.join(localSetup.getExternalResourcePath("TLC"), "Automated Outcome Tool Variables.xlsx")
+        )
+        targetAccountName = automatedOutcomeToolVariablesDf.loc[
+            automatedOutcomeToolVariablesDf["Target Designator"] == p1_targetDesignator,
+            "Outcome Location Account Name"
+        ].values[0]
 
-            ## Create the path
-            os.makedirs(termExternalOutputPath, mode=0o777, exist_ok=False)
-
-        ## Determine term related output file name
-        termOutputFileName = f"{p1_inputTerm}_{p1_targetDesignator}_Courses_Without_Required_Outcome_Attached.csv"
-
-        ## Define the target destination file path
-        targetDestinationFilePath = f"{termExternalOutputPath}{termOutputFileName}"
-        
-        ## If the target output file exists
-        if os.path.exists(targetDestinationFilePath):
-            
-            ## Get its last moddifed timestamp
-            targetFileTimestamp = os.path.getmtime(targetDestinationFilePath)
-
-            ## Convert the timestamp to datetime
-            targetFileDateTime = datetime.fromtimestamp(targetFileTimestamp)
-
-            ## Subtract the file's datetime from the current datetime
-            targetFileHoursOld = int((currentDateTime - targetFileDateTime).total_seconds() // 3600)
-
-            ## If it has been less than hour or more since the target was updated
-            if targetFileHoursOld < 3.5:
-
-                ## logger.info that the file is up to date and return
-                logger.info (f"     \n {targetDestinationFilePath} is up to date")
-                return
-            
         ## Retrieve the current outcomes csv file path
-        outcomesLocationPath = termGetOutcomes(p1_inputTerm, targetAccountName, p1_targetDesignator)
+        rawOutcomesDF = CanvasReport.getOutcomesDf(localSetup, p1_inputTerm, targetAccountName, p1_targetDesignator)
 
-        ## Define the active outcome courses file path
-        activeOutcomeCoursesFilePath = f"{termLocalInputPath}{p1_inputTerm}_{p1_targetDesignator}_Active_Outcome_Courses.xlsx"
+        ## Remove the unicode character from the title column
+        rawOutcomesDF['title'] = rawOutcomesDF['title'].str.replace('\u200b', '')
 
-        ## If the file doesn't exist
-        if not os.path.exists(activeOutcomeCoursesFilePath):
-
-            ## Log a warning that the file doesn't exist and return
-            logger.warning (f"     \n {activeOutcomeCoursesFilePath} does not exist")
-            return
-
-        ## Read the relavent term's courses file into a pandas dataframe
-        termActiveOutcomeCoursesDF = pd.read_excel(f"{termLocalInputPath}{p1_inputTerm}_{p1_targetDesignator}_Active_Outcome_Courses.xlsx")
+        ## Get the relavent term's course report as a df
+        termActiveOutcomeCoursesDF = CanvasReport.getActiveOutcomeCoursesDf(localSetup, p1_inputTerm, p1_targetDesignator)
         
         ## For each column in the term active Outcome courses df
         for column in termActiveOutcomeCoursesDF.columns:
@@ -640,7 +445,7 @@ def termOutcomeAttachmentReport (p1_inputTerm
         for index, row in termActiveOutcomeCoursesDF.iterrows():
 
             ## Target a specific course for testing if needed
-            #if row['Course_sis_id'] == "GF2024_EDUC7160_7A":
+            ##if row['Course_sis_id'] == "GF2024_EDUC7160_7A":
             
                 ## If the row is not a nan
                 if not pd.isna(row["Course_sis_id"]):
@@ -648,8 +453,7 @@ def termOutcomeAttachmentReport (p1_inputTerm
                     ## Create a thread to process the row
                     outcomeAttachmentReportThread = threading.Thread(target=outcomeAttachmentReport
                                                                      , args=(row
-                                                                             , termLocalOutputPath
-                                                                             , outcomesLocationPath
+                                                                             , rawOutcomesDF
                                                                              , outcomeCoursesMissingAttachments
                                                                              )
                                                                      )
@@ -672,21 +476,13 @@ def termOutcomeAttachmentReport (p1_inputTerm
             ## Create a dataframe from the outcomeCoursesMissingAttachments dict
             outcomeCoursesMissingAttachmentsDF = pd.DataFrame(outcomeCoursesMissingAttachments)
 
-            ## If either the term local output path or the term external output path don't exist
-            if not (os.path.exists(termLocalOutputPath) or os.path.exists(termExternalOutputPath)):
-                
-                ## Create them
-                os.makedirs(termLocalOutputPath, mode=0o777, exist_ok=False)
-                os.makedirs(termExternalOutputPath, mode=0o777, exist_ok=False)
-
             ## Save the dataframe to a csv to both the local and external output paths
-            outcomeCoursesMissingAttachmentsDF.to_csv(f"{termLocalOutputPath}{termOutputFileName}", index = False)
             outcomeCoursesMissingAttachmentsDF.to_csv(f"{targetDestinationFilePath}", index = False)
-            
-            #outcomeAttachmentReport(row, termLocalOutputPath, termExternalOutputPath, termOutputFileName, newFileCreated, outcomeCoursesMissingAttachments)
 
-    except Exception as error:
-        error_handler (functionName, error)
+        return targetDestinationFilePath
+
+    except Exception as Error:
+        errorHandler.sendError (functionName, Error)
 
 if __name__ == "__main__":
 

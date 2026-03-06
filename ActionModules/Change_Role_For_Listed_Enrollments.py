@@ -16,11 +16,11 @@ To function properly, this script requires a valid access header and URL, and a 
 """
 
 ## Date Variables
-currentDate = datetime.now()
+currentDateTime = datetime.now()
 ## Get the current date and time
-currentMonth = currentDate.month
+currentMonth = currentDateTime.month
 ## Get the current month
-currentYear = currentDate.year
+currentYear = currentDateTime.year
 ## Get the current year
 
 ## Set working directory
@@ -36,14 +36,14 @@ while "Scripts TLC" not in os.listdir(pfRelativePath):
     pfRelativePath = f"..\\{pfRelativePath}"
 
 ## Change the relative path to an absolute path
-pfAbsolutePath = f"{os.path.abspath(pfRelativePath)}\\"
+absolutePath = f"{os.path.abspath(pfRelativePath)}\\"
 
 ## Local Path Variables
-baseLogPath = f"{pfAbsolutePath}Logs\\{scriptName}\\"
+baseLogPath = f"{absolutePath}Logs\\{scriptName}\\"
 ## Define the base log path
-baseLocalInputPath = f"{pfAbsolutePath}Canvas Resources\\"
+baseLocalInputPath = f"{absolutePath}Canvas Resources\\"
 ## Define the base input path
-configPath = f"{pfAbsolutePath}Configs TLC\\"
+configPath = f"{absolutePath}Configs TLC\\"
 ## Define the config path
 
 ## If the base log path doesn't already exist, create it
@@ -52,14 +52,14 @@ if not os.path.exists(baseLogPath):
     ## Create the base log path
 
 ## Add Input Modules to the sys path
-sys.path.append(f"{pfAbsolutePath}Scripts TLC\\ResourceModules")
+sys.path.append(f"{absolutePath}Scripts TLC\\ResourceModules")
 ## Add ResourceModules to sys path
-sys.path.append(f"{pfAbsolutePath}Scripts TLC\\ActionModules")
+sys.path.append(f"{absolutePath}Scripts TLC\\ActionModules")
 ## Add ActionModules to sys path
 
 ## Import local modules
 from Error_Email_API import errorEmailApi
-## Import ErrorEmailApi
+## Import errorEmailApi
 from Make_Api_Call import makeApiCall
 ## Import makeApiCall
 
@@ -88,40 +88,40 @@ infoLogFile = f"{baseLogPath}\\Info Log.txt"
 logInfo = logging.FileHandler(infoLogFile, mode='a')
 logInfo.setLevel(logging.INFO)
 logInfo.setFormatter(FORMAT)
-logger.addHandler(logInfo)
+localSetup.logger.addHandler(logInfo)
 
 ## Warning Log handler
 warningLogFile = f"{baseLogPath}\\Warning Log.txt"
 logWarning = logging.FileHandler(warningLogFile, mode='a')
 logWarning.setLevel(logging.WARNING)
 logWarning.setFormatter(FORMAT)
-logger.addHandler(logWarning)
+localSetup.logger.addHandler(logWarning)
 
 ## Error Log handler
 errorLogFile = f"{baseLogPath}\\Error Log.txt"
 logError = logging.FileHandler(errorLogFile, mode='a')
 logError.setLevel(logging.ERROR)
 logError.setFormatter(FORMAT)
-logger.addHandler(logError)
+localSetup.logger.addHandler(logError)
 
-## The variable below holds a set of the functions that have had errors. This enables the error_handler function to only send
+## The variable below holds a set of the functions that have had errors. This enables the ## errorHandler.sendError function to only send
 ## an error email the first time the function triggers an error
-setOfFunctionsWithErrors = set()
+errorHandler = errorEmailApi(scriptName, scriptPurpose, externalRequirements, localSetup)
 
 ## This function handles function errors
-def error_handler(p1_errorLocation, p1_errorInfo, sendOnce=True):
-    functionName = "error_handler"
-    logger.error(f"\nA script error occurred while running {p1_errorLocation}. Error: {str(p1_errorInfo)}")
+def errorHandler.sendError(p1_errorLocation, p1_errorInfo, sendOnce=True):
+    functionName = "## errorHandler.sendError"
+    localSetup.logger.error(f"\nA script error occurred while running {p1_errorLocation}. Error: {str(p1_errorInfo)}")
 
     ## If the function with the error has not already been processed send an email alert
     if p1_errorLocation not in setOfFunctionsWithErrors:
-        errorEmailApi.sendEmailError(p2_scriptName=scriptName, p2_scriptPurpose=scriptPurpose,
+        errorEmailApi.sendEmailError(p1_scriptName=scriptName, p2_scriptPurpose=scriptPurpose,
                                      p2_externalRequirements=externalRequirements,
                                      p2_errorLocation=p1_errorLocation, p2_ErrorInfo=p1_errorInfo)
         setOfFunctionsWithErrors.add(p1_errorLocation)
-        logger.error(f"\nError Email Sent")
+        localSetup.logger.error(f"\nError Email Sent")
     else:
-        logger.error(f"\nError email already sent")
+        localSetup.logger.error(f"\nError email already sent")
 
 ## This function deletes an enrollment given its Canvas enrollment ID
 def deleteEnrollment(p1_header, p3_courseId, p1_enrollmentId):
@@ -132,16 +132,16 @@ def deleteEnrollment(p1_header, p3_courseId, p1_enrollmentId):
         deleteEnrollmentUrl = f"{coreCanvasApiUrl}courses/{p3_courseId}/enrollments/{p1_enrollmentId}"
 
         ## Define the API URL for deleting the enrollment
-        response = makeApiCall(p1_header=p1_header, p1_apiUrl=deleteEnrollmentUrl, apiCallType="delete")
+        response, _ = makeApiCall(localSetup, p1_header=p1_header, p1_apiUrl=deleteEnrollmentUrl, p1_apiCallType="delete")
 
         ## Make the API call to delete the enrollment
         if response.status_code == 200:
-            logger.info(f"Successfully deleted enrollment with ID: {p1_enrollmentId}")
+            localSetup.logger.info(f"Successfully deleted enrollment with ID: {p1_enrollmentId}")
         else:
-            logger.warning(f"Failed to delete enrollment with ID: {p1_enrollmentId}. Status code: {response.status_code}")
+            localSetup.logger.warning(f"Failed to delete enrollment with ID: {p1_enrollmentId}. Status code: {response.status_code}")
 
-    except Exception as error:
-        error_handler(functionName, error)
+    except Exception as Error:
+        errorHandler.sendError(functionName, Error)
 
 ## This function re-enrolls a user with a new role given the Canvas user ID, course ID, role ID, and base role type
 def reEnrollUser(p1_header, p1_userId, p2_courseId, p3_roleId, p4_baseRoleType):
@@ -159,16 +159,16 @@ def reEnrollUser(p1_header, p1_userId, p2_courseId, p3_roleId, p4_baseRoleType):
                    }
 
         ## Define the payload
-        response = makeApiCall(p1_header=p1_header, p1_apiUrl=reEnrollUrl, p1_payload=payload, apiCallType="post")
+        response, _ = makeApiCall(localSetup, p1_header=p1_header, p1_apiUrl=reEnrollUrl, p1_payload=payload, p1_apiCallType="post")
 
         ## Make the API call to re-enroll the user
         if response.status_code == 200:
-            logger.info(f"Successfully re-enrolled user with ID: {p1_userId} in course with ID: {p2_courseId} with role ID: {p3_roleId}")
+            localSetup.logger.info(f"Successfully re-enrolled user with ID: {p1_userId} in course with ID: {p2_courseId} with role ID: {p3_roleId}")
         else:
-            logger.warning(f"Failed to re-enroll user with ID: {p1_userId} in course with ID: {p2_courseId}. Status code: {response.status_code}")
+            localSetup.logger.warning(f"Failed to re-enroll user with ID: {p1_userId} in course with ID: {p2_courseId}. Status code: {response.status_code}")
 
-    except Exception as error:
-        error_handler(functionName, error)
+    except Exception as Error:
+        errorHandler.sendError(functionName, Error)
 
 ## This function deletes the enrollment and re-enrolls the user with the new role
 def deleteAndReenroll(p1_header, p1_enrollmentId, p1_userId, p2_courseId, p3_roleId, p4_baseRoleType):
@@ -227,8 +227,8 @@ def changeListedEnrollmentsRole():
         for thread in ongoingChangeRoleThreads:
             thread.join()
 
-    except Exception as error:
-        error_handler(functionName, error)
+    except Exception as Error:
+        errorHandler.sendError(functionName, Error)
 
 if __name__ == "__main__":
     ## Set working directory

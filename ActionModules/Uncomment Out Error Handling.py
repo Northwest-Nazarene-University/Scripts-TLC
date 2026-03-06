@@ -1,20 +1,22 @@
 import os
 import re
 
+
 def uncomment_keywords_in_py_files(directory):
-    # Define the patterns to uncomment and their exceptions
+    ## List of (compiled_pattern, replacement) pairs
     patterns = [
-        r'#\s*(functionName)'
-        , r'#\s*(try:)'
-        , r'#\s*(except:)'
-        , r'#\s*(except Exception as error:)'
-        , r'#\s*(error_handler)'
-        , r'#(functionName)'
-        , r'#(try:)'
-        , r'#(except:)'
-        , r'#(except Exception as error:)'
-        , r'#(error_handler)'
-        ]
+        ## Uncomment "## try:" -> "    try:"
+        (re.compile(r'^\s*##\s*(try\s*:)', re.MULTILINE), r'    \1'),
+
+        ## Uncomment "## except ...:" -> "    except ...:"
+        (re.compile(r'^\s*##\s*(except\b.*:\s*)', re.MULTILINE), r'    \1'),
+
+        ## Uncomment "functionName" -> "    functionName"
+        (re.compile(r'^\s*##\s*(    functionName\b)', re.MULTILINE), r'\1'),
+
+        ## Uncomment "## errorHandler.sendError" -> "errorHandler.sendError"
+        (re.compile(r'^\s*##\s*(errorHandler\.sendError\b)', re.MULTILINE), r'\1'),
+    ]
 
     for root, _, files in os.walk(directory):
         for file in files:
@@ -27,10 +29,10 @@ def uncomment_keywords_in_py_files(directory):
                 modified_lines = []
                 for line in lines:
                     modified_line = line
-                    for pattern in patterns:
-                        if re.search(pattern, line):
-                            ## Remove the added comment symbol
-                            modified_line = re.sub(pattern, lambda m: m.group(1), modified_line)
+                    for pattern, replacement in patterns:
+                        if pattern.search(modified_line):
+                            modified_line = pattern.sub(replacement, modified_line)
+                            ## You can break here if you guarantee only one pattern per line
                     modified_lines.append(modified_line)
 
                 with open(file_path, 'w') as f:

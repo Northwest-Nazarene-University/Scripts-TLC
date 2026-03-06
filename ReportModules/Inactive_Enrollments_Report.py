@@ -1,12 +1,12 @@
-# Author: Bryce Miller - brycezmiller@nnu.edu
-# Last Updated by: Bryce Miller
+## Author: Bryce Miller - brycezmiller@nnu.edu
+## Last Updated by: Bryce Miller
 
 
 from datetime import datetime
 import paramiko, traceback,  os, logging, sys, requests, json, re, threading, time
-import pandas as pd #External Download from https://pypi.org/project/pandas/
+import pandas as pd ##External Download from https://pypi.org/project/pandas/
 
-# Define the script name, purpose, and external requirements for logging and error reporting purposes
+## Define the script name, purpose, and external requirements for logging and error reporting purposes
 scriptName = "Conclude Inactive Student's Enrollments"
 
 scriptPurpose = r"""
@@ -25,9 +25,9 @@ students.
 """
 
 ## Date Variables
-currentDate = datetime.now()
-currentMonth = currentDate.month
-currentYear = currentDate.year
+currentDateTime = datetime.now()
+currentMonth = currentDateTime.month
+currentYear = currentDateTime.year
 century = str(currentYear)[:2]
 decade = str(currentYear)[2:]
 currentTerms = []
@@ -98,30 +98,30 @@ while "Scripts TLC" not in os.listdir(PFRelativePath):
     PFRelativePath = f"..\\{PFRelativePath}"
 
 ## Change the relative path to an absolute path
-PFAbsolutePath = f"{os.path.abspath(PFRelativePath)}\\"
+absolutePath = f"{os.path.abspath(PFRelativePath)}\\"
 
 ## Add Input Modules to the sys path
-sys.path.append(f"{PFAbsolutePath}Scripts TLC\\ResourceModules")
+sys.path.append(f"{absolutePath}Scripts TLC\\ResourceModules")
 
 ## Import local modules
 from Error_Email_API import errorEmailApi
 from Get_Enrollments import termGetEnrollments
 
 ## Local Path Variables
-baseLogPath = f"{PFAbsolutePath}Logs\\{scriptName}\\"
-baseLocalInputPath = f"{PFAbsolutePath}Canvas Resources\\{str(currentYear)}\\"  ## This is only the base path as the real path requires the requested term
-baseLocalInputPathWithoutYear = f"{PFAbsolutePath}Canvas Resources\\"
-outputPath = f"{PFAbsolutePath}Canvas Resources\\"
-configPath = f"{PFAbsolutePath}Configs TLC\\"
+baseLogPath = f"{absolutePath}Logs\\{scriptName}\\"
+baseLocalInputPath = f"{absolutePath}Canvas Resources\\{str(currentYear)}\\"  ## This is only the base path as the real path requires the requested term
+baseLocalInputPathWithoutYear = f"{absolutePath}Canvas Resources\\"
+outputPath = f"{absolutePath}Canvas Resources\\"
+configPath = f"{absolutePath}Configs TLC\\"
 
 ## External Path Variables
 
 ## Define a variable to hold the base external input path which is where the sis input files are stored
-baseExternalInputPath = None 
-## Open Base_External_Paths.json from the config path and get the baseExternalInputPath value
-with open (f"{configPath}Base_External_Paths.json", "r") as file:
+SISResourcePath = None 
+## Open External_Resource_Paths.json from the config path and get the SISResourcePath value
+with open (f"{configPath}External_Resource_Paths.json", "r") as file:
     fileJson = json.load(file)
-    baseExternalInputPath = fileJson["baseExternalInputPath"]
+    SISResourcePath = fileJson["SISResourcePath"]
 
 ## If the base log path doesn't already exist, create it
 if not (os.path.exists(baseLogPath)):
@@ -154,30 +154,30 @@ infoLogFile = f"{baseLogPath}\\Info Log.txt"
 logInfo = logging.FileHandler(infoLogFile, mode = 'a')
 logInfo.setLevel(logging.INFO)
 logInfo.setFormatter(FORMAT)
-logger.addHandler(logInfo)
+localSetup.logger.addHandler(logInfo)
 
 ## Warning Log handler
 warningLogFile = f"{baseLogPath}\\Warning Log.txt"
 logWarning = logging.FileHandler(warningLogFile, mode = 'a')
 logWarning.setLevel(logging.WARNING)
 logWarning.setFormatter(FORMAT)
-logger.addHandler(logWarning)
+localSetup.logger.addHandler(logWarning)
 
 ## Error Log handler
 errorLogFile = f"{baseLogPath}\\Error Log.txt"
 logError = logging.FileHandler(errorLogFile, mode = 'a')
 logError.setLevel(logging.ERROR)
 logError.setFormatter(FORMAT)
-logger.addHandler(logError)
+localSetup.logger.addHandler(logError)
 
-## The variable below holds a set of the functions that have had errors. This enables the except function to only send
-## an error email the first time the function triggeres an error
-setOfFunctionsWithErrors = set()
+## Setup the error handler
+
+errorHandler = errorEmailApi(scriptName, scriptPurpose, externalRequirements, localSetup)
 
 ## This function handles function errors
-def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
-    functionName = "error_handler"
-    logger.error (f"     \nA script error occured while running {p1_ErrorLocation}. " +
+def errorHandler.sendError (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
+    functionName = "errorHandler.sendError"
+    localSetup.logger.error (f"     \nA script error occured while running {p1_ErrorLocation}. " +
                      f"Error: {str(p1_ErrorInfo)}")
     ## If the function with the error has not already been processed send an email alert
     if (p1_ErrorLocation not in setOfFunctionsWithErrors):
@@ -186,10 +186,10 @@ def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
                                      p2_ErrorLocation = p1_ErrorLocation, p2_ErrorInfo = f"{p1_ErrorInfo}: \n\n {traceback.format_exc()}")
         setOfFunctionsWithErrors.add(p1_ErrorLocation)
         ## Note that an error email was sent
-        logger.error (f"     \nError Email Sent")
+        localSetup.logger.error (f"     \nError Email Sent")
     ## Otherwise log the fact that an error email as already been sent
     else:
-        logger.error (f"     \nError email already sent")
+        localSetup.logger.error (f"     \nError email already sent")
 
 def concludeEnrollments():
     functionName = "Conclude Enrollments"
@@ -202,7 +202,7 @@ def concludeEnrollments():
         enrollmentsDF = pd.read_csv(baseLocalInputPathWithoutYear + "Canvas_Enrollments.csv", dtype={"user_id": str,})
 
         ## Open the current sis to Canvas user file
-        activeUsersDf = pd.read_csv(rf"{baseExternalInputPath}canvas_user.csv", dtype={"user_id": str,})
+        activeUsersDf = pd.read_csv(rf"{SISResourcePath}canvas_user.csv", dtype={"user_id": str,})
 
         ## Create a list of active user sis ids
         activeUsersSisIDList = []
@@ -216,7 +216,7 @@ def concludeEnrollments():
         ## Parse the enrollmentsDF and create an inactiveEnrollmentsDF that only has the records whose id's are not among the activeUsersIDList list
         moddedEnrollmentsDF = enrollmentsDF.drop(columns = enrollmentCsvColumnsToDrop, inplace=False)
 
-        # Remove enrollment records where Status is anything other than "active"
+        ## Remove enrollment records where Status is anything other than "active"
         moddedEnrollmentsDF = moddedEnrollmentsDF[moddedEnrollmentsDF["status"] == "active"]
         
         ## Create a list to hold the indexes of active user enrollments and those that have blank course ids
@@ -311,8 +311,8 @@ def concludeEnrollments():
 
 
 
-    except Exception as error:
-        error_handler (functionName, p1_ErrorInfo = error)
+    except Exception as Error:
+        errorHandler.sendError(functionName, Error)
 
 if __name__ == "__main__":
 

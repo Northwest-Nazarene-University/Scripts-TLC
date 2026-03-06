@@ -3,20 +3,38 @@
 
 ## Import Generic Moduels
 
-import traceback, os, sys, logging, csv, os, os.path, threading, json
-from datetime import date, datetime
+import os, sys, threading, asyncio
 import pandas as pd
+from datetime import datetime
 
-## Define the script name, purpose, and external requirements for 
-## logging and error reporting purposes
-script_name = "Send_Outcome_Emails"
+# Ensure ResourceModules are importable when running from ActionModules
+sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules"))
 
-purpose_of_script = r"""
-This script retrieves the contents of the active GE Outcomes information files, determines what emails needs to be sent, and sends them
-"""
-external_requirements_to_work_properly = r"""
-See the microsoft API requirements
-"""
+try: ## Irregular try clause, do not comment out in testing
+    from Local_Setup import LocalSetup
+    from Canvas_Report import CanvasReport
+    from Core_Microsoft_Api import sendOutlookEmail, CoreMicrosoftAPI
+    from Error_Email import errorEmail
+    from TLC_Common import isPresent
+    from Add_Outcomes_to_Active_Courses import (
+        retrieveDataForRelevantCommunication,
+        getUniqueOutcomesAndOutcomeCoursesDict,
+        removeMissingOutcomes,
+        addOutcomeToCourse,
+    )
+except ImportError:
+    # Fallback to relative imports if package layout differs
+    from ResourceModules.Local_Setup import LocalSetup
+    from ResourceModules.Canvas_Report import CanvasReport
+    from ResourceModules.Core_Microsoft_Api import sendOutlookEmail
+    from ResourceModules.Error_Email import errorEmail
+    from ResourceModules.TLC_Common import isPresent
+    from ActionModules.Add_Outcomes_to_Active_Courses import (
+            retrieveDataForRelevantCommunication,
+            getUniqueOutcomesAndOutcomeCoursesDict,
+            removeMissingOutcomes,
+            addOutcomeToCourse,
+        )
 
 ## Set working directory
 os.chdir(os.path.dirname(__file__))
@@ -25,149 +43,21 @@ os.chdir(os.path.dirname(__file__))
 scriptName = "Course_Date_Related_Actions"
 
 scriptPurpose = r"""
-
+This script determines what course date related actions need to be taken for a specific term, such as sending outcome related emails to instructors, and performs those actions.
 """
 externalRequirements = r"""
-
+This script requires the following external resources:
+1. Access to the Canvas API for retrieving course and instructor data.
+2. Access to the email system for sending outcome related emails to instructors.
+3. The ResourceModules and ActionModules directories in the Scripts TLC directory for additional functionality.
 """
 
-# Time variables
-currentDate = date.today()
-todaysDateDateTime = datetime.combine(currentDate, datetime.min.time())
-currentMonth = currentDate.month
-currentYear = currentDate.year
-lastYear = currentYear - 1
-nextYear = currentYear + 1
-century = str(currentYear)[:2]
-decade = str(currentYear)[2:]
-
-## Set working directory
-fileDir = os.path.dirname(__file__)
-os.chdir(fileDir)
-
-## The relative path is used to provide a generic way of finding where the Scripts TLC folder has been placed
-## This provides a non-script specific manner of finding the vaiours related modules
-PFRelativePath = r".\\"
-
-## If the Scripts TLC folder is not in the folder the PFRelative path points to
-## look for it in the next parent folder
-while "Scripts TLC" not in os.listdir(PFRelativePath):
-
-    PFRelativePath = f"..\\{PFRelativePath}"
-
-## Change the relative path to an absolute path
-PFAbsolutePath = f"{os.path.abspath(PFRelativePath)}\\"
-
-## Add the script folders to the path
-sys.path.append(f"{PFAbsolutePath}\\Scripts TLC\\ResourceModules")
-sys.path.append(f"{PFAbsolutePath}\\Scripts TLC\\ActionModules")
-
-## Import local modules
-from Error_Email_API import errorEmailApi
-from Core_Microsoft_Api import sendOutlookEmail
-from Add_Outcomes_to_Active_Courses import addOutcomeToCourse, getUniqueOutcomesAndOutcomeCoursesDict, removeMissingOutcomes, retrieveDataForRelevantCommunication
+## Initialize LocalSetup and helpers from ResourceModules
+localSetup = LocalSetup(datetime.now(), __file__)
+errorHandler = errorEmail(scriptName if 'scriptName' in globals() else 'Course_Date_Related_Actions', scriptPurpose, externalRequirements, localSetup)
 
 
-## Local Path Variables
-baseLogPath = f"{PFAbsolutePath}Logs\\{scriptName}\\"
-configPath = f"{PFAbsolutePath}\\Configs TLC\\"
-baseLocalInputPath = f"{PFAbsolutePath}Canvas Resources\\"
-
-## External Path Variables
-
-## Define a variable to hold the base external input path which is where the sis input files are stored
-baseExternalInputPath = None 
-## Open Base_External_Paths.json from the config path and get the baseExternalInputPath value
-with open (f"{configPath}Base_External_Paths.json", "r") as file:
-    fileJson = json.load(file)
-    baseExternalInputPath = fileJson["baseExternalInputPath"]
-
-## Canvas Instance Url
-CoreCanvasAPIUrl = None
-## Open the Core_Canvas_Url.txt from the config path
-with open (f"{configPath}Core_Canvas_Url.txt", "r") as file:
-    CoreCanvasAPIUrl = file.readlines()[0]
-
-## If the script is run as main the folder with the access token is in the parent directory
-canvasAccessToken = ""
-
-## Open and retrieve the Canvas Access Token
-with open (fr"{configPath}Canvas_Access_Token.txt", "r") as file:
-    canvasAccessToken = file.readlines()[0]
-
-## List of courses that don't need a syllabus. Syllabi for such courses are still gathered but they are not listed in the missing_syllabi.csv
-list_of_courses_that_dont_need_syllabi = []
-with open(f"{configPath}List_of_uneeded_syllabi.csv", 'r') as tempCsvFile:
-    tempcsvReader = csv.DictReader(tempCsvFile, delimiter = ',')
-    for row in tempcsvReader:
-        list_of_courses_that_dont_need_syllabi.append(row['course_id'])
-    tempCsvFile.close()
-
-#Primary API call header and payload
-header = {'Authorization' : 'Bearer ' + canvasAccessToken}
-payload = {'include[]': ['syllabus_body', 'term', 'account', 'teachers', 'sections', 'total_students']}
-
-## Begin logger set up
-
-## If the base log path doesn't already exist, create it
-if not (os.path.exists(baseLogPath)):
-    os.makedirs(baseLogPath, mode=0o777, exist_ok=False)
-
-## Log configurations
-logger = logging.getLogger(__name__)
-rootFormat = ("%(asctime)s %(levelname)s %(message)s")
-FORMAT = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-logging.basicConfig(format=rootFormat, filemode = "a", level=logging.INFO)
-
-## Info Log Handler
-infoLogFile = f"{baseLogPath}\\Info Log.txt"
-logInfo = logging.FileHandler(infoLogFile, mode = 'a')
-logInfo.setLevel(logging.INFO)
-logInfo.setFormatter(FORMAT)
-logger.addHandler(logInfo)
-
-## Warning Log handler
-warningLogFile = f"{baseLogPath}\\Warning Log.txt"
-logWarning = logging.FileHandler(warningLogFile, mode = 'a')
-logWarning.setLevel(logging.WARNING)
-logWarning.setFormatter(FORMAT)
-logger.addHandler(logWarning)
-
-## Error Log handler
-errorLogFile = f"{baseLogPath}\\Error Log.txt"
-logError = logging.FileHandler(errorLogFile, mode = 'a')
-logError.setLevel(logging.ERROR)
-logError.setFormatter(FORMAT)
-logger.addHandler(logError)
-
-## This variable enables the except function to only send
-## an error email the first time the function triggeres an error
-## by tracking what functions have already been recorded as having errors
-setOfFunctionsWithErrors = set()
-
-## This function handles function errors
-def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
-    functionName = "error_handler"
-
-    ## Log the error
-    logger.error (f"     \nA script error occured while running {p1_ErrorLocation}. " +
-                     f"Error: {str(p1_ErrorInfo)}")
-
-    ## If the function with the error has not already been processed send an email alert
-    if (p1_ErrorLocation not in setOfFunctionsWithErrors):
-        errorEmailApi.sendEmailError(p2_ScriptName = scriptName, p2_ScriptPurpose = scriptPurpose, 
-                                     p2_ExternalRequirements = externalRequirements, 
-                                     p2_ErrorLocation = p1_ErrorLocation, p2_ErrorInfo = f"{p1_ErrorInfo}: \n\n {traceback.format_exc()}")
-        
-        ## Add the function name to the set of functions with errors
-        setOfFunctionsWithErrors.add(p1_ErrorLocation)
-        
-        ## Note that an error email was sent
-        logger.error (f"     \nError Email Sent")
-    
-    ## Otherwise log the fact that an error email as already been sent
-    else:
-        logger.error (f"     \nError email already sent")
+# Canvas API header is provided by makeApiCall default; do not define header here
 
 ## This Function creates a formated Mising Outcome Attachment Email Body
 def createOutcomeEmailBody (p3_relevantEmail
@@ -237,7 +127,7 @@ def createOutcomeEmailBody (p3_relevantEmail
     emailBodyDict["signature"] = p1_emailDetails["Client Email Signature"]
         
     ## Define the action
-    emailBodyDict["bulletted resource list"]  = """<li><a href='https://community.canvaslms.com/t5/Instructor-Guide/How-do-I-align-an-outcome-with-a-rubric-in-a-course/ta-p/1130' target='_blank'>Attaching an outcome to a rubric</a></li>
+    emailBodyDict["bulletted resource list"]  = """<li><a href='https://community.canvaslms.com/t5/Instructor-Guide/How-do-I-align-an-outcome-with-a-rubric-in-a-course-using/ta-p/609340' target='_blank'>Attaching an outcome to a rubric</a></li>
     <li><a href='https://community.canvaslms.com/t5/Instructor-Guide/How-do-I-add-a-rubric-to-an-assignment/ta-p/1058#open_assignment' target='_blank'>Attaching a rubric to an assignment</a></li>
     <li><a href='https://community.canvaslms.com/t5/Instructor-Guide/How-do-I-add-a-rubric-to-a-graded-discussion/ta-p/1062#open_discussion' target='_blank'>Attaching a rubric to a graded discussion</a></li>
     <li><a href='https://community.canvaslms.com/t5/Instructor-Guide/How-do-I-add-a-rubric-to-a-quiz/ta-p/1009#open_quiz' target='_blank'>Attaching a rubric to a classic quiz</a></li>
@@ -256,7 +146,7 @@ def createOutcomeEmailBody (p3_relevantEmail
         emailBodyDict["dynamic cause"] = f"which has the following {singularOrPluralDict['outcome/outcomes']} associated with it:"
             
         ## Assign the course start reminder to attach outcomes to published assignments string
-        emailBodyDict["timeOfYearReminder"] = f"""As we begin the term, please ensure that the {singularOrPluralDict['designatorSpecificTerm']} langauge is included in your courses's syllabus.</p>
+        emailBodyDict["timeOfYearReminder"] = f"""As we begin the term, please ensure that the {singularOrPluralDict['designatorSpecificTerm']} langauge is included in your courses's syllabus.{p1_emailDetails['Dept Specific Wording']}</p>
         <p> Additionally, please consider how you will perform your outcome assessment, particularly which course assignment or assignments you will attach the {singularOrPluralDict['outcome/outcomes']} to."""
         
     ## If the relevant email is a reminder
@@ -306,7 +196,7 @@ def createOutcomeEmailBody (p3_relevantEmail
     
 <ul>{emailBodyDict["bulletted resource list"]}</ul>
     
-<p>{p1_emailDetails['Relevant Authority Contact Name']} can be reached at <a href='mailto:{p1_emailDetails['Client Send/Recieve Email']}'>{p1_emailDetails['Client Send/Recieve Email']}</a> and is a good resource for how to assess your associated outcomes in your field of study. Additionally, NNU's Teaching and Learning Center at <a href='mailto:tlc@nnu.edu'>tlc@nnu.edu</a> is always ready to provide ideas, best practice tips, and assistance with creating and assessing outcomes.<br></p>
+<p>{p1_emailDetails['User Contact Name'] or p1_emailDetails['Client Contact Name']} can be reached at <a href='mailto:{p1_emailDetails["User Contact Email"] or p1_emailDetails['Client Send/Recieve Email']}'>{p1_emailDetails["User Contact Email"] or p1_emailDetails['Client Send/Recieve Email']}</a> and is a good resource for how to assess your associated outcomes in your field of study. Additionally, NNU's Teaching and Learning Center at <a href='mailto:tlc@nnu.edu'>tlc@nnu.edu</a> is always ready to provide ideas, best practice tips, and assistance with creating and assessing outcomes.<br></p>
 
     {emailBodyDict["signature"]}
 """
@@ -314,19 +204,21 @@ def createOutcomeEmailBody (p3_relevantEmail
     return emailBodyDict["formatedEmaiBody"]
 
 ## This function crafts and sends the relevant outcome email
-def craftAndSendRelevantEmail (
-        p3_inputTerm
-        , p2_relevantEmail
-        , p2_row#):
-        , p1_auxillaryDFDict
-        ):
+def craftAndSendRelevantEmail(
+        p3_inputTerm,
+        p2_relevantEmail,
+        p2_row,
+        p1_auxiliaryDfDict,
+    ):
     
     functionName = "craftAndSendRelevantEmail"
     
     try:
-    
+        ## Define baseExternalInputPath in function scope
+        baseExternalInputPath = localSetup.getExternalResourcePath("SIS") or localSetup.configPath
+
         ## Retrieve the Automated Outcome Tool Variables excel file as a df    
-        automatedOutcomeToolVariablesDf = pd.read_excel(f"{baseExternalInputPath}Internal Tool Files\\Automated Outcome Tool Variables.xlsx")
+        automatedOutcomeToolVariablesDf = pd.read_excel(os.path.join(baseExternalInputPath, "Internal Tool Files", "Automated Outcome Tool Variables.xlsx"))
         
         ## Filter the automated outcome tool variables df to only the row with the relevant outcome area
         automatedOutcomeToolVariablesDict = automatedOutcomeToolVariablesDf[
@@ -340,19 +232,30 @@ def craftAndSendRelevantEmail (
             return
         
         ## Make a filtered Unassessed Outcome Courses DF that only includes the course that the email is being sent about
-        filteredUnassessedOutcomeCoursesDF = p1_auxillaryDFDict["Unassessed Outcome Courses DF"][
-            p1_auxillaryDFDict["Unassessed Outcome Courses DF"]["Course_name"] == p2_row["Course_name"]
+        filteredUnassessedOutcomeCoursesDF = p1_auxiliaryDfDict["Unassessed Outcome Courses DF"][
+            p1_auxiliaryDfDict["Unassessed Outcome Courses DF"]["Course_name"] == p2_row["Course_name"]
             ]
 
         ## Create an email details dictionary
         emailDetails = {"Client Name" : automatedOutcomeToolVariablesDict["Client Name"]
+                        , "Client Contact Name" : automatedOutcomeToolVariablesDict["Client Contact Name"]
                         , "Client Send/Recieve Email" : automatedOutcomeToolVariablesDict["Client Send/Recieve Email"]
-                        , "Relevant Authority Contact Name" : automatedOutcomeToolVariablesDict["Client Contact Name"]
                         , "Client Email Signature" : f"""{automatedOutcomeToolVariablesDict["Client Email Signature"]}"""
+                        , "User Contact Name" : (
+                            automatedOutcomeToolVariablesDict["User Contact Name"] 
+                            if isPresent(automatedOutcomeToolVariablesDict["User Contact Name"]) 
+                            else automatedOutcomeToolVariablesDict["Client Contact Name"]
+                            )
+                        , "User Contact Email" :automatedOutcomeToolVariablesDict["User Contact Email"]
                         , "Input Term": p3_inputTerm
                         , "Course Name": p2_row["Course_name"]
                         , "Relevant Email": p2_relevantEmail
                         , "Outcome Email Subject": f"{p2_row['Course_name']} {p2_relevantEmail}"
+                        , "Dept Specific Wording": (
+                            " " + str(automatedOutcomeToolVariablesDict["Dept Specific Wording"])
+                            if isPresent(automatedOutcomeToolVariablesDict["Dept Specific Wording"]) 
+                            else ""
+                            )
                         }
 
 
@@ -396,13 +299,13 @@ def craftAndSendRelevantEmail (
                         if "Instructor Email Or Emails String" not in emailDetails.keys():
                             
                             ## Add the teacher name to the list of instructor names
-                            emailDetails["Instructor Email Or Emails String"] = f"{datapoint}, "
+                            emailDetails["Instructor Email Or Emails String"] = f"{datapoint}"
                         
                         ## Otherwise
                         else:
 
                             ## Add the teacher name to the list of instructor names
-                            emailDetails["Instructor Email Or Emails String"] += f"{datapoint}, "
+                            emailDetails["Instructor Email Or Emails String"] += f", {datapoint}"
 
 
                 ## If the datapoint is an outcome
@@ -438,17 +341,16 @@ def craftAndSendRelevantEmail (
                                                           , p1_relevantAuthority = emailDetails["Client Name"]
                                                           , p1_emailDetails = emailDetails
                                                           )
-            
-            # Send the Outcome Email
-            sendOutlookEmail(p1_microsoftUserName = "lmsservice@nnu.edu"
-                             , p1_subject = emailDetails['Relevant Email']
+
+            ## Send the Outcome Email
+            sendOutlookEmail(p1_subject = emailDetails['Relevant Email']
                              , p1_body = emailDetails['Outcome Email Body']
                              , p1_recipientEmailList = emailDetails['Instructor Email Or Emails String']
                              , p1_shared_mailbox = emailDetails['Client Send/Recieve Email']
                              )
 
-    except Exception as error:
-        error_handler (functionName, error)
+    except Exception as Error:
+        errorHandler.sendError(functionName, Error)
 
 ## This function determines what course date related actions need to be taken for a specific term and performs them
 def termDetermineAndPerformRelevantActions (p1_inputTerm
@@ -459,10 +361,10 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
     try:
 
         ## Retrieve the data for determining and sending out relevant communication
-        completeActiveCanvasCoursesDF, auxillaryDFDict = retrieveDataForRelevantCommunication(p2_inputTerm = p1_inputTerm
-                                                                                              , p3_targetDesignator = p1_targetDesignator
-                                                                                              , p1_header = header
-                                                                                              )
+        completeActiveCanvasCoursesDF, auxiliaryDfDict = retrieveDataForRelevantCommunication(
+            p2_inputTerm = p1_inputTerm
+            , p3_targetDesignator = p1_targetDesignator
+            )
                 
         ## Define a list to hold the communication threads
         actionThreads = []
@@ -474,18 +376,18 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
             #if "WELL1000" in row["long_name"]:
 
                 ## Define a variable to track whether the course is an outcome course
-                isOutcomeCourse = True if row["long_name"] in auxillaryDFDict["Active Outcome Courses DF"]["Course_name"].values else False
+                isOutcomeCourse = True if row["long_name"] in auxiliaryDfDict["Active Outcome Courses DF"]["Course_name"].values else False
 
                 ## Define a relevant auxillary DF dict with empty dataframes
                 relevantAuxillaryDfDict = {}
             
                 ## If the course is in the list of courses who do not have their outcome attached to a published assignment
-                if not auxillaryDFDict["Outcome Courses Without Attachments DF"].empty:
+                if not auxiliaryDfDict["Outcome Courses Without Attachments DF"].empty:
                     
                     ## Isolate the course's data in p1_outcomeCoursesWithoutAttachmentDF
                     relevantAuxillaryDfDict["Relevant Course Outcome Without Attachment Df"] = (
-                        auxillaryDFDict["Outcome Courses Without Attachments DF"][
-                            auxillaryDFDict["Outcome Courses Without Attachments DF"]["Course_name"] == row["long_name"]
+                        auxiliaryDfDict["Outcome Courses Without Attachments DF"][
+                            auxiliaryDfDict["Outcome Courses Without Attachments DF"]["Course_name"] == row["long_name"]
                             ]
                         )
                     
@@ -496,12 +398,12 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
                     relevantAuxillaryDfDict["Relevant Course Outcome Without Attachment Df"] = pd.DataFrame()
 
                 ## If the course is in the list of courses who have no outcome results
-                if not auxillaryDFDict["Unassessed Outcome Courses DF"].empty:
+                if not auxiliaryDfDict["Unassessed Outcome Courses DF"].empty:
                     
                     ## Isolate the course's data in p1_outcomeCoursesWithoutOutcomeData
                     relevantAuxillaryDfDict["Relevant Course Outcome Without Data Df"] = (
-                        auxillaryDFDict["Unassessed Outcome Courses DF"][
-                            auxillaryDFDict["Unassessed Outcome Courses DF"]["Course_name"] == row["long_name"]
+                        auxiliaryDfDict["Unassessed Outcome Courses DF"][
+                            auxiliaryDfDict["Unassessed Outcome Courses DF"]["Course_name"] == row["long_name"]
                             ]
                         )
                     
@@ -515,23 +417,22 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
                 relevantEmailList = []
             
                 ## If it is the monday before the courses's week 0 and it is an outcome course
-                if (row['Course Week'] <= 4
+                if (row['Course Week'] == 0
                     and isOutcomeCourse
                     ):                
                     
                         ## Make a list of the unique outcomes that are not blank 
-                        ## and a dict to hold the course id of the course named after each outcome
-                        uniqueOutcomes, outcomeCourseDict = getUniqueOutcomesAndOutcomeCoursesDict(completeActiveCanvasCoursesDF, header)
+                        ## and a diMct to hold the course id of the course named after each outcome
+                        uniqueOutcomes, outcomeCourseDict = getUniqueOutcomesAndOutcomeCoursesDict(p1_inputTerm, completeActiveCanvasCoursesDF, p1_targetDesignator)
 
                         ## Remove any outcomes that don't have corresponding courses
-                        auxillaryDFDict["Active Outcome Courses DF"] = removeMissingOutcomes (auxillaryDFDict["Active Outcome Courses DF"], uniqueOutcomes, outcomeCourseDict)
+                        auxiliaryDfDict["Active Outcome Courses DF"] = removeMissingOutcomes (auxiliaryDfDict["Active Outcome Courses DF"], uniqueOutcomes, outcomeCourseDict)
                     
                         ## Start a thread to make sure the outcome has been added to the course
                         addOutcomeThread = threading.Thread(
                             target=addOutcomeToCourse
                             , args=(row
-                                    , auxillaryDFDict
-                                    , header
+                                    , auxiliaryDfDict
                                     )
                             )
 
@@ -543,7 +444,7 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
         
                 ## If it is the Monday of week 0
                 if (row['Course Week'] == 0
-                    and currentDate.weekday() == 0
+                    and localSetup.initialDateTime.weekday() == 0
                       ):
 
                     ## If the course is an Outcome course
@@ -551,10 +452,10 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
 
                         ## Send the courses's instructors the Course Start email
                         relevantEmailList.append("Associated Course Outcomes: Course Start Information")
-            
+                        
                 ## Otherwise, if it is the Monday of the week before the course's midpoint (e.g. week 7 in a 16 week course)
                 elif (row['Course Week'] == (int(row["Course Final Week"] / 2) - 1)
-                      and currentDate.weekday() == 0
+                      and localSetup.initialDateTime.weekday() == 0
                       ): ## Casting the result of courseLength / 2 to int rounds the number down        
             
                     ## If the course is an Outcome course
@@ -568,7 +469,7 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
 
                 ## Otherwise, if it is the Monday of the week before its final week (e.g. week 15 in a 16 week course)
                 elif (row['Course Week'] == (row["Course Final Week"] -1)
-                      and currentDate.weekday() == 0
+                      and localSetup.initialDateTime.weekday() == 0
                       ):
 
                     ## If the course is an Outcome course
@@ -582,7 +483,7 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
 
                 ## Otherwise, if it is the wednesday of the week after finals (e.g. week 17 from the start of a 16 week course)
                 elif (row['Course Week'] == (row["Course Final Week"] + 1)
-                      and currentDate.weekday() == 2
+                      and localSetup.initialDateTime.weekday() == 2
                       ):
             
                     ## If the course is an Outcome course
@@ -604,12 +505,12 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
                     if "Outcome" in relevantEmail:
                     
                         ## Find the index of course in the active outcome courses df
-                        courseIndex = auxillaryDFDict["Active Outcome Courses DF"][
-                            auxillaryDFDict["Active Outcome Courses DF"]["Course_name"] == row["long_name"]
+                        courseIndex = auxiliaryDfDict["Active Outcome Courses DF"][
+                            auxiliaryDfDict["Active Outcome Courses DF"]["Course_name"] == row["long_name"]
                             ].index[0]
 
                         ## Define the target row as the row in the active outcome courses df
-                        targetRow = auxillaryDFDict["Active Outcome Courses DF"].loc[courseIndex]
+                        targetRow = auxiliaryDfDict["Active Outcome Courses DF"].loc[courseIndex]
                     
                         
                     ## Create a thread to send the relevant outcome email
@@ -618,7 +519,7 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
                         , args=(p1_inputTerm
                                 , relevantEmail
                                 , targetRow
-                                , auxillaryDFDict
+                                , auxiliaryDfDict
                                 )
                         )
                 
@@ -634,8 +535,8 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
             ## Wait for the thread to finish
             thread.join()
 
-    except Exception as error:
-        error_handler (functionName, p1_ErrorInfo = error)
+    except Exception as Error:
+        errorHandler.sendError(functionName, Error)
 
 
 ## For testing
@@ -654,7 +555,7 @@ if __name__ == "__main__":
     #                                       , 'Instructor_#1_name': 'John Doe'
     #                                       , 'Instructor_#1_email': 'brycezmiller@nnu.edu'
     #                                       , 'Instructor_#2_name': 'John Doe'
-    #                                       , 'Instructor_#2_email': 'rgilbert@nnu.edu'
+    #                                       , 'Instructor_#2_email': 'brycezmiller@nnu.edu'
     #                                       },
     #                             p3_inputTerm="GF25")
     

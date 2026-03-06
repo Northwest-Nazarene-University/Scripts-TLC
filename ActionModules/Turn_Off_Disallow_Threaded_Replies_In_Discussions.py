@@ -1,5 +1,5 @@
-# Author: Bryce Miller - brycezmiller@nnu.edu
-# Last Updated by: Bryce Miller
+## Author: Bryce Miller - brycezmiller@nnu.edu
+## Last Updated by: Bryce Miller
 
 ## Import Generic Moduels
 from __future__ import print_function
@@ -14,10 +14,10 @@ os.chdir(os.path.dirname(__file__))
 ## Add Script repository to syspath
 sys.path.append(f"{os.getcwd()}\ResourceModules")
 
-# Define the script name, purpose, and external requirements for logging and error reporting purposes
+## Define the script name, purpose, and external requirements for logging and error reporting purposes
 scriptName = "Turn off disallow threaded discussions"
 
-# Script file identifier
+## Script file identifier
 scriptRequirementMissingFolderIdentifier = "Missing_Syllabi"
 
 scriptPurpose = r"""
@@ -28,15 +28,15 @@ To function properly this script requires a spreadsheet of the most recent outco
 """
 
 ## Date Variables
-currentDate = datetime.now()
-currentMonth = currentDate.month
-currentYear = currentDate.year
+currentDateTime = datetime.now()
+currentMonth = currentDateTime.month
+currentYear = currentDateTime.year
 century = str(currentYear)[:2]
 decade = str(currentYear)[2:]
 
-# Time variables
-currentDate = date.today()
-current_year = currentDate.year
+## Time variables
+currentDateTime = date.today()
+current_year = currentDateTime.year
 lastYear = current_year - 1
 nextYear = current_year + 1
 century = str(current_year)[:2]
@@ -57,18 +57,18 @@ while "Scripts TLC" not in os.listdir(PFRelativePath):
     PFRelativePath = f"..\\{PFRelativePath}"
 
 ## Change the relative path to an absolute path
-PFAbsolutePath = f"{os.path.abspath(PFRelativePath)}\\"
+absolutePath = f"{os.path.abspath(PFRelativePath)}\\"
 
 ## Add Input Modules to the sys path
-sys.path.append(f"{PFAbsolutePath}Scripts TLC\\ResourceModules")
+sys.path.append(f"{absolutePath}Scripts TLC\\ResourceModules")
 
 ## Import local modules
 from Error_Email_API import errorEmailApi
 
 ## Local Path Variables
-baseLogPath = f"{PFAbsolutePath}Logs\\{scriptName}\\"
-configPath = f"{PFAbsolutePath}\\Configs TLC\\"
-baseLocalInputPath = f"{PFAbsolutePath}Canvas Resources\\"
+baseLogPath = f"{absolutePath}Logs\\{scriptName}\\"
+configPath = f"{absolutePath}\\Configs TLC\\"
+baseLocalInputPath = f"{absolutePath}Canvas Resources\\"
 
 ## Canvas Instance Url
 coreCanvasApiUrl = None
@@ -83,7 +83,7 @@ canvasAccessToken = ""
 with open (fr"{configPath}Canvas_Access_Token.txt", "r") as file:
     canvasAccessToken = file.readlines()[0]
 
-## Begin logger set up
+## Begin localSetup.logger set up
 
 ## If the base log path doesn't already exist, create it
 if not (os.path.exists(baseLogPath)):
@@ -100,33 +100,33 @@ infoLogFile = f"{baseLogPath}\\Info Log.txt"
 logInfo = logging.FileHandler(infoLogFile, mode = 'a')
 logInfo.setLevel(logging.INFO)
 logInfo.setFormatter(FORMAT)
-logger.addHandler(logInfo)
+localSetup.logger.addHandler(logInfo)
 
 ## Warning Log handler
 warningLogFile = f"{baseLogPath}\\Warning Log.txt"
 logWarning = logging.FileHandler(warningLogFile, mode = 'a')
 logWarning.setLevel(logging.WARNING)
 logWarning.setFormatter(FORMAT)
-logger.addHandler(logWarning)
+localSetup.logger.addHandler(logWarning)
 
 ## Error Log handler
 errorLogFile = f"{baseLogPath}\\Error Log.txt"
 logError = logging.FileHandler(errorLogFile, mode = 'a')
 logError.setLevel(logging.ERROR)
 logError.setFormatter(FORMAT)
-logger.addHandler(logError)
+localSetup.logger.addHandler(logError)
 
 ## This variable enables the except function to only send
-## an error email the first time the function triggeres an error
+
 ## by tracking what functions have already been recorded as having errors
-setOfFunctionsWithErrors = set()
+errorHandler = errorEmailApi(scriptName, scriptPurpose, externalRequirements, localSetup)
 
 ## This function handles function errors
-def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
-    functionName = "error_handler"
+def errorHandler.sendError (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
+    functionName = "## errorHandler.sendError"
 
     ## Log the error
-    logger.error (f"     \nA script error occured while running {p1_ErrorLocation}. " +
+    localSetup.logger.error (f"     \nA script error occured while running {p1_ErrorLocation}. " +
                      f"Error: {str(p1_ErrorInfo)}")
 
     ## If the function with the error has not already been processed send an email alert
@@ -139,13 +139,13 @@ def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
         setOfFunctionsWithErrors.add(p1_ErrorLocation)
         
         ## Note that an error email was sent
-        logger.error (f"     \nError Email Sent")
+        localSetup.logger.error (f"     \nError Email Sent")
     
     ## Otherwise log the fact that an error email as already been sent
     else:
-        logger.error (f"     \nError email already sent")
+        localSetup.logger.error (f"     \nError email already sent")
 
-# This function processes the rows of the CSV file and sends on the relavent data to process_course
+## This function processes the rows of the CSV file and sends on the relavent data to process_course
 def addOutcomeToCourse (row, p2_inputTerm, p1_header, p1_outcomeCourseDict):
     functionName = "Add Outcome/s to courses"
 
@@ -162,9 +162,9 @@ def addOutcomeToCourse (row, p2_inputTerm, p1_header, p1_outcomeCourseDict):
         outcomeKeys = [col for col in row.keys() if "Outcome" in col and "Area" not in col]
             
         ## Log the start of the process
-        logger.info("\n     Course:" + targetCourseSisId)
+        localSetup.logger.info("\n     Course:" + targetCourseSisId)
 
-        # Create the URL the API call will be made to
+        ## Create the URL the API call will be made to
         course_API_url = coreCanvasApiUrl + "courses/sis_course_id:" + targetCourseSisId + "/course_copy"
         
         ## For each outcome in the row
@@ -185,22 +185,22 @@ def addOutcomeToCourse (row, p2_inputTerm, p1_header, p1_outcomeCourseDict):
                 
             ## If the API status code is anything other than 200 it is an error, so log it and skip
             if (course_object.status_code != 200):
-                logger.error("\nCourse Error: " + str(course_object.status_code))
-                logger.error(course_API_url)
-                logger.error(course_object.url)
+                localSetup.logger.error("\nCourse Error: " + str(course_object.status_code))
+                localSetup.logger.error(course_API_url)
+                localSetup.logger.error(course_object.url)
             else:
-                # Successfully made the API call
-                logger.info("\nOutcome copy successful for : " + targetCourseSisId)
+                ## Successfully made the API call
+                localSetup.logger.info("\nOutcome copy successful for : " + targetCourseSisId)
 
-    except Exception as error:
-        error_handler (functionName, error)
+    except Exception as Error:
+    errorHandler.sendError (functionName, Error)
         
 ## This function makes a makes an api call to Canvas to set a course's discussion topic to allow threaded replies
 def allowThreadedReplies (p1_row, p1_header, p1_canvasCourseUnthreadedDiscussions):
     
-        functionName = "allowThreadedReplies"
+    functionName = "allowThreadedReplies"
 
-        try:
+    try:
 
             ## Define the course vaables
             canvasCourseId = int(p1_row['canvas_course_id'])
@@ -225,7 +225,7 @@ def allowThreadedReplies (p1_row, p1_header, p1_canvasCourseUnthreadedDiscussion
                 while (courseDiscussionTopicsObject.status_code == 403):
                     
                     ## Log that the course has been rate limited
-                    logger.warning("\nRate limited for course: " + str(canvasCourseId))
+                    localSetup.logger.warning("\nRate limited for course: " + str(canvasCourseId))
                     
                     ## Wait 2 seconds
                     time.sleep(5) 
@@ -235,9 +235,9 @@ def allowThreadedReplies (p1_row, p1_header, p1_canvasCourseUnthreadedDiscussion
 
             ## If the API status code is anything other than 200 it is an error, so log it and skip
             if (courseDiscussionTopicsObject.status_code != 200):
-                logger.error("\nCourse Error: " + str(courseDiscussionTopicsObject.status_code))
-                logger.error(courseDiscussionTopicsApiUrl)
-                logger.error(courseDiscussionTopicsObject.url)
+                localSetup.logger.error("\nCourse Error: " + str(courseDiscussionTopicsObject.status_code))
+                localSetup.logger.error(courseDiscussionTopicsApiUrl)
+                localSetup.logger.error(courseDiscussionTopicsObject.url)
 
             ## Otherwise
             else:
@@ -249,7 +249,7 @@ def allowThreadedReplies (p1_row, p1_header, p1_canvasCourseUnthreadedDiscussion
                 if not courseDiscussionTopicsDict:
                     
                     ## Log that the course has no discussion topics
-                    logger.info("\nNo discussion topics for course: " + str(canvasCourseId))
+                    localSetup.logger.info("\nNo discussion topics for course: " + str(canvasCourseId))
                 
                 ## Otherwise
                 else:
@@ -270,12 +270,12 @@ def allowThreadedReplies (p1_row, p1_header, p1_canvasCourseUnthreadedDiscussion
                             p1_canvasCourseUnthreadedDiscussions["discussion title"].append(discussionTitle)
                             p1_canvasCourseUnthreadedDiscussions["discussion url"].append(discussionUrl)
 
-            logger.info (f"Course {canvasCourseId} processed")
+            localSetup.logger.info (f"Course {canvasCourseId} processed")
                             
-        except Exception as error:
-          error_handler (functionName, error)
+    except Exception as Error:
+    errorHandler.sendError (functionName, Error)
 
-# This function opens the CSV file, the save locations json file, sends the information on, and closes both files
+## This function opens the CSV file, the save locations json file, sends the information on, and closes both files
 def allowThreadedDiscussions():
     functionName = "outcome_exporter"
     
@@ -308,7 +308,7 @@ def allowThreadedDiscussions():
             if pd.isna(row['canvas_course_id']):
                 continue
 
-            #if row["course_id"] == "FA2024_ACCT2060_01":
+            ##if row["course_id"] == "FA2024_ACCT2060_01":
 
             ## Create a threaded allow threaded replies object
             threadCourseDiscussionsAllowThreading = threading.Thread(target=allowThreadedReplies, args=(row, header, canvasCourseUnthreadedDiscussions))
@@ -335,8 +335,8 @@ def allowThreadedDiscussions():
         ## Save the df to a csv
         canvasCourseUnthreadedDiscussionsDF.to_csv(f"{baseLocalInputPath}Canvas_Course_Unthreaded_Discussions.csv", index = False)
      
-    except Exception as error:
-        error_handler (functionName, error)
+    except Exception as Error:
+    errorHandler.sendError (functionName, Error)
 
 if __name__ == "__main__":
 

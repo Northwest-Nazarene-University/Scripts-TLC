@@ -30,16 +30,16 @@ To function properly, this script requires that the static Syllabus Addendum lin
 """
 
 ## Time variables
-currentDate = date.today()
-currentYear = currentDate.year
-currentMonth = currentDate.month
+currentDateTime = date.today()
+currentYear = currentDateTime.year
+currentMonth = currentDateTime.month
 lastYear = currentYear - 1
 nextYear = currentYear + 1
 century = str(currentYear)[:2]
 decade = str(currentYear)[2:]
 
 ##pdfkit (which enables the script to convert html code into .pdf and save it) needs to access wkhtmltopdf.exe which is easier if it has a direct path configured instead of try:ing to find it generally
-path_wkhtmltopdf = r'C:\Program Files\wkhtmltopdf\bin\wkhtmltopdf.exe' ##This is the default location of wkhtmltopdf.exe and would need to be changed if the default installation location for wkhtmltopdf was edited.
+path_wkhtmltopdf = r'Program Files\wkhtmltopdf\bin\wkhtmltopdf.exe' ##This is the default location of wkhtmltopdf.exe and would need to be changed if the default installation location for wkhtmltopdf was edited.
 config = pdfkit.configuration(wkhtmltopdf=path_wkhtmltopdf)
 
 ## Set working directory
@@ -57,10 +57,10 @@ while "Scripts TLC" not in os.listdir(PFRelativePath):
     PFRelativePath = f"..\\{PFRelativePath}"
 
 ## Change the relative path to an absolute path
-PFAbsolutePath = f"{os.path.abspath(PFRelativePath)}\\"
+absolutePath = f"{os.path.abspath(PFRelativePath)}\\"
 
 ## Add Input Modules to the sys path
-sys.path.append(f"{PFAbsolutePath}Scripts TLC\\ResourceModules")
+sys.path.append(f"{absolutePath}Scripts TLC\\ResourceModules")
 
 ## Import local modules
 from Error_Email_API import errorEmailApi
@@ -69,19 +69,19 @@ from Download_File import downloadFile
 from Create_Sub_Account_Save_Path import determineDepartmentSavePath
 
 ## Local Path Variables
-baseLogPath = f"{PFAbsolutePath}Logs\\{scriptName}\\"
-configPath = f"{PFAbsolutePath}\\Configs TLC\\"
-baseLocalInputPath = f"{PFAbsolutePath}Canvas Resources\\"  ## This is only the base path as the real path requires the requested term
+baseLogPath = f"{absolutePath}Logs\\{scriptName}\\"
+configPath = f"{absolutePath}\\Configs TLC\\"
+baseLocalInputPath = f"{absolutePath}Canvas Resources\\"  ## This is only the base path as the real path requires the requested term
 
 ## External Path Variables
 
 ## Define a variable to hold the output path 
 baseExternalOutputPath = None ## Where the syllabus repository will be created and relavent reports stored
 
-## Open Base_External_Paths.json from the config path and get the baseExternalInputPath and baseExternalOutputPath values
-with open (f"{configPath}Base_External_Paths.json", "r") as file:
+## Open External_Resource_Paths.json from the config path and get the SISResourcePath and baseExternalOutputPath values
+with open (f"{configPath}External_Resource_Paths.json", "r") as file:
     fileJson = json.load(file)
-    baseExternalOutputPath = fileJson["baseTlcUniversitySyllabiDataExternalOutputPath"]
+    baseExternalOutputPath = fileJson["UniversitySyllabusResourcePath"]
 
 ## Canvas Instance Url
 coreCanvasApiUrl = None
@@ -108,7 +108,7 @@ with open(f"{configPath}List_of_uneeded_syllabi.csv", 'r') as tempCsvFile:
 header = {'Authorization' : 'Bearer ' + canvasAccessToken}
 payload = {'include[]': ['syllabus_body', 'term', 'account', 'teachers', 'sections', 'total_students']}
 
-## Begin logger set up
+## Begin localSetup.logger set up
 
 ## If the base log path doesn't already exist, create it
 if not (os.path.exists(baseLogPath)):
@@ -125,33 +125,33 @@ infoLogFile = f"{baseLogPath}\\Info Log.txt"
 logInfo = logging.FileHandler(infoLogFile, mode = 'a')
 logInfo.setLevel(logging.INFO)
 logInfo.setFormatter(FORMAT)
-logger.addHandler(logInfo)
+localSetup.logger.addHandler(logInfo)
 
 ## Warning Log handler
 warningLogFile = f"{baseLogPath}\\Warning Log.txt"
 logWarning = logging.FileHandler(warningLogFile, mode = 'a')
 logWarning.setLevel(logging.WARNING)
 logWarning.setFormatter(FORMAT)
-logger.addHandler(logWarning)
+localSetup.logger.addHandler(logWarning)
 
 ## Error Log handler
 errorLogFile = f"{baseLogPath}\\Error Log.txt"
 logError = logging.FileHandler(errorLogFile, mode = 'a')
 logError.setLevel(logging.ERROR)
 logError.setFormatter(FORMAT)
-logger.addHandler(logError)
+localSetup.logger.addHandler(logError)
 
 ## This variable enables the except function to only send
-## an error email the first time the function triggeres an error
+
 ## by tracking what functions have already been recorded as having errors
-setOfFunctionsWithErrors = set()
+errorHandler = errorEmailApi(scriptName, scriptPurpose, externalRequirements, localSetup)
 
 ## This function handles function errors
-def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
-    functionName = "error_handler"
+def errorHandler.sendError (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
+    functionName = "errorHandler.sendError"
 
     ## Log the error
-    logger.error (f"     \nA script error occured while running {p1_ErrorLocation}. " +
+    localSetup.logger.error (f"     \nA script error occured while running {p1_ErrorLocation}. " +
                      f"Error: {str(p1_ErrorInfo)}")
 
     ## If the function with the error has not already been processed send an email alert
@@ -164,11 +164,11 @@ def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
         setOfFunctionsWithErrors.add(p1_ErrorLocation)
         
         ## Note that an error email was sent
-        logger.error (f"     \nError Email Sent")
+        localSetup.logger.error (f"     \nError Email Sent")
     
     ## Otherwise log the fact that an error email as already been sent
     else:
-        logger.error (f"     \nError email already sent")
+        localSetup.logger.error (f"     \nError email already sent")
 
 """ 
  This fuction saves the course ID and other identifiers of the course in question.
@@ -235,8 +235,8 @@ def addendumReportSaveCourseInfo(p1_saveLocation, p1_college_saveLocation, p1_co
         p2_collegeOrDeptMissingRequirement.append (deptmentMissingRequirementCsv)
         p2_collegeOrDeptMissingRequirement.append (collegeMissingRequirementCsv)
 
-    except Exception as error:
-        error_handler (functionName, error)
+    except Exception as Error:
+        errorHandler.sendError (functionName, Error)
 
 ## This function processes the urls found within the course syllabus tab and makes a note if the course doesn't have the syllabus addendum
 ## Script Specific
@@ -252,15 +252,15 @@ def process_url_matches (p1_all_url_matches):
 
         for element in p1_all_url_matches:
             if (element in processed_urls):
-                logger.info("Link Skipped: Previously processed URL")
+                localSetup.logger.info("Link Skipped: Previously processed URL")
             else:
                 ## URL has not been seen before - attempt to process it.
                 processed_urls.add(str(element))
                 if re.search(r'syllabus_addendum.aspx',  element, re.IGNORECASE):
                     requirementMet = True
         return requirementMet
-    except Exception as error:
-        error_handler (functionName, error)
+    except Exception as Error:
+        errorHandler.sendError (functionName, Error)
         return True
 
 ## This function makes a get call to the and processes the course listed on the most recent 
@@ -293,7 +293,7 @@ def courseAddendumReport (row, p3_inputTerm, p1_departmentSavePaths, p1_CollegeO
             .replace("/", " ").replace("\\", " ").replace("|", " ").replace("?", " ").replace("*", " ") 
 
         ## Begin a new course entry: in the log
-        logger.info("\n     Course: " + courseSisId)
+        localSetup.logger.info("\n     Course: " + courseSisId)
             
         ## Create the URL the API call will be made to
         course_API_url = coreCanvasApiUrl + "courses/sis_course_id:" + courseSisId
@@ -303,7 +303,7 @@ def courseAddendumReport (row, p3_inputTerm, p1_departmentSavePaths, p1_CollegeO
                 
         ## If the API status code is anything other than 200 it is an error, so log it and skip
         if (course_object.status_code != 200):
-            logger.info(f"\n     {courseName} Error: {str(course_object.status_code)}" \
+            localSetup.logger.info(f"\n     {courseName} Error: {str(course_object.status_code)}" \
                 + f"\n{course_API_url})" \
                 + f"\n{course_object.url}")
         else:
@@ -339,7 +339,7 @@ def courseAddendumReport (row, p3_inputTerm, p1_departmentSavePaths, p1_CollegeO
 
             ## If the determined path has the manually created courses parent account name in it, skip the course
             if "Manually-Created Courses" in courseDepartmentPath:
-                logger.info(f"\n     {courseName} Skipped: Manually created course so no need for a syllabi")
+                localSetup.logger.info(f"\n     {courseName} Skipped: Manually created course so no need for a syllabi")
                 return
             
             ## Isolate the college piece of the department file path and save it as courseCollegePath.
@@ -367,20 +367,20 @@ def courseAddendumReport (row, p3_inputTerm, p1_departmentSavePaths, p1_CollegeO
             if not (os.path.exists(saveLocation + "\Other_Course_Files")):
                 ## Create the sub-account & department specific directory if it doesn't already exist.
                 os.makedirs(saveLocation + "\Other_Course_Files", mode=0o777, exist_ok=False)
-                logger.info(str("\n" + saveLocation + "\Other_Course_Files: directories created\n"))
+                localSetup.logger.info(str("\n" + saveLocation + "\Other_Course_Files: directories created\n"))
         
             ## If the course doesn't have a syllabus body, skip it and add the relavent info to the Missing_Syllabi.csv file.
             if not (course_text_jsonObject["syllabus_body"]):
-                logger.info("\n     Course Skipped: No Syllabus_Body")
+                localSetup.logger.info("\n     Course Skipped: No Syllabus_Body")
                 return "", "", False
             elif (course_text_jsonObject['total_students'] == 0):
-                logger.info("\n     Course Skipped: No Students")
+                localSetup.logger.info("\n     Course Skipped: No Students")
                 return "", "", False
             else:
                 ## If the course has a template syllabus body, skip it and add the relavent info to the Missing_Syllabi.csv file.
                 ## 323 is the known character length of one version of the syllabus template, and the <span> listed is a known piece of the version of the syllabus template current when this comment was written (11/5/21).
                 if (len(syllabus_body) == 323 or re.search(r'<span style="font-size: 36pt;">Replace with Syllabus Content</span>', syllabus_body)):
-                    logger.info("\n     Course Skipped: Template Syllabus Body")
+                    localSetup.logger.info("\n     Course Skipped: Template Syllabus Body")
                     return "", "", False
                 else:
                     ## Find all http and https links. Beginning the search with " helps ensure that only valid urls are found.
@@ -393,10 +393,10 @@ def courseAddendumReport (row, p3_inputTerm, p1_departmentSavePaths, p1_CollegeO
                         contains_requirement = process_url_matches (all_url_matches)
                     else:
                         ## JSON.syllabus_body did not contain any URLs
-                        logger.info("\n     \nNo url matches")
+                        localSetup.logger.info("\n     \nNo url matches")
                     if (contains_requirement):
                         ## Course contains syllabus addendum link
-                        logger.info ("Course contains external addendum link")
+                        localSetup.logger.info ("Course contains external addendum link")
                         return (saveLocation + "\\" + p3_inputTerm), (college_saveLocation + "\\" + p3_inputTerm), True
                     else:
                         if not (sections):
@@ -405,11 +405,11 @@ def courseAddendumReport (row, p3_inputTerm, p1_departmentSavePaths, p1_CollegeO
                         else:
                             addendumReportSaveCourseInfo(saveLocation, college_saveLocation, courseName, "Course doesn't have the most recent addendum link",
                                                          course_teacher_1_name, start_date, end_date, p3_inputTerm, courseAccountId, p1_CollegeOrDeptMissingRequirement)
-                        logger.info ("Course does not contain external addendum link")
+                        localSetup.logger.info ("Course does not contain external addendum link")
                         return (saveLocation + "\\" + p3_inputTerm), (college_saveLocation + "\\" + p3_inputTerm), False
 
-    except Exception as error:
-        error_handler (functionName, error)
+    except Exception as Error:
+        errorHandler.sendError (functionName, Error)
 
 ## This function processes the rows of the CSV file and sends on the relavent data to process_course
 def termAddendumReport (p2_inputTerm):
@@ -445,8 +445,8 @@ def termAddendumReport (p2_inputTerm):
         ## Apply courseSyllabiReport to each row
         termCoursesDF.apply(courseAddendumReport, args=(p2_inputTerm, departmentSavePaths, collegeOrDeptMissingRequirement, schoolYear), axis=1)
 
-    except Exception as error:
-        error_handler (functionName, error)
+    except Exception as Error:
+        errorHandler.sendError (functionName, Error)
 
 ## This function opens the CSV file, the save locations json file, sends the information on, and closes both files
 def runAddendumReport(p1_inputTerm = ""):
@@ -473,8 +473,8 @@ def runAddendumReport(p1_inputTerm = ""):
 
         termAddendumReport (p2_inputTerm = p1_inputTerm)
      
-    except Exception as error:
-        error_handler (functionName, error)
+    except Exception as Error:
+        errorHandler.sendError (functionName, Error)
 
 if __name__ == "__main__":
 

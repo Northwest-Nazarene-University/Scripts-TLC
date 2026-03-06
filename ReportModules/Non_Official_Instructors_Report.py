@@ -1,5 +1,5 @@
-# Author: Bryce Miller - brycezmiller@nnu.edu
-# Last Updated by: Bryce Miller
+## Author: Bryce Miller - brycezmiller@nnu.edu
+## Last Updated by: Bryce Miller
 
 ## Import Generic Moduels
 import traceback, os, sys, logging, threading, csv, requests, json, pdfkit, re, os, os.path
@@ -26,16 +26,16 @@ To function properly, this script requires access to the ..\Canvas Resources fol
 """
 
 ## Time variables
-currentDate = date.today()
-currentYear = currentDate.year
-currentMonth = currentDate.month
+currentDateTime = date.today()
+currentYear = currentDateTime.year
+currentMonth = currentDateTime.month
 lastYear = currentYear - 1
 nextYear = currentYear + 1
 century = str(currentYear)[:2]
 decade = str(currentYear)[2:]
 
 ##pdfkit (which enables the script to convert html code into .pdf and save it) needs to access wkhtmltopdf.exe which is easier if it has a direct path configured instead of try:ing to find it generally
-path_wkhtmltopdf = r'C:\Program Files\wkhtmltopdf\bin\wkhtmltopdf.exe' ##This is the default location of wkhtmltopdf.exe and would need to be changed if the default installation location for wkhtmltopdf was edited.
+path_wkhtmltopdf = r'Program Files\wkhtmltopdf\bin\wkhtmltopdf.exe' ##This is the default location of wkhtmltopdf.exe and would need to be changed if the default installation location for wkhtmltopdf was edited.
 config = pdfkit.configuration(wkhtmltopdf=path_wkhtmltopdf)
 
 ## Set working directory
@@ -53,14 +53,14 @@ while "Scripts TLC" not in os.listdir(PFRelativePath):
     PFRelativePath = f"..\\{PFRelativePath}"
 
 ## Change the relative path to an absolute path
-PFAbsolutePath = f"{os.path.abspath(PFRelativePath)}\\"
+absolutePath = f"{os.path.abspath(PFRelativePath)}\\"
 
 ## Define the internal paths
-rawInternalInputPath = f"{PFAbsolutePath}Canvas Resources\\"
-internalOutputPath = f"{PFAbsolutePath}Canvas Resources\\"
+rawInternalInputPath = f"{absolutePath}Canvas Resources\\"
+internalOutputPath = f"{absolutePath}Canvas Resources\\"
 
 ## Add Input Modules to the sys path
-sys.path.append(f"{PFAbsolutePath}Scripts TLC\\ResourceModules")
+sys.path.append(f"{absolutePath}Scripts TLC\\ResourceModules")
 
 ## Import local modules
 from Error_Email_API import errorEmailApi
@@ -70,19 +70,19 @@ from Create_Sub_Account_Save_Path import determineDepartmentSavePath
 from Download_File import downloadFile
 
 ## Local Path Variables
-baseLogPath = f"{PFAbsolutePath}Logs\\{scriptName}\\"
-configPath = f"{PFAbsolutePath}\\Configs TLC\\"
-baseLocalInputPath = f"{PFAbsolutePath}Canvas Resources\\"  ## This is only the base path as the real path requires the requested term
-baseLocalOutputPath = f"{PFAbsolutePath}Canvas Resources\\" ## This is only the base path as the real path requires the requested term
+baseLogPath = f"{absolutePath}Logs\\{scriptName}\\"
+configPath = f"{absolutePath}\\Configs TLC\\"
+baseLocalInputPath = f"{absolutePath}Canvas Resources\\"  ## This is only the base path as the real path requires the requested term
+baseLocalOutputPath = f"{absolutePath}Canvas Resources\\" ## This is only the base path as the real path requires the requested term
 
 ## External Path Variables
 
 ## Define a variable to hold the base external input path which is where the sis input files are stored
 baseExternalOutputPath = None ## Where the syllabus repository will be created and relavent reports stored
-## Open Base_External_Paths.json from the config path and get the baseExternalInputPath value
-with open (f"{configPath}Base_External_Paths.json", "r") as file:
+## Open External_Resource_Paths.json from the config path and get the SISResourcePath value
+with open (f"{configPath}External_Resource_Paths.json", "r") as file:
     fileJson = json.load(file)
-    baseExternalOutputPath = fileJson["baseTlcUniversitySyllabiDataExternalOutputPath"]
+    baseExternalOutputPath = fileJson["UniversitySyllabusResourcePath"]
 
 ## Canvas Instance Url
 coreCanvasApiUrl = None
@@ -110,7 +110,7 @@ with open(f"{configPath}List_of_uneeded_syllabi.csv", 'r') as tempCsvFile:
 header = {'Authorization' : 'Bearer ' + canvasAccessToken}
 payload = {'include[]': ['syllabus_body', 'term', 'account', 'teachers', 'sections', 'total_students']}
 
-## Begin logger set up
+## Begin localSetup.logger set up
 
 ## If the base log path doesn't already exist, create it
 if not (os.path.exists(baseLogPath)):
@@ -127,33 +127,33 @@ infoLogFile = f"{baseLogPath}\\Info Log.txt"
 logInfo = logging.FileHandler(infoLogFile, mode = 'a')
 logInfo.setLevel(logging.INFO)
 logInfo.setFormatter(FORMAT)
-logger.addHandler(logInfo)
+localSetup.logger.addHandler(logInfo)
 
 ## Warning Log handler
 warningLogFile = f"{baseLogPath}\\Warning Log.txt"
 logWarning = logging.FileHandler(warningLogFile, mode = 'a')
 logWarning.setLevel(logging.WARNING)
 logWarning.setFormatter(FORMAT)
-logger.addHandler(logWarning)
+localSetup.logger.addHandler(logWarning)
 
 ## Error Log handler
 errorLogFile = f"{baseLogPath}\\Error Log.txt"
 logError = logging.FileHandler(errorLogFile, mode = 'a')
 logError.setLevel(logging.ERROR)
 logError.setFormatter(FORMAT)
-logger.addHandler(logError)
+localSetup.logger.addHandler(logError)
 
 ## This variable enables the except function to only send
-## an error email the first time the function triggeres an error
+
 ## by tracking what functions have already been recorded as having errors
-setOfFunctionsWithErrors = set()
+errorHandler = errorEmailApi(scriptName, scriptPurpose, externalRequirements, localSetup)
 
 ## This function handles function errors
-def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
-    functionName = "error_handler"
+def errorHandler.sendError (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
+    functionName = "errorHandler.sendError"
 
     ## Log the error
-    logger.error (f"     \nA script error occured while running {p1_ErrorLocation}. " +
+    localSetup.logger.error (f"     \nA script error occured while running {p1_ErrorLocation}. " +
                      f"Error: {str(p1_ErrorInfo)}")
 
     ## If the function with the error has not already been processed send an email alert
@@ -166,11 +166,11 @@ def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
         setOfFunctionsWithErrors.add(p1_ErrorLocation)
         
         ## Note that an error email was sent
-        logger.error (f"     \nError Email Sent")
+        localSetup.logger.error (f"     \nError Email Sent")
     
     ## Otherwise log the fact that an error email as already been sent
     else:
-        logger.error (f"     \nError email already sent")
+        localSetup.logger.error (f"     \nError email already sent")
 
 ## This function takes in a term and returns the instructor information for non-official instructors 
 def termNonOfficialInstructorsReport(p1_inputTerm = ""):
@@ -178,7 +178,7 @@ def termNonOfficialInstructorsReport(p1_inputTerm = ""):
 
     try:
 
-        # Determine and save the term's school year
+        ## Determine and save the term's school year
         schoolYear = None
         if re.search("AF|FA|GF", p1_inputTerm):
             ## Fall terms are the first terms of a new school year so FA20 is part of the 2020-21 school year.
@@ -227,7 +227,7 @@ def termNonOfficialInstructorsReport(p1_inputTerm = ""):
         secondFilteredGradTermInstructorEnrollmentsDF = firstFilteredGradTermInstructorEnrollmentsDF[firstFilteredGradTermInstructorEnrollmentsDF['status'] == 'active']
 
         ## Retrieve the SIS feed enrollments file as a df, and filter it to only contain the rows that have "Instructor" in the role value
-        rawSisEnrollmentsDF = pd.read_csv(f"{baseExternalInputPath}canvas_enroll.csv")
+        rawSisEnrollmentsDF = pd.read_csv(f"{SISResourcePath}canvas_enroll.csv")
         
         ## Filter the SIS Enrollments to only have rows that have "Instructor" in the role value
         firstFilteredSisEnrollmentsDF = rawSisEnrollmentsDF[rawSisEnrollmentsDF['role'] == 'teacher']
@@ -251,11 +251,11 @@ def termNonOfficialInstructorsReport(p1_inputTerm = ""):
         ## Remove any duplicate rows from the combined sections df
         rawCombinedSectionsDF.drop_duplicates(inplace = True)
 
-        # Create a dictionary from rawCombinedSectionsDF for quick lookup
+        ## Create a dictionary from rawCombinedSectionsDF for quick lookup
         rawCombinedSectionsDF['name'] = rawCombinedSectionsDF['name'].astype(str)
         canvasSectionIdNameDict = rawCombinedSectionsDF.set_index('canvas_section_id')['name'].apply(lambda x: x.split(' ')[-1]).to_dict()
 
-        # Map the canvas_section_id to the corresponding name in the enrollment file
+        ## Map the canvas_section_id to the corresponding name in the enrollment file
         rawCombinedTermInstructorEnrollmentDF['section_id'] = rawCombinedTermInstructorEnrollmentDF['canvas_section_id'].map(canvasSectionIdNameDict).fillna('Unknown')
         
         ## Add a column that combines the course_id and user_id to create a unique identifier for each row
@@ -302,8 +302,8 @@ def termNonOfficialInstructorsReport(p1_inputTerm = ""):
         
         
     
-    except Exception as error:
-        error_handler (functionName, error)
+    except Exception as Error:
+        errorHandler.sendError (functionName, Error)
 
 
 ## This function takes in a input term or creates one to run the term Non Official Instructors Report
@@ -335,8 +335,8 @@ def createNonOfficialInstructorsReport (inputTerm = ""):
 
         termNonOfficialInstructorsReport (p1_inputTerm = inputTerm)
      
-    except Exception as error:
-        error_handler (functionName, error)
+    except Exception as Error:
+        errorHandler.sendError (functionName, Error)
 
 if __name__ == "__main__":
 

@@ -1,17 +1,28 @@
-# Author: Bryce Miller - brycezmiller@nnu.edu
-# Last Updated by: Bryce Miller
+## Author: Bryce Miller - brycezmiller@nnu.edu
+## Last Updated by: Bryce Miller
 
 
 from datetime import datetime
 import traceback, os, logging, sys, re, threading, shutil, ast, json
 import pandas as pd, numpy as np, time
 
+## Add Script repository to syspath
+sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules"))
 
-## Set working directory
-os.chdir(os.path.dirname(__file__))
+## New resource modules
+from Local_Setup import LocalSetup
+from TLC_Common import makeApiCall, isFileRecent
+from Canvas_Report import CanvasReport
+from Common_Configs import coreCanvasApiUrl
+from Error_Email import errorEmail
 
-# Define the script name, purpose, and external requirements for logging and error reporting purposes
-scriptName = "Outcome_Results Report"
+## Create the localsetup variable
+localSetup = LocalSetup(datetime.now(), __file__)  ## sets cwd, paths, logs, date parts
+
+from Common_Configs import undgTermsCodesToWordsDict, gradTermsCodesToWordsDict
+
+## Define the script name, purpose, and external requirements for logging and error reporting purposes
+scriptName = os.path.basename(__file__).replace(".py", "")
 
 scriptPurpose = r"""
 This script (Outcome_Results_Report) views the active GE course lists and Outcome Results reports for a given term,
@@ -23,130 +34,8 @@ externalRequirements = r"""
 To function properly this script requires access to the institutions Canvas instance via an Active Canvas Bearer Token
 """
 
-## Date Variables
-currentDate = datetime.now()
-currentMonth = currentDate.month
-currentYear = currentDate.year
-century = str(currentYear)[:2]
-decade = str(currentYear)[2:]
-
-## Relative Path (this changes depending on the working directory of the main script)
-PFRelativePath = r".\\"
-
-## If the Canvas directory is not in the folder the relative path points to
-## find the Canvas directory and set the relative path to its parent folder
-targetFolder = os.listdir(PFRelativePath)
-while "Scripts TLC" not in os.listdir(PFRelativePath):
-    
-    PFRelativePath = f"..\\{PFRelativePath}"
-    targetFolder = os.listdir(PFRelativePath)
-
-## Change the relative path to an absolute path
-PFAbsolutePath = f"{os.path.abspath(PFRelativePath)}\\"
-
-## Add Input Modules to the sys path
-sys.path.append(f"{PFAbsolutePath}Scripts TLC\\ResourceModules")
-sys.path.append(f"{PFAbsolutePath}Scripts TLC\\ActionModules")
-
-## Import local modules
-from Error_Email_API import errorEmailApi
-from Create_Sub_Account_Save_Path import determineDepartmentSavePath
-from Get_Outcomes import termGetOutcomes
-from Get_Outcome_Results import termGetOutcomeResults
-from Make_Api_Call import makeApiCall
-from Get_Active_Outcome_Courses import termGetActiveOutcomeCourses
-from Get_Enrollments import termGetEnrollments
-
-
-## Local Path Variables
-baseLogPath = f"{PFAbsolutePath}Logs\\{scriptName}\\"
-baseLocalInputPath = f"{PFAbsolutePath}Canvas Resources\\"  ## This is only the base path as the real path requires the requested term
-baseLocalOutputPath = f"{PFAbsolutePath}Canvas Resources\\"
-configPath = f"{PFAbsolutePath}Configs TLC\\"
-
-## External Path Variables
-
-## Define a variable to hold the base external input path and output path 
-baseExternalInputPath = None ## Where the sis input files are stored
-baseExternalOutputPath = None ## Where the output files are stored
-
-## Open Base_External_Paths.json from the config path and get the baseExternalInputPath and baseExternalOutputPath values
-with open (f"{configPath}Base_External_Paths.json", "r") as file:
-    fileJson = json.load(file)
-    baseExternalInputPath = fileJson["baseExternalInputPath"]
-    baseExternalOutputPath = fileJson["baseIeDepartmentDataExternalOutputPath"]
-
-## If the base log path doesn't already exist, create it
-if not (os.path.exists(baseLogPath)):
-    os.makedirs(baseLogPath, mode=0o777, exist_ok=False)
-
-## If the output path doesn't already exist, create it
-if not (os.path.exists(baseLocalOutputPath)):
-    os.makedirs(baseLocalOutputPath, mode=0o777, exist_ok=False)
-
-## Final length of relative Path
-relPathLen = len(PFRelativePath)
-
-## Canvas Instance Url
-coreCanvasApiUrl = None
-## Open the Core_Canvas_Url.txt from the config path
-with open (f"{configPath}Core_Canvas_Url.txt", "r") as file:
-    coreCanvasApiUrl = file.readlines()[0]
-
-## If the script is run as main the folder with the access token is in the parent directory
-canvasAccessToken = ""
-
-## Open and retrieve the Canvas Access Token
-with open (f"{configPath}\Canvas_Access_Token.txt", "r") as file:
-    canvasAccessToken = file.readlines()[0]
-
-## Log configurations
-logger = logging.getLogger(__name__)
-rootFormat = ("%(asctime)s %(levelname)s %(message)s")
-FORMAT = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-logging.basicConfig(format=rootFormat, filemode = "a", level=logging.INFO)
-
-## Info Log Handler
-infoLogFile = f"{baseLogPath}\\Info Log.txt"
-logInfo = logging.FileHandler(infoLogFile, mode = 'a')
-logInfo.setLevel(logging.INFO)
-logInfo.setFormatter(FORMAT)
-logger.addHandler(logInfo)
-
-## Warning Log handler
-warningLogFile = f"{baseLogPath}\\Warning Log.txt"
-logWarning = logging.FileHandler(warningLogFile, mode = 'a')
-logWarning.setLevel(logging.WARNING)
-logWarning.setFormatter(FORMAT)
-logger.addHandler(logWarning)
-
-## Error Log handler
-errorLogFile = f"{baseLogPath}\\Error Log.txt"
-logError = logging.FileHandler(errorLogFile, mode = 'a')
-logError.setLevel(logging.ERROR)
-logError.setFormatter(FORMAT)
-logger.addHandler(logError)
-
-## The variable below holds a set of the functions that have had errors. This enables the except function to only send
-## an error email the first time the function triggeres an error
-setOfFunctionsWithErrors = set()
-
-## This function handles function errors
-def error_handler (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
-    functionName = "error_handler"
-    logger.error (f"     \nA script error occured while running {p1_ErrorLocation}. " +
-                     f"Error: {str(p1_ErrorInfo)}")
-    ## If the function with the error has not already been processed send an email alert
-    if (p1_ErrorLocation not in setOfFunctionsWithErrors):
-        errorEmailApi.sendEmailError(p2_ScriptName = scriptName, p2_ScriptPurpose = scriptPurpose, 
-                                     p2_ExternalRequirements = externalRequirements, 
-                                     p2_ErrorLocation = p1_ErrorLocation, p2_ErrorInfo = f"{p1_ErrorInfo}: \n\n {traceback.format_exc()}")
-        setOfFunctionsWithErrors.add(p1_ErrorLocation)
-        ## Note that an error email was sent
-        logger.error (f"     \nError Email Sent")
-    ## Otherwise log the fact that an error email as already been sent
-    else:
-        logger.error (f"     \nError email already sent")
+## Setup the error handler
+errorHandler = errorEmail(scriptName, scriptPurpose, externalRequirements, localSetup)
 
 ## This function checks whether each outcome course has outcome data of the required type
 def termCreateOutcomeComplianceReport(
@@ -189,6 +78,7 @@ def termCreateOutcomeComplianceReport(
                 , "Outcome_Root" : []
                 , "Outcome_Id" : []
                 , "Outcome_Version" : []
+                , "Outcome_group title" : []
                 , "Vendor_Guid": []
                 , "Number_of_Students_With_Submission_Records_for_Outcome_Assignments" : []
                 , "Students_Missing_Submission_Records_for_Outcome_Assignments" : []
@@ -200,24 +90,23 @@ def termCreateOutcomeComplianceReport(
             for index, course in p2_activeCanvasOutcomeCoursesDf.iterrows():
 
                 ## If the courseDict's course_sis_id has 3400 in it
-                #if "EDUC3750" in course["Course_sis_id"]:
+                ##if "EDUC3750" in course["Course_sis_id"]:
 
                     ## Define a target course sis id
                     targetCourseSisId = course["Course_sis_id"]
+                    termID = course["Course_sis_id"].split("_")[0][:2] + course["Course_sis_id"].split("_")[0][4:]
+                    termYear = course["Course_sis_id"].split("_")[0][4:]
 
                     ## If there is a non nan Parent_Course_sis_id
-                    if not pd.isna(course["Parent_Course_sis_id"]):
+                    if not pd.isna(course["Parent_Course_sis_id"]) and course["Parent_Course_sis_id"] not in ["", None]:
 
                         ## Set the target course sis id to the Parent_Course_sis_id
                         targetCourseSisId = course["Parent_Course_sis_id"]
 
                     ## Make a course info dict
-                    courseInfoDict = {"Term_ID" : p3_inputTerm
+                    courseInfoDict = {"Term_ID" : termID
                                       , "School_Year" : p2_schoolYear
-                                      , "Term_Year" : (p3_inputTerm[2:5] 
-                                                       if "F" in p3_inputTerm 
-                                                       else int(p3_inputTerm[2:5]) + 1
-                                                       )
+                                      , "Term_Year" : termYear
                                       , "Course_name" : course["Course_name"]
                                       , "Course_code" : course["Course_sis_id"].split("_")[1]
                                       , "Course_section" : course["Course_sis_id"].split("_")[2]
@@ -242,23 +131,23 @@ def termCreateOutcomeComplianceReport(
                                       , "Department" : ""
                                       }
                 
-                    ###############################################################################
+                    #######################################################################
                     ## The following for course code uses the Account_ID column to determine each 
                     ## course's department and college and add them to the college and department 
                     ## list to be added to the outcomeResultReportDF in place of the Account_ID column
-                    ###############################################################################
+                    #######################################################################
 
                     ## If the account id is not already in the dict
                     if courseInfoDict["Canvas_Account_id"] not in p1_targetAccountDataDict.keys():
 
                         ## Determine what the save path for the department would be (which is determined by the parent 
                         ## accounts for the particular sub account)
-                        courseDepartmentPath = determineDepartmentSavePath (courseInfoDict["Canvas_Account_id"])
+                        courseDepartmentPath = CanvasReport.determineDepartmentSavePath (localSetup, courseInfoDict["Canvas_Account_id"])
 
                         ## Split the path by \\ to seperate the college, department, and sub department where applicable
                         courseDepartmentPathSeperated = courseDepartmentPath.split("\\")
 
-                        ## The course college (e.g. College of Business) is always the 0th element of the section 
+                        ## The course college (## e.g. College of Business) is always the 0th element of the section 
                         courseInfoDict["College"] = courseDepartmentPathSeperated[0].replace("College of ", "")
 
                         ## Append the college name to the p1_targetAccountDataDict[courseInfoDict["Canvas_Account_id"]] list as the 0th element
@@ -271,12 +160,12 @@ def termCreateOutcomeComplianceReport(
                         ## If the length of the section list == 4, the college contains multiple disciplines
                         if courseDepartmentPathNumberOfSections == 4:
 
-                            ## The discpline names (e.g. Music) for college's with multiple disciplines is the 2nd element
-                            # of the section list. Append the discpline name to the p1_targetAccountDataDict[courseInfoDict["Canvas_Account_id"]] list as the 1st element
+                            ## The discpline names (## e.g. Music) for college's with multiple disciplines is the 2nd element
+                            ## of the section list. Append the discpline name to the p1_targetAccountDataDict[courseInfoDict["Canvas_Account_id"]] list as the 1st element
                             courseInfoDict['Discpline'] = courseDepartmentPathSeperated[1]
                             p1_targetAccountDataDict[courseInfoDict["Canvas_Account_id"]].append(courseInfoDict['Discpline'])
 
-                            ## The department (e.g. Undergraduate Music, Undergraduate_NNUO Music) is made by combining the
+                            ## The department (## e.g. Undergraduate Music, Undergraduate_NNUO Music) is made by combining the
                             ## 2nd element in the list and the course discpline
                             courseInfoDict["Department"] = f"{courseDepartmentPathSeperated[2]} {courseInfoDict['Discpline']}"
 
@@ -291,12 +180,12 @@ def termCreateOutcomeComplianceReport(
                             ## Append the discpline name to the p1_targetAccountDataDict[courseInfoDict["Canvas_Account_id"]] list as the 1st element
                             p1_targetAccountDataDict[courseInfoDict["Canvas_Account_id"]].append(courseInfoDict['Discpline'])
 
-                            ## The department (e.g. Undergraduate Nursing, Undergraduate RN-BSN Nursing) for single
-                            ## discipline colleges is made of up the secondary department component (e.g. Undergraduate, Undergraduate RN-BSN)
-                            # and the College discipline (e.g. Nursing). 
+                            ## The department (## e.g. Undergraduate Nursing, Undergraduate RN-BSN Nursing) for single
+                            ## discipline colleges is made of up the secondary department component (## e.g. Undergraduate, Undergraduate RN-BSN)
+                            ## and the College discipline (## e.g. Nursing). 
                             courseInfoDict["Department"] = f"{courseDepartmentPathSeperated[1]} {courseInfoDict['Discpline']}"
 
-                            # Append the department name to the p1_targetAccountDataDict[courseInfoDict["Canvas_Account_id"]] list
+                            ## Append the department name to the p1_targetAccountDataDict[courseInfoDict["Canvas_Account_id"]] list
                             p1_targetAccountDataDict[courseInfoDict["Canvas_Account_id"]].append(courseInfoDict["Department"])
                         
                     ## If the account id is already in the dict
@@ -318,9 +207,7 @@ def termCreateOutcomeComplianceReport(
                         if "Outcome" in column and "Area" not in column:
                         
                             ## If there is no outcome value in the column
-                            if (course[column] == "" 
-                            or str(course[column]) == "nan"
-                            ):
+                            if str(course[column]).strip() == "" or str(course[column]).lower() == "nan":
                             
                                 ## Skip the column
                                 continue
@@ -337,14 +224,14 @@ def termCreateOutcomeComplianceReport(
                                     | (p2_outcomeResultDF["learning outcome id"] == outcomeInfoDict["Outcome_Id"])
                                     )
                                 ]
-                            #targetCourseOutcomeResults = p1_combinedTermoutcomeResultDF[p1_combinedTermoutcomeResultDF["course name"] == course["Course_name"]]
+                            ##targetCourseOutcomeResults = p1_combinedTermoutcomeResultDF[p1_combinedTermoutcomeResultDF["course name"] == course["Course_name"]]
 
                             ## Find the number of students with an outcome result after filtering to only contain rows that have a "learning outcome rating points" value
                             numOfStuWithOutcomeResults = targetCourseOutcomeResults.dropna(
                                 subset=["learning outcome rating points"]
                                 )["student id"].nunique()
                         
-                            #numOfStuWithOutcomeResults = targetCourseOutcomeResults["student id"].nunique()
+                            ##numOfStuWithOutcomeResults = targetCourseOutcomeResults["student id"].nunique()
 
                             ## Record the number of students with outcome results
                             outcomeInfoDict["Number of Students assessed"] = numOfStuWithOutcomeResults
@@ -357,9 +244,9 @@ def termCreateOutcomeComplianceReport(
                             if numOfStuWithOutcomeResults > 0:
 
                                 ## If the course sis id == FA2024_PHYS1010_1U
-                                # if course["Course_sis_id"] == "FA2024_PHYS1010_1U":
+                                ## if course["Course_sis_id"] == "FA2024_PHYS1010_1U":
 
-                                #     print (1)
+                                ##     print (1)
                         
                                 ## Get the unique assignment ids
                                 uniqueAssignmentIds = targetCourseOutcomeResults["assessment id"].unique()
@@ -371,10 +258,9 @@ def termCreateOutcomeComplianceReport(
                                     assignmentResultsApiUrl = f"{coreCanvasApiUrl}courses/sis_course_id:{targetCourseSisId}/assignments/{assignmentId}/submissions"
                                 
                                     ## Make a call to the assignment results api
-                                    assignmentResultsObject = makeApiCall(
-                                        p1_header = {"Authorization": f"Bearer {canvasAccessToken}"}
+                                    assignmentResultsObject, _ = makeApiCall(
+                                        localSetup
                                         , p1_apiUrl = assignmentResultsApiUrl
-                                        , apiCallType = "get"
                                         , p1_payload = {"include[]": ['user']}
                                         )
                                 
@@ -504,8 +390,8 @@ def termCreateOutcomeComplianceReport(
             ## Return an empty dataframe
             return pd.DataFrame()
 
-    except Exception as error:
-        error_handler (functionName, p1_ErrorInfo = error)
+    except Exception as Error:
+        errorHandler.sendError (functionName, Error)
 
 ## This function compiles the outcome scores from the outcome results report into longitudinal data
 def termCompileCourseOutcomesScores (p1_CourseDict
@@ -521,17 +407,16 @@ def termCompileCourseOutcomesScores (p1_CourseDict
     try:
 
         ## For each unique student of the course
-        for studentID in p1_targetTermEnrollmentDf["user_id"].astype(int).unique():
+        #for studentID in p1_targetTermEnrollmentDf["user_id"].astype(int).unique():
+        for studentID in p1_targetTermEnrollmentDf["user_id"].unique():
             
             ## For each column with a value that has outcome and not area in the title of p1_CourseDict
             for column in (column 
-                           for column 
-                           in p1_CourseDict.index.tolist() 
+                           for column in p1_CourseDict.index.tolist() 
                            if ("Outcome" in column 
                                and "Area" not in column
-                               and (p1_CourseDict[column] != ""
-                                        and str(p1_CourseDict[column]) != "nan"
-                                        )
+                               and pd.notna(p1_CourseDict[column])
+                               and str(p1_CourseDict[column]).strip() not in ("", "nan", "none", "NaN", "None")
                                )
                            ):
                                 
@@ -600,6 +485,7 @@ def termCompileCourseOutcomesScores (p1_CourseDict
                 outcomeRoot = targetUniqueOutcomeInfoDict["Outcome_Root"]
                 outcomeParent = targetUniqueOutcomeInfoDict["Outcome_Parent"]
                 outcomeVersion = targetUniqueOutcomeInfoDict["Outcome_Version"]
+                outcomeGroupTitle = targetUniqueOutcomeInfoDict["Outcome_group title"]
                 
                 ## Define the term and course information using the course sis id
                 termYear = p1_CourseDict["Course_sis_id"].split("_")[0]
@@ -619,6 +505,7 @@ def termCompileCourseOutcomesScores (p1_CourseDict
                                             , "Outcome_Root" : outcomeRoot
                                             , "Outcome_Parent" : outcomeParent
                                             , "Outcome_Version" : outcomeVersion
+                                            , "Outcome_group title" : outcomeGroupTitle
                                             , "College" : p1_targetOutcomeResultReportDf["College"].values[0]
                                             , "Discpline" : p1_targetOutcomeResultReportDf["Discpline"].values[0]
                                             , "Department" : p1_targetOutcomeResultReportDf["Department"].values[0]
@@ -646,7 +533,6 @@ def termCompileCourseOutcomesScores (p1_CourseDict
                         , "Outcome_Mastered" : highestRatingPointsEntry["learning outcome mastered"].values[0]
                         , "Outcome_rating" : highestRatingPointsEntry["learning outcome rating"].values[0]
                         , "Outcome_rating points" : highestRatingPointsEntry["learning outcome rating points"].values[0]
-                        , "Outcome_group title" : highestRatingPointsEntry["learning outcome group title"].values[0]
                     })
                         
                     
@@ -669,9 +555,8 @@ def termCompileCourseOutcomesScores (p1_CourseDict
                                 outcomeDashboardDataDict.update({
                                     "Assignment_Type" : "No Assessment"
                                     , "Outcome_Mastered" : 0
-                                    , "Outcome_rating" : "Outcome_Not Met"
-                                    , "Outcome_rating points" : 0
-                                    , "Outcome_group title" : "No Group"
+                                    , "Outcome_rating" : "Outcome Not Met"
+                                    , "Outcome_rating points" : 1 if "G-EDUC" in outcomeFullTitle else 0
                                 })
 
                                 ## Break the loop
@@ -687,9 +572,8 @@ def termCompileCourseOutcomesScores (p1_CourseDict
                                 outcomeDashboardDataDict.update({
                                     "Assignment_Type" : "No Assessment"
                                     , "Outcome_Mastered" : 0
-                                    , "Outcome_rating" : "Outcome_Not Met"
-                                    , "Outcome_rating points" : 0
-                                    , "Outcome_group title" : "No Group"
+                                    , "Outcome_rating" : "Outcome Not Met"
+                                    , "Outcome_rating points" : 1 if "G-EDUC" in outcomeFullTitle else 0
                                 })
 
                                 ## Break the loop
@@ -702,9 +586,8 @@ def termCompileCourseOutcomesScores (p1_CourseDict
                         outcomeDashboardDataDict.update({
                             "Assignment_Type" : "No Assignment"
                             , "Outcome_Mastered" : -1
-                            , "Outcome_rating" : "Outcome_Not Met"
+                            , "Outcome_rating" : "Outcome Not Met"
                             , "Outcome_rating points" : -1
-                            , "Outcome_group title" : "No Group"
                         })
 
                 ## Make the dict df conversion compatible
@@ -716,14 +599,14 @@ def termCompileCourseOutcomesScores (p1_CourseDict
                 ## Append the df to the outcomeResultsDashboardDataDictList
                 p1_outcomeResultsDashboardDataDictList.append(outcomeDashboardDataDf)
 
-                ## logger.info the current length of the outcomeResultsDashboardDataDictList
-                logger.info(len(p1_outcomeResultsDashboardDataDictList))
+                ## localSetup.logger.info the current length of the outcomeResultsDashboardDataDictList
+                localSetup.logger.info(len(p1_outcomeResultsDashboardDataDictList))
             
         ## End the function
         return
 
-    except Exception as error:
-        error_handler (functionName, p1_ErrorInfo = error)
+    except Exception as Error:
+        errorHandler.sendError (functionName, Error)
 
 ## This function processes the outcome results for a given target designation
 def targetDesignatorProcessOutcomeResults(
@@ -748,22 +631,7 @@ def targetDesignatorProcessOutcomeResults(
         outcomeResultReportDF = None
         
         ## If the first internal output report file exists
-        if os.path.exists(p1_destinationFilePathDict["Internal Output Report File Path and Name"]):
-            
-            ## Get the last moddifed timestamps
-            targetFileTimestamp = os.path.getmtime(p1_destinationFilePathDict["Internal Output Report File Path and Name"])
-
-            ## Convert the timestamps to datetime
-            targetFileDateTime = datetime.fromtimestamp(targetFileTimestamp)
-
-            ## Subtract the files' datetime from the current datetime
-            targetFileHoursOld = int((currentDate - targetFileDateTime).total_seconds() // 3600)
-
-            ## If both have been less than hour or more since the target was updated
-            if (targetFileHoursOld < 3.5):
-
-                ## logger.info that the file is up to date and return
-                logger.info (f"     \n {p1_destinationFilePathDict['Internal Output Report File Path and Name']} is up to date")
+        if isFileRecent(localSetup, p1_destinationFilePathDict["Internal Output Report File Path and Name"]):
 
                 ## Read the file into a df
                 outcomeResultReportDF = pd.read_excel(p1_destinationFilePathDict["Internal Output Report File Path and Name"], sheet_name = "General")
@@ -788,21 +656,12 @@ def targetDesignatorProcessOutcomeResults(
             
                 ## Save the DF into an excel file
                 outcomeResultReportDF.to_excel(p1_destinationFilePathDict["Internal Output Report File Path and Name"], sheet_name = "General", index=False)
-
-                ## If the file already exists in the external output path
-                if os.path.exists(p1_destinationFilePathDict["External Output Report File Path and Name"]):
-                
-                    ## Remove it
-                    os.remove(p1_destinationFilePathDict["External Output Report File Path and Name"])
-
-                ## Copy it to the year associated departmental data folder in Institutional Effectiveness's shared drive
-                shutil.copy(p1_destinationFilePathDict["Internal Output Report File Path and Name"], p1_destinationFilePathDict["External Output Report File Path and Name"])
                 
             ## Otherwise
             else:
                 
                 ## Log that there are no outcome results to report on
-                logger.info("No Outcome Results to Report on. Exiting function")
+                localSetup.logger.info("No Outcome Results to Report on. Exiting function")
                 
                 ## Exit the function
                 return
@@ -814,7 +673,7 @@ def targetDesignatorProcessOutcomeResults(
         p1_outcomeResultDF["student-course-outcome id"] = p1_outcomeResultDF["student id"].astype(str) + p1_outcomeResultDF["course sis id"].astype(str) + p1_outcomeResultDF["learning outcome id"].astype(str)
 
         ## Create a list of the unique student-course-outcome ids
-        #uniqueStudentCourseIds = p1_outcomeResultDF["student-course-outcome id"].unique()
+        ##uniqueStudentCourseIds = p1_outcomeResultDF["student-course-outcome id"].unique()
 
         ## Create a list to hold active threads
         activeThreadsList = []
@@ -823,7 +682,7 @@ def targetDesignatorProcessOutcomeResults(
         for index, courseDict in p1_activeCanvasOutcomeCoursesDf.iterrows():
 
             ## If the courseDict's course_sis_id has 3400 in it
-            #if "COMM1210" in courseDict["Course_sis_id"]:
+            ##if "COMM1210" in courseDict["Course_sis_id"]:
             
                 ## Define a target course variables
                 targetCourseSisId = courseDict["Course_sis_id"]
@@ -831,7 +690,7 @@ def targetDesignatorProcessOutcomeResults(
                 targetSectionId = courseDict["Section_id"]
 
                 ## If there is a non nan Parent_Course_sis_id
-                if not pd.isna(courseDict["Parent_Course_sis_id"]):
+                if not pd.isna(courseDict["Parent_Course_sis_id"]) and courseDict["Parent_Course_sis_id"] not in ["", None]:
 
                     ## Set the target course sis id to the Parent_Course_sis_id
                     targetCourseSisId = courseDict["Parent_Course_sis_id"]
@@ -889,27 +748,9 @@ def targetDesignatorProcessOutcomeResults(
 
             ## Save the dataframe in the relavent Canvas Resources folder
             outcomeResultsDashboardDataDF.to_excel(p1_destinationFilePathDict["Second Internal Output Report File Path and Name"], sheet_name = "General", index=False)
-
-            ## If the file already exists in the external output path
-            if os.path.exists(p1_destinationFilePathDict["Second External Output Report File Path and Name"]):
-
-                #try to remove it
-                try: ## Irregular try clause, do not comment out in testing
-                    
-                    ## Remove it
-                    os.remove(p1_destinationFilePathDict["Second External Output Report File Path and Name"])
-
-                ## If there is an error
-                except Exception as error: ## Irregular except clause, do not comment out in testing
-
-                    ## Log the error as a warning
-                    logger.warning(f"Error: {error} while trying to remove the existing version of {p1_destinationFilePathDict['Second External Output Report File Path and Name']}")
-        
-            ## Copy it to the year associated departmental data folder in Institutional Effectiveness's shared drive
-            shutil.copy(p1_destinationFilePathDict["Second Internal Output Report File Path and Name"], p1_destinationFilePathDict["Second External Output Report File Path and Name"])    
     
-    except Exception as error:
-        error_handler (functionName, p1_ErrorInfo = error)
+    except Exception as Error:
+        errorHandler.sendError (functionName, Error)
 
 ## This function processes the outcome results for a given term
 def termProcessOutcomeResults(p1_inputTerm
@@ -918,129 +759,80 @@ def termProcessOutcomeResults(p1_inputTerm
     functionName = "Term Get Outcome Results"
 
     try:
+        ## Extract term prefix and decade
+        termCodePrefix = p1_inputTerm[:2]  ## e.g., "FA", "SP", "SU"
+        termWord = undgTermsCodesToWordsDict.get(termCodePrefix, gradTermsCodesToWordsDict.get(termCodePrefix))
+        termYear = int(str(localSetup.dateDict["century"]) + p1_inputTerm[2:])
 
-        ## Define the relevant grad term by replacing FA with GF, SP with GS, and SU with SG
-        relevantGradTerm = p1_inputTerm.replace("FA", "GF").replace("SP", "GS").replace("SU", "SG")
+        ## Use LocalSetup to calculate school year dynamically
+        schoolYear = localSetup.getSchoolYear(termWord, localSetup.dateDict["year"])
 
-        ## Determine and save the term's school year
-        schoolYear = None
-        if re.search("AF|FA|GF", p1_inputTerm):
-            ## Fall terms are the first terms of a new school year so FA20 is part of the 2020-21 school year.
-            schoolYear = (century + p1_inputTerm[2:] + "-" + str(int(p1_inputTerm[2:]) + 1))
-        elif re.search("SP|GS|AS|SG|SA|SU", p1_inputTerm):
-            ## Spring and Summer terms belong in the same school year as the fall terms before them, so SP21 is part of the same 2020-21 school year as FA20.
-            schoolYear = (century + str(int(p1_inputTerm[2:]) - 1) + "-" + p1_inputTerm[2:])
-            
-        ## Define the input paths
-        localSchoolYearInputPath = f"{baseLocalOutputPath}{schoolYear}\\"
-        localTermInputPath = f"{localSchoolYearInputPath}{p1_inputTerm}\\"
-        localGradTermInputPath = f"{localSchoolYearInputPath}{relevantGradTerm}\\"
+        ## Build lcoal paths  
+        designatorLocalOutputPath = localSetup.getTargetDesignatedOutputPath(termWord, termYear, p1_targetDesignator)
 
-        ## Determine output paths
-        localTermOutputPath = f"{baseLocalOutputPath}{schoolYear}\\{p1_inputTerm}\\"
-        termExternalOutputPath = f"{baseExternalOutputPath}{schoolYear}\\{p1_inputTerm}\\"
+        ## Ensure directories exist
+        os.makedirs(designatorLocalOutputPath, exist_ok=True)
             
         ## Create a dict of the first and second, internal and external output report file paths
         destinationFilePathDict = {
-            "Internal Output Report File Path and Name" : f"{localTermOutputPath}{p1_inputTerm}_{p1_targetDesignator}_Outcome_Results_Course_Data.xlsx"
-            , "External Output Report File Path and Name" : f"{termExternalOutputPath}\\{p1_inputTerm}_{p1_targetDesignator}_Outcome_Results_Course_Data.xlsx"
-            , "Second Internal Output Report File Path and Name" : f"{localTermOutputPath}{p1_inputTerm}_{p1_targetDesignator}_Outcome_Results_Dashboard_Data.xlsx"
-            , "Second External Output Report File Path and Name" : f"{termExternalOutputPath}\\{p1_inputTerm}_{p1_targetDesignator}_Outcome_Results_Dashboard_Data.xlsx"
+            "Internal Output Report File Path and Name" : os.path.join(designatorLocalOutputPath, f"{p1_inputTerm}_{p1_targetDesignator}_Outcome_Results_Course_Data.xlsx")
+            , "Second Internal Output Report File Path and Name" : os.path.join(designatorLocalOutputPath, f"{p1_inputTerm}_{p1_targetDesignator}_Outcome_Results_Dashboard_Data.xlsx")
             }
         
         ## If the internal output report file and the external output report file already exist
-        if (os.path.exists(destinationFilePathDict["Internal Output Report File Path and Name"])
-        and os.path.exists(destinationFilePathDict["Second Internal Output Report File Path and Name"])
-        ):
-            
-            ## Get both last moddifed timestamps
-            targetFileTimestamp = os.path.getmtime(destinationFilePathDict["Internal Output Report File Path and Name"])
-            targetFileTimestamp2 = os.path.getmtime(destinationFilePathDict["Second Internal Output Report File Path and Name"])
-
-            ## Convert the timestamps to datetime
-            targetFileDateTime = datetime.fromtimestamp(targetFileTimestamp)
-            targetFileDateTime2 = datetime.fromtimestamp(targetFileTimestamp2)
-
-            ## Subtract the files' datetime from the current datetime
-            targetFileHoursOld = int((currentDate - targetFileDateTime).total_seconds() // 3600)
-            targetFileHoursOld2 = int((currentDate - targetFileDateTime2).total_seconds() // 3600)
-
-            ## If both have been less than hour or more since the target was updated
-            if (targetFileHoursOld < 3.5 and targetFileHoursOld2 < 1):
-
-                ## logger.info that the file is up to date and return
-                logger.info (f"     \n {destinationFilePathDict['Internal Output Report File Path and Name']} and {destinationFilePathDict['Second Internal Output Report File Path and Name']} is up to date")
-                return
-
-        ## If the file doesn't exist
-        else:
-            
-            ## If the local output path doesn't already exist, create it
-            if not (os.path.exists(localTermOutputPath)):
-                os.makedirs(localTermOutputPath, mode=0o777, exist_ok=False)
-
-        ## If the external output path doesn't already exist, create it
-        if not (os.path.exists(termExternalOutputPath)):
-            try: ## Irregular try clause, do not comment out in testing
-                os.makedirs(termExternalOutputPath, mode=0o777, exist_ok=False)
-            except: ## Irregular except clause, do not comment out in testing
-                logger.warning(f"Could not create the external output path {termExternalOutputPath}. Check that the drive is connected.")
+        if (isFileRecent(localSetup, destinationFilePathDict["Internal Output Report File Path and Name"]) 
+            and isFileRecent(localSetup, destinationFilePathDict["Second Internal Output Report File Path and Name"])
+            ):
+                ## Return from the function
+                return (
+                    destinationFilePathDict["Internal Output Report File Path and Name"],
+                    destinationFilePathDict["Second Internal Output Report File Path and Name"],
+                )
                 
         ## Retrieve the Automated Outcome Tool Variables excel file as a df    
-        automatedOutcomeToolVariablesDf = pd.read_excel(f"{baseExternalInputPath}Internal Tool Files\\Automated Outcome Tool Variables.xlsx")
+        automatedOutcomeToolVariablesDf = pd.read_excel(
+            os.path.join(
+                localSetup.getExternalResourcePath("TLC"), 
+                "Automated Outcome Tool Variables.xlsx"
+                )
+        )
 
         ## Get the account name associated with the target designator
-        targetAccountName = automatedOutcomeToolVariablesDf.loc[automatedOutcomeToolVariablesDf["Target Designator"] == p1_targetDesignator, "Outcome Location Account Name"].values[0]
-
-        ## Get the path to the current target outcome location
-        outcomesCsvPath = termGetOutcomes(p1_inputTerm, targetAccountName, p1_targetDesignator)
+        targetAccountName = automatedOutcomeToolVariablesDf.loc[
+            automatedOutcomeToolVariablesDf["Target Designator"] == p1_targetDesignator, 
+            "Outcome Location Account Name"
+            ].values[0]
 
         ## Read the outcomes csv into a pandas dataframe
-        outcomesCsvDf = pd.DataFrame()
-
-        readOutcomesCsvAttempt = 0
-
-        ## While the outcomesCsvDf is empty
-        while outcomesCsvDf.empty and readOutcomesCsvAttempt < 5:
-
-            try: ## Irregular try clause, do not comment out in testing
-            
-                ## Read the outcomes csv into a pandas dataframe
-                outcomesCsvDf = pd.read_csv(outcomesCsvPath, encoding='utf-8')
-
-            except Exception as error: ## Irregular except clause, do not comment out in testing
-
-                ## Log a warning that the outcomes csv could not be read and the error
-                logger.warning(f"Outcomes csv could not be read. Attempt {readOutcomesCsvAttempt + 1} of 5")
-                
-                ## Wait for 5 seconds
-                time.sleep(5)
-
-            ## Increment the readRawOutcomesCsvAttempt
-            readOutcomesCsvAttempt += 1  
+        outcomesCsvDf = CanvasReport.getOutcomesDf(localSetup, p1_inputTerm, targetAccountName, p1_targetDesignator)
         
         ## Remove the unicode character from the title column
         outcomesCsvDf['title'] = outcomesCsvDf['title'].str.replace('\u200b', '')
 
         ## Retrieve the active Canvas Outcome Courses excel file as a df, updating it if necessary
-        activeCanvasOutcomeCoursesDf = pd.read_excel(termGetActiveOutcomeCourses(p1_inputTerm, p1_targetDesignator))
-
-        # ## Define the path to the the active target designator outcome courses file
-        # activeCanvasOutcomeCoursesPath = f"{localTermInputPath}{p1_inputTerm}_{p1_targetDesignator}_Active_Outcome_Courses.xlsx"
-
-        # ## Open the target active target designator outcome courses file
-        # activeCanvasOutcomeCoursesDf = pd.read_excel(activeCanvasOutcomeCoursesPath)
+        activeCanvasOutcomeCoursesDf = CanvasReport.getActiveOutcomeCoursesDf(localSetup, p1_inputTerm, p1_targetDesignator)
         
         ## Open the accounts csv as a df
-        accountInfoDF = pd.read_csv(f"{baseLocalInputPath}Canvas_Accounts.csv")
+        accountInfoDF = CanvasReport.getAccountsDf(localSetup)
+        
+        ## Retrieve Automated Outcome Tool Variables
+        automatedOutcomeToolVariablesDf = pd.read_excel(
+            os.path.join(localSetup.getExternalResourcePath("SIS"), "Internal Tool Files", "Automated Outcome Tool Variables.xlsx")
+        )
+        targetAccountName = automatedOutcomeToolVariablesDf.loc[
+            automatedOutcomeToolVariablesDf["Target Designator"] == p1_targetDesignator,
+            "Outcome Location Account Name"
+        ].values[0]
 
         ## Get the canvas account id associated with the targetAccountName
-        targetCanvasAccountId = 1 if p1_targetDesignator in ["GE", "CAP"] else ( ## GE outcomes are located at the root account level which is not in the accounts csv
-            accountInfoDF.loc[
-                accountInfoDF["name"] == targetAccountName
-                , "canvas_account_id"
-                ].values[0]
+        targetCanvasAccountId = (
+            1 if targetAccountName == "NNU" 
+            else accountInfoDF.loc[accountInfoDF["name"] == targetAccountName, "canvas_account_id"].values[0]
             )
+
+        ## Use the targetCanvasAccountId to determine  and add the department specific path element
+        departmentSpecifcPathElement = CanvasReport.determineDepartmentSavePath(localSetup, targetCanvasAccountId)
+        termExternalOutputPath = os.path.join(localSetup.getExternalResourcePath("IE"), departmentSpecifcPathElement, schoolYear, p1_inputTerm)
 
         ## Create a Unique Outcome Title : Vendor guids dict
         uniqueOutcomeInfoDictOfDicts = {}
@@ -1051,8 +843,9 @@ def termProcessOutcomeResults(p1_inputTerm
             ## If the column  has outcome in the title and doesn't have area in the title
             if "Outcome" in column and "Area" not in column:    
 
-                ## Get all the unique outcomes in the column
-                uniqueOutcomes = activeCanvasOutcomeCoursesDf[column].unique()
+                ## Get all the unique outcomes in the column, but only if they are not empty strings or nan
+                rawUniqueOutcomes = activeCanvasOutcomeCoursesDf[column].dropna().astype(str)
+                uniqueOutcomes = rawUniqueOutcomes[rawUniqueOutcomes.str.strip() != ""].unique()
                 
                 ## For each unique outcome in the column
                 for uniqueOutcome in uniqueOutcomes:
@@ -1099,11 +892,30 @@ def termProcessOutcomeResults(p1_inputTerm
             ## Find the vendor guid that is associated with the unique outcome within outcomesCsvDf
             vendorGuidValueList = outcomesCsvDf.loc[outcomesCsvDf["title"] == uniqueOutcome, "vendor_guid"].values
 
+            ## Find the learning outcome group title associated with the vendor guid within outcomesCsvDf
+            outcomeParentGuidList = outcomesCsvDf.loc[outcomesCsvDf["title"] == uniqueOutcome, "parent_guids"].values
+            
+            ## Create variables for the vendor guid and outcome group title
+            vendorGuid = ""
+            outcomeGroupTitle = ""
+
             ## If the vendor guid value list is not empty
             if vendorGuidValueList.size > 0:
 
                 ## Set the vendor guid as the first value in the list
                 vendorGuid = vendorGuidValueList[0]
+
+                ## Set the parentGuid as the first value in the list
+                parentGuid = outcomeParentGuidList[0]
+
+                ## Find the title coresponding to the parent guid
+                outcomeGroupTitleList = outcomesCsvDf.loc[outcomesCsvDf["vendor_guid"] == parentGuid, "title"].values
+
+                ## Set the outcome group title as the first value in the list
+                outcomeGroupTitle = (
+                    targetAccountName if str(parentGuid).strip() == "nan" 
+                    else outcomeGroupTitleList[0]
+                    )
 
             ## Otherwise
             else:
@@ -1112,14 +924,17 @@ def termProcessOutcomeResults(p1_inputTerm
                 uniqueOutcomesWithoutVendorGuidList.append(uniqueOutcome)
 
                 ## Log that the outcome was not found in the outcomes csv and handle the error
-                logger.warning(f"Outcome {uniqueOutcome} was not found in the Canvas outcomes csv. Skipping it.")
-                error_handler (functionName, p1_ErrorInfo = f"Outcome {uniqueOutcome} was not found in the Canvas outcomes csv. Skipping it.")
+                localSetup.logger.warning(f"Outcome {uniqueOutcome} was not found in the Canvas outcomes csv. Skipping it.")
+                errorHandler.sendError (functionName, f"Outcome {uniqueOutcome} was not found in the Canvas outcomes csv. Skipping it.")
 
                 ## Skip the value
                 continue
             
             ## Set the vendor guid as the value for the unique outcome in the uniqueOutcomeVendorGuidDict
             uniqueOutcomeInfoDictOfDicts[uniqueOutcome]["Vendor_Guid"] = vendorGuid
+
+            ## Also set the Outcome Group value in uniqueOutcomeInfoDictOfDicts to the learning outcome group title
+            uniqueOutcomeInfoDictOfDicts[uniqueOutcome]["Outcome_group title"] = outcomeGroupTitle
 
         ## For each unique outcome in the uniqueOutcomesWithoutVendorGuidList
         for uniqueOutcome in uniqueOutcomesWithoutVendorGuidList:
@@ -1134,9 +949,9 @@ def termProcessOutcomeResults(p1_inputTerm
         accountOutcomeLinkApiUrl = f"{coreCanvasApiUrl}accounts/{targetCanvasAccountId}/outcome_group_links"
 
         ## Make an api call to get the outcome links related to the account id
-        accountOutcomeLinksObject = makeApiCall(
-            p1_header = {"Authorization": f"Bearer {canvasAccessToken}"}
-            , p1_apiUrl = accountOutcomeLinkApiUrl
+        accountOutcomeLinksObject, _ = makeApiCall(
+            localSetup,
+            accountOutcomeLinkApiUrl
             )
 
         ## Define a variable to hold the raw object link list/s
@@ -1175,22 +990,10 @@ def termProcessOutcomeResults(p1_inputTerm
                 ## Set the canvas id as the value for the outcome title in the uniqueOutcomeInfoDictOfDicts
                 uniqueOutcomeInfoDictOfDicts[outcomeTitle]["Outcome_Id"] = responseOjbect["outcome"]["id"]
 
-        ## Get the undergrad outcome results as a df
-        undgOutcomeResultsPathAndName = termGetOutcomeResults (p1_inputTerm, targetAccountName, p1_targetDesignator)
-
-        ## Read the undergrad outcome result input path as a df
-        undgOutcomeResultDF = pd.read_csv(undgOutcomeResultsPathAndName)
-
-        ## Get the grad term outcome results path and name
-        gradOutcomeResultsPathAndName = termGetOutcomeResults (relevantGradTerm, targetAccountName, p1_targetDesignator)
-
-        ## Read the grad outcome result input path as a df
-        gradOutcomeResultDF = pd.read_csv(gradOutcomeResultsPathAndName)
-
-        ## Combine the undg and grad outcome result dfs
-        targetOutcomeResultsDf = pd.concat([undgOutcomeResultDF, gradOutcomeResultDF], ignore_index=True)
+        ## Get the outcome results df for the target designator
+        targetOutcomeResultsDf = CanvasReport.getOutcomeResultsDf(localSetup, p1_inputTerm, targetAccountName, p1_targetDesignator)
         
-        # Fill NA/NaN values with an empty string
+        ## Fill NA/NaN values with an empty string
         targetOutcomeResultsDf["learning outcome name"].fillna("", inplace=True)
 
         ## If the course's Outcome Area is GE
@@ -1199,7 +1002,7 @@ def termProcessOutcomeResults(p1_inputTerm
             ## Some outcome ratings don't have the intial descriptor word (i.e. exemplary, target, etc.)
             ## The following dictionary has snippets of these descriptions and the words that need to be added to them
             ## The contents of the following if was generated by Chat GPT as a clean up of my original code
-            # Define a dictionary to map the first four words to the descriptor word
+            ## Define a dictionary to map the first four words to the descriptor word
             descriptor_mapping = {
                 "Design and carry out a research study": "Exemplary",
                 "Students will evaluate conclusions relative to": "Exemplary",
@@ -1214,7 +1017,7 @@ def termProcessOutcomeResults(p1_inputTerm
                 "Analyze their own and others' assumptions": "Exemplary",
                 "Effectively problem-solve in contexts demanding quantitative literacy": "Exemplary",
                 "Research multiple sources of information on a topic": "Exemplary",
-                "In any popular communication (e.g., article, interview, blog, movie, documentary) students will assess": "Target",
+                "In any popular communication (## e.g., article, interview, blog, movie, documentary) students will assess": "Target",
                 "Students will properly analyze data": "Target",
                 "Investigate the influence of social, cultural, economic, and political institutions": "Target",
                 "Assess their own health status and develop a plan": "Target",
@@ -1227,7 +1030,7 @@ def termProcessOutcomeResults(p1_inputTerm
                 "Make an informed, logical judgment of the arguments of others": "Target",
                 "Critically evaluate data and draw reasonable and appropriately qualified conclusions": "Target",
                 "Research information in response to critical inquiry and synthesize": "Target",
-                "In any popular communication (e.g., article, interview, blog, movie, documentary) students will identify": "Minimum",
+                "In any popular communication (## e.g., article, interview, blog, movie, documentary) students will identify": "Minimum",
                 "Students will gather and analyze accurate data": "Minimum",
                 "State the guiding theories of two area of the social sciences": "Minimum",
                 "Describe a healthy lifestyle": "Minimum",
@@ -1338,6 +1141,13 @@ def termProcessOutcomeResults(p1_inputTerm
                             targetUniqueOutcomeInfoDict = uniqueOutcomeInfoDict
                             break
 
+                    ## If targetUniqueOutcomeInfoDict is still none
+                    if targetUniqueOutcomeInfoDict is None:
+
+                        ## Log a warning and continue
+                        localSetup.logger.warning(f"Could not find unique outcome info dict for outcome id {row['learning outcome id']}. Skipping row.")
+                        continue
+
                     ## Set the name of the outcome to the title paired with the id in the unique outcome info dict
                     targetOutcomeResultsDf.at[
                         index
@@ -1346,14 +1156,8 @@ def termProcessOutcomeResults(p1_inputTerm
                             "Outcome_Title"
                             ]
 
-        ## Open the term relevant enrollment file as a df
-        rawUndgEnrollmentDf = pd.read_csv(termGetEnrollments(p1_inputTerm))
-
-        ## Open the Grad relevent enrollment file as a df
-        rawGradEnrollmentDf = pd.read_csv(termGetEnrollments(relevantGradTerm))
-        
-        ## Define a rawTermEnrollmentDf by combining the rawUndgEnrollmentDf and rawGradEnrollmentDf
-        rawTermEnrollmentDf = pd.concat([rawUndgEnrollmentDf, rawGradEnrollmentDf])
+        ## Open the target enrollment file as a df
+        rawTermEnrollmentDf = CanvasReport.getEnrollmentsDf(localSetup, p1_inputTerm)
         
         ## Filter the rawTermEnrollmentDf to only contain rows with student as the role 
         ## and active or concluded as the status
@@ -1364,7 +1168,7 @@ def termProcessOutcomeResults(p1_inputTerm
                 | (rawTermEnrollmentDf["status"] == "concluded")
                 )
             ]
-        #termEnrollmentDf = rawTermEnrollmentDf[rawTermEnrollmentDf["role"] == "student"]
+        ##termEnrollmentDf = rawTermEnrollmentDf[rawTermEnrollmentDf["role"] == "student"]
         
         ## Fill any na values of user id with -1
         termEnrollmentDf.loc[:, "user_id"] = termEnrollmentDf["user_id"].fillna(-1)
@@ -1381,10 +1185,13 @@ def termProcessOutcomeResults(p1_inputTerm
              , p1_termEnrollmentDf = termEnrollmentDf
              )
         
-            
+        return (
+                    destinationFilePathDict["Internal Output Report File Path and Name"],
+                    destinationFilePathDict["Second Internal Output Report File Path and Name"],
+                )
 
-    except Exception as error:
-        error_handler (functionName, p1_ErrorInfo = error)
+    except Exception as Error:
+        errorHandler.sendError (functionName, Error)
         
 ## This function opens the CSV file, the save locations json file, sends the information on, and closes both files
 def runOutcomeResultsReport(inputTerm, targetDesignator):
@@ -1397,8 +1204,8 @@ def runOutcomeResultsReport(inputTerm, targetDesignator):
                                      , p1_targetDesignator = targetDesignator
                                      )
      
-    except Exception as error:
-        error_handler (functionName, error)
+    except Exception as Error:
+        errorHandler.sendError (functionName, Error)
 
 if __name__ == "__main__":
 

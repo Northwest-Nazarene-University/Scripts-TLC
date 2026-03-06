@@ -1,179 +1,174 @@
-# Author: Bryce Miller - brycezmiller@nnu.edu
-# Last Updated by: Bryce Miller
+## Author: Bryce Miller - brycezmiller@nnu.edu
+## Last Updated by: Bryce Miller (refactored to use common TLC modules)
 
-import traceback, os, sys, logging, requests, csv, threading, time, pandas as pd
+## Import Generic Moduels
+
+import os, sys, threading, time, pandas as pd
 from datetime import datetime
 
-# Define the script name, purpose, and external requirements for logging and error reporting purposes
-scriptName = "Change_Account_For_Listed_Courses"
+## Add the resource modules path
+sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules"))
 
+# Try direct imports if run as main, else relative for package usage
+try:
+    from Local_Setup import LocalSetup
+    from TLC_Common import makeApiCall
+    from Error_Email import errorEmail
+    from Common_Configs import coreCanvasApiUrl, canvasAccessToken, scriptLibrary
+except ImportError:  # When imported as a package/module
+    from .Local_Setup import LocalSetup
+    from .TLC_Common import makeApiCall
+    from .Error_Email import errorEmail
+    from .Common_Configs import coreCanvasApiUrl, canvasAccessToken, scriptLibrary
+
+## Define the script name, purpose, and external requirements for logging and error reporting purposes
+scriptName = os.path.basename(__file__).replace(".py", "")
 scriptPurpose = r"""
-This script reads a CSV file containing Canvas course IDs and changes the account for each course using the Canvas API.
+This script reads a CSV file containing Canvas course IDs and changes the account
+for each course using the Canvas API.
 """
 externalRequirements = r"""
-To function properly, this script requires a valid access header and URL, and a CSV file named "courses_to_set_account.csv" located in the Canvas Resources directory.
+To function properly, this script requires:
+- Valid Canvas API configuration in Common_Configs (coreCanvasApiUrl, canvasAccessToken).
+- A CSV file named "Target_Canvas_Course_Ids.csv" located in the Canvas internal
+  resources directory (LocalSetup.getInternalResourcePaths("Canvas")).
 """
 
-## Date Variables
-currentDate = datetime.now()
-currentMonth = currentDate.month
-currentYear = currentDate.year
-
-## Set working directory
-os.chdir(os.path.dirname(__file__))
-
-## Relative Path (this changes depending on the working directory of the main script)
-PFRelativePath = r".\\"
-
-## If the Canvas directory is not in the folder the relative path points to
-## find the Canvas directory and set the relative path to its parent folder
-while "Scripts TLC" not in os.listdir(PFRelativePath):
-    PFRelativePath = f"..\\{PFRelativePath}"
-
-## Change the relative path to an absolute path
-PFAbsolutePath = f"{os.path.abspath(PFRelativePath)}\\"
-
-## Local Path Variables
-baseLogPath = f"{PFAbsolutePath}Logs\\{scriptName}\\"
-baseLocalInputPath = f"{PFAbsolutePath}Canvas Resources\\"
-configPath = f"{PFAbsolutePath}Configs TLC\\"
-
-## If the base log path doesn't already exist, create it
-if not os.path.exists(baseLogPath):
-    os.makedirs(baseLogPath, mode=0o777, exist_ok=False)
-
-## Add Input Modules to the sys path
-sys.path.append(f"{PFAbsolutePath}Scripts TLC\\ResourceModules")
-sys.path.append(f"{PFAbsolutePath}Scripts TLC\\ActionModules")
-
-## Import local modules
-from Error_Email_API import errorEmailApi  # Import errorEmailApi
-from Make_Api_Call import makeApiCall  # Import makeApiCall
-
-## Canvas Instance Url
-coreCanvasApiUrl = None
-## Open the Core_Canvas_Url.txt from the config path
-with open(f"{configPath}Core_Canvas_Url.txt", "r") as file:
-    coreCanvasApiUrl = file.readlines()[0]
-
-## If the script is run as main the folder with the access token is in the parent directory
-canvasAccessToken = ""
-
-## Open and retrieve the Canvas Access Token
-with open(f"{configPath}Canvas_Access_Token.txt", "r") as file:
-    canvasAccessToken = file.readlines()[0]
-
-## Log configurations
-logger = logging.getLogger(__name__)
-rootFormat = ("%(asctime)s %(levelname)s %(message)s")
-FORMAT = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-logging.basicConfig(format=rootFormat, filemode="a", level=logging.INFO)
-
-## Info Log Handler
-infoLogFile = f"{baseLogPath}\\Info Log.txt"
-logInfo = logging.FileHandler(infoLogFile, mode='a')
-logInfo.setLevel(logging.INFO)
-logInfo.setFormatter(FORMAT)
-logger.addHandler(logInfo)
-
-## Warning Log handler
-warningLogFile = f"{baseLogPath}\\Warning Log.txt"
-logWarning = logging.FileHandler(warningLogFile, mode='a')
-logWarning.setLevel(logging.WARNING)
-logWarning.setFormatter(FORMAT)
-logger.addHandler(logWarning)
-
-## Error Log handler
-errorLogFile = f"{baseLogPath}\\Error Log.txt"
-logError = logging.FileHandler(errorLogFile, mode='a')
-logError.setLevel(logging.ERROR)
-logError.setFormatter(FORMAT)
-logger.addHandler(logError)
-
-## The variable below holds a set of the functions that have had errors. This enables the except function to only send
-## an error email the first time the function triggers an error
-setOfFunctionsWithErrors = set()
-
-## This function handles function errors
-def error_handler(p1_ErrorLocation, p1_ErrorInfo, sendOnce=True):
-    functionName = "error_handler"
-    logger.error(f"\nA script error occurred while running {p1_ErrorLocation}. Error: {str(p1_ErrorInfo)}")
-
-    ## If the function with the error has not already been processed send an email alert
-    if p1_ErrorLocation not in setOfFunctionsWithErrors:
-        errorEmailApi.sendEmailError(p2_ScriptName=scriptName, p2_ScriptPurpose=scriptPurpose,
-                                     p2_ExternalRequirements=externalRequirements,
-                                     p2_ErrorLocation=p1_ErrorLocation, p2_ErrorInfo=p1_ErrorInfo)
-        setOfFunctionsWithErrors.add(p1_ErrorLocation)
-        logger.error(f"\nError Email Sent")
-    else:
-        logger.error(f"\nError email already sent")
-
-## This function changes the account for a course given its Canvas course ID and account ID
-def changeCourseAccount(p1_header, courseId, account_id):
+## Set the account for the given course ID
+def changeCourseAccount(
+    localSetup: LocalSetup,
+    errorHandler: errorEmail,
+    courseId: str,
+    accountId: str,
+) -> None:
+    """
+    Change the account for a Canvas course given its course ID and target account ID.
+    Uses TLC_Common.makeApiCall with retry behavior.
+    """
     functionName = "changeCourseAccount"
     try:
-        change_account_url = f"{coreCanvasApiUrl}courses/{courseId}"
-        payload = {"course": {"account_id": account_id}}
-        response = makeApiCall(p1_header=p1_header, p1_apiUrl=change_account_url, p1_payload=payload, apiCallType="put")
+        changeAccountUrl = f"{coreCanvasApiUrl}courses/{courseId}"
+        payload = {"course": {"account_id": accountId}}
 
-        if response.status_code == 200:
-            logger.info(f"Successfully changed account for course with ID: {courseId}")
+        response, _ = makeApiCall(
+            localSetup=localSetup,
+            p1_apiUrl=changeAccountUrl,
+            p1_payload=payload,
+            p1_apiCallType="put",
+        )
+
+        ## Get the status code
+        statusCode = getattr(response, "status_code", None)
+
+        if statusCode == 200:
+            localSetup.logger.info(
+                f"Successfully changed account for course with ID: {courseId} "
+                f"to account_id: {accountId}"
+            )
         else:
-            logger.warning(f"Failed to change account for course with ID: {courseId}. Status code: {response.status_code}")
+            localSetup.logger.warning(
+                f"Failed to change account for course with ID: {courseId}. "
+                f"Status code: {statusCode}"
+            )
 
-    except Exception as error:
-        error_handler (functionName, error)
+    except Exception as Error:
+        errorHandler.sendError(functionName, Error)
 
-## This function reads the CSV file and changes the account for the listed courses
-def changeListedCoursesAccount():
+
+def changeListedCoursesAccount(
+    localSetup: LocalSetup,
+    errorHandler: errorEmail,
+    csvFileName: str = "Target_Canvas_Course_Ids.csv",
+    threadSleep: float = 0.1,
+) -> None:
+    """
+    Read a CSV file of course/account IDs and change each course's account.
+
+    Expected columns in CSV:
+      - canvas_course_id
+      - canvas_account_id
+    """
     functionName = "changeListedCoursesAccount"
     try:
-        targetCoursesCsvFilePath = f"{baseLocalInputPath}Target_Canvas_Course_Ids.csv"
-        header = {'Authorization': f"Bearer {canvasAccessToken}"}
+        ## Canvas internal resources root
+        canvasResourcePath = localSetup.getInternalResourcePaths("Canvas")
+        targetCoursesCsvFilePath = os.path.join(canvasResourcePath, csvFileName)
 
-        ## Define the necessary thread list
-        ongoingChangeAccountThreads = []
+        ## Log start
+        localSetup.logger.info(
+            f"Starting {functionName}. Input file: {targetCoursesCsvFilePath}"
+        )
 
-        ## Read the CSV file using pandas
+        ## Verify CSV file exists
+        if not os.path.exists(targetCoursesCsvFilePath):
+            raise FileNotFoundError(
+                f"Target courses CSV not found: {targetCoursesCsvFilePath}"
+            )
+
+        ## Thread tracking
+        ongoingThreads = []
+
+        ## Load CSV
         rawTargetCoursesDf = pd.read_csv(targetCoursesCsvFilePath)
 
-        ## Retain only rows that have a value in canvas_course_id
-        targetCoursesDf = rawTargetCoursesDf[rawTargetCoursesDf["canvas_course_id"].notna()]
+        ## Filter out rows with null canvas_course_id
+        targetCoursesDf = rawTargetCoursesDf[
+            rawTargetCoursesDf["canvas_course_id"].notna()
+        ]
 
-        ## Iterate over each row in the DataFrame
-        for index, row in targetCoursesDf.iterrows():
+        ## Iterate and spawn threads
+        for _, row in targetCoursesDf.iterrows():
+            courseId = str(row["canvas_course_id"]).replace(".0", "")
+            accountId = str(row["canvas_account_id"]).replace(".0", "")
 
-            ## Get the course id from the row
-            courseID = str(row["canvas_course_id"]).replace('.0', '')
+            ## Skip if either is empty
+            if not courseId or not accountId:
+                localSetup.logger.warning(
+                    f"Skipping row with courseId='{courseId}' accountId='{accountId}'"
+                )
+                continue
 
-            ## Get the term id from the row
-            accountID = str(row["canvas_account_id"]).replace('.0', '')
-
-            ## Create a thread to change the account for the course
-            changeAccountThread = threading.Thread(target=changeCourseAccount, args=(header, courseID, accountID))
-
-            ## Start the thread
+            ## Start thread to change account and append it to the tracking list
+            changeAccountThread = threading.Thread(
+                target=changeCourseAccount,
+                args=(localSetup, errorHandler, courseId, accountId),
+                name=f"change_course_{courseId}",
+            )
             changeAccountThread.start()
+            ongoingThreads.append(changeAccountThread)
 
-            ## Add the thread to the ongoing change account threads list
-            ongoingChangeAccountThreads.append(changeAccountThread)
+            # Throttle slightly to avoid hammering the API
+            time.sleep(threadSleep)
 
-            ## Sleep for a short time to avoid overloading the server
-            time.sleep(0.1)
-
-        ## Check if all ongoing change account threads have completed
-        for thread in ongoingChangeAccountThreads:
+        # Wait for all threads to complete
+        for thread in ongoingThreads:
             thread.join()
 
-    except Exception as error:
-        error_handler (functionName, error)
+        ## Log completion
+        localSetup.logger.info(
+            f"{functionName} completed. Processed {len(targetCoursesDf)} courses."
+        )
+
+    except Exception as Error:
+        errorHandler.sendError(functionName, Error)
 
 if __name__ == "__main__":
-    ## Set working directory
-    os.chdir(os.path.dirname(__file__))
+    # Initialize shared LocalSetup (paths, logging)
+    localSetup = LocalSetup(datetime.now(), __file__)
 
-    ## Change the account for the listed courses
-    changeListedCoursesAccount()
+    # Setup the error handler (sends one email per function error)
+    errorHandler = errorEmail(
+        scriptName,
+        scriptPurpose,
+        externalRequirements,
+        localSetup,
+    )
 
-    input("Press enter to exit")
+    localSetup.logger.info(
+        f"Starting script: {scriptName} | Purpose: {scriptPurpose.strip()}"
+    )
+
+    changeListedCoursesAccount(localSetup, errorHandler)
+
+    localSetup.logger.info(f"Script {scriptName} completed.")
+    input("Press Enter to exit...")
