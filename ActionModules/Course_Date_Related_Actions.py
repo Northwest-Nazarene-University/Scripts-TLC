@@ -343,11 +343,11 @@ def craftAndSendRelevantEmail(
                                                           )
 
             ## Send the Outcome Email
-            sendOutlookEmail(p1_subject = emailDetails['Relevant Email']
-                             , p1_body = emailDetails['Outcome Email Body']
-                             , p1_recipientEmailList = emailDetails['Instructor Email Or Emails String']
-                             , p1_shared_mailbox = emailDetails['Client Send/Recieve Email']
-                             )
+            # sendOutlookEmail(p1_subject = emailDetails['Relevant Email']
+            #                  , p1_body = emailDetails['Outcome Email Body']
+            #                  , p1_recipientEmailList = emailDetails['Instructor Email Or Emails String']
+            #                  , p1_shared_mailbox = emailDetails['Client Send/Recieve Email']
+            #                  )
 
     except Exception as Error:
         errorHandler.sendError(functionName, Error)

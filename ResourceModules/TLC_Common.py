@@ -164,9 +164,9 @@ def flattenApiObjectToJsonList(localSetup, apiObjectList, apiUrl):
 def makeApiCall(
     localSetup: LocalSetup, 
     p1_apiUrl,
-    p1_header = {'Authorization': f'Bearer {canvasAccessToken}'},
-    p1_payload={},
-    p1_files={},
+    p1_header = None,
+    p1_payload=None,
+    p1_files=None,
     p1_apiCallType="get",
     firstPageOnly=False,
 ):
@@ -175,6 +175,15 @@ def makeApiCall(
     Supports GET, POST, PUT, DELETE methods.
     Automatically retries on failure using the retry decorator.
     """
+    ## Set the default header, payload, and files if not provided
+    if p1_header is None:
+        p1_header = {'Authorization': f'Bearer {canvasAccessToken}'}
+    if p1_payload is None:
+        p1_payload = {}
+    if p1_files is None:
+        p1_files = {}
+
+    ## Initialize variables for the API response and list of responses (for pagination)
     p1_apiObject = None
     p1_apiObjectList = []
     ## Perform the API call based on type
@@ -244,7 +253,7 @@ def makeApiCall(
                         p1_apiUrl=statusUrl,
                         p1_header=p1_header
                     )
-                    return statusResponse
+                    return statusResponse, []
                 else:
                     localSetup.logger.info(f"409 received but no matching active report with paramters: {requestedParams}, found - retrying normally.")
             try:
@@ -256,7 +265,7 @@ def makeApiCall(
             else:
                 localSetup.logger.warning(f"Failed to delete resource at {p1_apiUrl}: HTTP {p1_apiObject.status_code}")
                 ## Break out of the retry loop for delete calls
-                return None
+                return None, None
     ## Handle pagination if applicable
     if hasattr(p1_apiObject, 'links') and 'next' in getattr(p1_apiObject, 'links', {}) and not firstPageOnly:
         p1_apiObjectList.append(p1_apiObject)
@@ -265,7 +274,7 @@ def makeApiCall(
             localSetup,
             p1_apiUrl=next_url,
             p1_header=p1_header,
-            p1_payload=p1_payload,
+            p1_payload=None,
             p1_files=p1_files,
             p1_apiCallType=p1_apiCallType,
             firstPageOnly=firstPageOnly

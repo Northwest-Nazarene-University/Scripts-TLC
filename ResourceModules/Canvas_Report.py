@@ -1206,13 +1206,13 @@ class CanvasReport:
 
             # Load Excel file
             if not zipfile.is_zipfile(rawOutputFilePath):
-                localSetup.logger.warning(f"Downloaded file is not a valid Excel file. Attempting repair...")
+                localSetup.logger.warning("Downloaded file is not a valid Excel file. Attempting repair...")
                 # Try reading as CSV and resave as proper Excel
                 try:
                     fileDataframe = pd.read_csv(rawOutputFilePath)
                     with pd.ExcelWriter(rawOutputFilePath, engine="openpyxl") as writer:
                         fileDataframe.to_excel(writer, index=False)
-                    localSetup.logger.info(f"File repaired")
+                    localSetup.logger.info("File repaired")
                 except Exception as e:
                     localSetup.logger.error(f"Repair failed: {e}")
                     raise
@@ -1227,6 +1227,7 @@ class CanvasReport:
 
             # Normalize column names
             outcomeCourseDf = rawoutcomeCourseDf.copy()
+            
             outcomeCourseDf.columns = [str(col).strip().lower() for col in outcomeCourseDf.columns]
             if "course number" in outcomeCourseDf.columns:
                 outcomeCourseDf.rename(columns={"course number": "number"}, inplace=True)
@@ -1259,6 +1260,18 @@ class CanvasReport:
 
             ## Clean any .0 from Course Code
             outcomeCourseDf["Course Code"] = outcomeCourseDf["Course Code"].str.replace(r'\.0$', '', regex=True)
+
+            ## Normalize outcome column values — strip non-breaking spaces (\xa0) and other
+            ## invisible whitespace that can be introduced when editing in Excel/Word/SharePoint
+            for col in outcomeColumns:
+                outcomeCourseDf[col] = (
+                    outcomeCourseDf[col]
+                    .astype(str)
+                    .str.replace('\xa0', ' ', regex=False)  # non-breaking space → regular space
+                    .str.replace('\u200b', '', regex=False)  # zero-width space → remove
+                    .str.strip()                              # trim leading/trailing whitespace
+                    .replace('nan', "")                    # restore actual NaN values
+                )
 
             # Save cleaned file
             outcomeCourseDf.to_excel(outputFilePath, index=False)

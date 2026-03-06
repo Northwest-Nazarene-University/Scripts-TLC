@@ -1,0 +1,8 @@
+{
+    "extraPaths": [
+        "ResourceModules",
+        "Configs",
+        "ReportModules",
+        "ActionModules"
+    ]
+}

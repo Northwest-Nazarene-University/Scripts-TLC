@@ -11,7 +11,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules")
 
 ## New resource modules
 from Local_Setup import LocalSetup
-from TLC_Common import makeApiCall, isFileRecent
+from TLC_Common import makeApiCall, isFileRecent, flattenApiObjectToJsonList 
 from Canvas_Report import CanvasReport
 from Common_Configs import coreCanvasApiUrl
 from Error_Email import errorEmail
@@ -258,35 +258,18 @@ def termCreateOutcomeComplianceReport(
                                     assignmentResultsApiUrl = f"{coreCanvasApiUrl}courses/sis_course_id:{targetCourseSisId}/assignments/{assignmentId}/submissions"
                                 
                                     ## Make a call to the assignment results api
-                                    assignmentResultsObject, _ = makeApiCall(
+                                    assignmentResultsObject, assignmentResultsObjectList = makeApiCall(
                                         localSetup
                                         , p1_apiUrl = assignmentResultsApiUrl
                                         , p1_payload = {"include[]": ['user']}
                                         )
                                 
-                                    ## Define a variable to hold the raw object link list/s
-                                    rawAccountOutcomeLinksList = []
-
-                                    ## If the object is actually a list of objects
-                                    if isinstance(assignmentResultsObject, list):
-
-                                        ## For each response object in the list
-                                        for accountOutcomeLinkObject in assignmentResultsObject:
-                    
-                                            ## If the response was a 200
-                                            if accountOutcomeLinkObject.status_code == 200:
-
-                                                ## Extend the assignmentResultsList with the object
-                                                rawAccountOutcomeLinksList.extend(accountOutcomeLinkObject.json())
-
-                                    ## Otherwise there was just one response
-                                    else:
-                
-                                        ## If the status code was a 200
-                                        if assignmentResultsObject.status_code == 200:
-
-                                            ## Extend the assignmentResultsList with the object
-                                            rawAccountOutcomeLinksList.extend(assignmentResultsObject.json())
+                                    ## Flatten all responses into a single list of JSON objects
+                                    rawAccountOutcomeLinksList = flattenApiObjectToJsonList(
+                                        localSetup,
+                                        assignmentResultsObjectList if assignmentResultsObjectList else [assignmentResultsObject],
+                                        assignmentResultsApiUrl
+                                        )
 
                                     ## For each object in the rawAccountOutcomeLinksList
                                     for responseOjbect in rawAccountOutcomeLinksList:
@@ -949,34 +932,18 @@ def termProcessOutcomeResults(p1_inputTerm
         accountOutcomeLinkApiUrl = f"{coreCanvasApiUrl}accounts/{targetCanvasAccountId}/outcome_group_links"
 
         ## Make an api call to get the outcome links related to the account id
-        accountOutcomeLinksObject, _ = makeApiCall(
+        accountOutcomeLinksObject, accountOutcomeLinksObjectList = makeApiCall(
             localSetup,
             accountOutcomeLinkApiUrl
             )
 
-        ## Define a variable to hold the raw object link list/s
-        rawAccountOutcomeLinksList = []
-
-        ## If the object is actually a list of objects
-        if isinstance(accountOutcomeLinksObject, list):
-
-            ## For each response object in the list
-            for accountOutcomeLinkObject in accountOutcomeLinksObject:
-                    
-                ## If the response was a 200
-                if accountOutcomeLinkObject.status_code == 200:
-
-                    ## Extend the accountOutcomeLinksList with the object
-                    rawAccountOutcomeLinksList.extend(accountOutcomeLinkObject.json())
-
-        ## Otherwise there was just one response
-        else:
-                
-            ## If the status code was a 200
-            if accountOutcomeLinksObject.status_code == 200:
-
-                ## Extend the accountOutcomeLinksList with the object
-                rawAccountOutcomeLinksList.extend(accountOutcomeLinksObject.json())
+        ## Flatten all paginated responses into a single list of JSON objects
+        ## If there were multiple pages, use the objectList; otherwise use the single response
+        rawAccountOutcomeLinksList = flattenApiObjectToJsonList(
+            localSetup,
+            accountOutcomeLinksObjectList if accountOutcomeLinksObjectList else [accountOutcomeLinksObject],
+            accountOutcomeLinkApiUrl
+            )
 
         ## For each object in the rawAccountOutcomeLinksList
         for responseOjbect in rawAccountOutcomeLinksList:
