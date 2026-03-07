@@ -231,39 +231,39 @@ def createPartialCanvasInputs_Threaded (p3_RelaventTerm):
 
 
 
-    ## This function creates term, user, course, and account CSVs for the given term
-    ## Term and User CSVs are not term specific and so only need to be created once
-    def createCompleteCanvasInputs_Threaded(p2_RelaventTerm):
-        ## Define a list for ongoing threads
-        activeThreads = []
+## This function creates term, user, course, and account CSVs for the given term
+## Term and User CSVs are not term specific and so only need to be created once
+def createCompleteCanvasInputs_Threaded(p2_RelaventTerm):
+    ## Define a list for ongoing threads
+    activeThreads = []
 
-        ## Define Canvas instance wholistic threading objects
-        activeThreads.append(threading.Thread(target=CanvasReport.getCoursesDf, args=(localSetup, "All")))
-        activeThreads.append(threading.Thread(target=CanvasReport.getSectionsDf, args=(localSetup, "All")))
-        activeThreads.append(threading.Thread(target=CanvasReport.getTermsDf, args=(localSetup,)))
-        activeThreads.append(threading.Thread(target=CanvasReport.getUsersDf, args=(localSetup,)))
-        activeThreads.append(threading.Thread(target=CanvasReport.getAccountsDf, args=(localSetup,)))
-        activeThreads.append(threading.Thread(target=CanvasReport.getCanvasUserLastAccessDf, args=(localSetup,)))
+    ## Define Canvas instance wholistic threading objects
+    activeThreads.append(threading.Thread(target=CanvasReport.getCoursesDf, args=(localSetup, "All")))
+    activeThreads.append(threading.Thread(target=CanvasReport.getSectionsDf, args=(localSetup, "All")))
+    activeThreads.append(threading.Thread(target=CanvasReport.getTermsDf, args=(localSetup,)))
+    activeThreads.append(threading.Thread(target=CanvasReport.getUsersDf, args=(localSetup,)))
+    activeThreads.append(threading.Thread(target=CanvasReport.getAccountsDf, args=(localSetup,)))
+    activeThreads.append(threading.Thread(target=CanvasReport.getCanvasUserLastAccessDf, args=(localSetup,)))
 
-        ## Define the term specific threading object
-        activeThreads.append(threading.Thread(target=createPartialCanvasInputs_Threaded, args=(p2_RelaventTerm,)))
+    ## Define the term specific threading object
+    activeThreads.append(threading.Thread(target=createPartialCanvasInputs_Threaded, args=(p2_RelaventTerm,)))
 
-        ## Start threading objects 
-        for thread in activeThreads:
-            thread.start()
-            time.sleep(1)
+    ## Start threading objects 
+    for thread in activeThreads:
+        thread.start()
+        time.sleep(1)
 
-        ## Wait for the threading to complete
-        for thread in activeThreads:
-            thread.join()
+    ## Wait for the threading to complete
+    for thread in activeThreads:
+        thread.join()
 
-        ## Retrieve the Automated Outcome Tool Variables excel file as a df    
-        automatedOutcomeToolVariablesDf = pd.read_excel(os.path.join(localSetup.getExternalResourcePath("SIS"), "Internal Tool Files\\Automated Outcome Tool Variables.xlsx"))
+    ## Retrieve the Automated Outcome Tool Variables excel file as a df    
+    automatedOutcomeToolVariablesDf = pd.read_excel(os.path.join(localSetup.getExternalResourcePath("SIS"), "Internal Tool Files\\Automated Outcome Tool Variables.xlsx"))
     
-        ## For each Target Designator in the Automated Outcome Tool Variables
-        for targetDesignator in automatedOutcomeToolVariablesDf["Target Designator"]:
-            ## Retrieve the lists of active outcome courses for the given term
-            CanvasReport.getActiveOutcomeCoursesDf(localSetup, p2_RelaventTerm, targetDesignator)
+    ## For each Target Designator in the Automated Outcome Tool Variables
+    for targetDesignator in automatedOutcomeToolVariablesDf["Target Designator"]:
+        ## Retrieve the lists of active outcome courses for the given term
+        CanvasReport.getActiveOutcomeCoursesDf(localSetup, p2_RelaventTerm, targetDesignator)
 
 ## This function determines the target term(s) using TLC_Common helper
 def determineTargetTerms():
@@ -297,7 +297,7 @@ def determineTargetTerms():
         return targetTermList
 
     except Exception as Error:
-        errorHandler.sendError(functionName, p1_ErrorInfo=Error)
+        errorHandler.sendError(functionName, p1_errorInfo=Error)
         return localSetup.getCurrentTermCodes()
 
 ## This function retrives the data neccessary to run the four times daily processes and runs them
@@ -341,7 +341,7 @@ def fourTimesDaily (p1_relaventTerm):
                 thread.join()
         
         ## Get the primary term data
-        createCompleteCanvasInputs_Threaded(p1_relaventTerm)
+        createCompleteCanvasInputs_Threaded (p1_relaventTerm)
 
         ## If relavent term is a summer term
         if p1_relaventTerm[:2].upper() == "SU":

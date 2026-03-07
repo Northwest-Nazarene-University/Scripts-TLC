@@ -59,7 +59,7 @@ def importCXData():
             localSetup.logger.error(f"Failed to check SIS imports. Status code: {sisImportCheckResponse.status_code}")
             localSetup.logger.error(f"Response: {sisImportCheckResponse.text}")
             ## Send an error email
-            errorHandler.sendError(p1_errorLocation="importCXData", p1_errorInfo=f"Failed to check SIS imports. Status code: {sisImportCheckResponse.status_code}. Response: {sisImportCheckResponse.text}")
+            errorHandler.sendError(functionName, p1_errorInfo=f"Failed to check SIS imports. Status code: {sisImportCheckResponse.status_code}. Response: {sisImportCheckResponse.text}")
             return False
 
         ## Otherwise
@@ -85,7 +85,7 @@ def importCXData():
                 localSetup.logger.error(f"Failed to abort SIS import. Status code: {abortImportResponse.status_code}")
                 localSetup.logger.error(f"Response: {abortImportResponse.text}")
                 ## Send an error email
-                errorHandler.sendError(p1_errorLocation="importCXData", p1_errorInfo=f"Failed to abort SIS import. Status code: {abortImportResponse.status_code}. Response: {abortImportResponse.text}")
+                errorHandler.sendError(functionName, p1_errorInfo=f"Failed to abort SIS import. Status code: {abortImportResponse.status_code}. Response: {abortImportResponse.text}")
                 return False
 
         ## Make a list of the CSV files in the SISResourcePath directory
@@ -156,7 +156,7 @@ def importCXData():
                 localSetup.logger.error(f"Response: {sisImportOjbect.text}")
 
                 ## Send an error email
-                errorHandler.sendError(p1_errorLocation="importCXData", p1_errorInfo=f"Failed to import SIS data. Status code: {sisImportOjbect.status_code}. Response: {sisImportOjbect.text}")
+                errorHandler.sendError(functionName, p1_errorInfo=f"Failed to import SIS data. Status code: {sisImportOjbect.status_code}. Response: {sisImportOjbect.text}")
 
             ## Otherwise
             else:
@@ -182,7 +182,7 @@ def importCXData():
                         localSetup.logger.error(f"Response: {importStatusResponse.text}")
                         
                         ## Send an error email
-                        errorHandler.sendError(p1_errorLocation="importCXData", p1_errorInfo=f"Failed to check SIS import status. Status code: {importStatusResponse.status_code}. Response: {importStatusResponse.text}")
+                        errorHandler.sendError(functionName, p1_errorInfo=f"Failed to check SIS import status. Status code: {importStatusResponse.status_code}. Response: {importStatusResponse.text}")
                         break
 
                     ## Otherwise, get the import status from the response
@@ -228,4 +228,4 @@ if __name__ == "__main__":
         localSetup.logger.error("CX Data Sync Failed")
 
         ## Send an error email
-        errorHandler.sendError (scriptName, p1_ErrorInfo = "The CX Data Sync Failed. Please check the messages at https://nnu.instructure.com/accounts/1/sis_import for more information.")
+        errorHandler.sendError (scriptName, p1_errorInfo = "The CX Data Sync Failed. Please check the messages at https://nnu.instructure.com/accounts/1/sis_import for more information.")

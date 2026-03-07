@@ -934,7 +934,7 @@ def Nighthawk360CanvasReport():
                         localSetup.logger.warning(
                             f"Error: {Error}\nOccurred while processing {p1_courseKey}:{p1_dataPoints[p1_courseKey]} for Student ID: {str(p1_stuId)}"
                         )
-                        errorHandler.sendError("functionName", p1_ErrorInfo=...)
+                        errorHandler.sendError("functionName", p1_errorInfo=...)
 
         ## Copy files to external output path
         shutil.copy(activityFilePath, activityPath)

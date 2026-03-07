@@ -93,7 +93,7 @@ def getSlateInfo (p1_inputTerm):
                 ## Otherwise, log the error and return None
                 else:
                     localSetup.logger.error(f"Attempt {attempt} failed: {Error}. No more retries.")
-                    errorHandler.sendError (functionName, p1_ErrorInfo=Error)
+                    errorHandler.sendError (functionName, p1_errorInfo=Error)
                     return None
        
 

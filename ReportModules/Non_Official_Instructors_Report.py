@@ -149,18 +149,18 @@ localSetup.logger.addHandler(logError)
 errorHandler = errorEmailApi(scriptName, scriptPurpose, externalRequirements, localSetup)
 
 ## This function handles function errors
-def errorHandler.sendError (p1_ErrorLocation, p1_ErrorInfo, sendOnce = True):
+def errorHandler.sendError (p1_ErrorLocation, p1_errorInfo, sendOnce = True):
     functionName = "errorHandler.sendError"
 
     ## Log the error
     localSetup.logger.error (f"     \nA script error occured while running {p1_ErrorLocation}. " +
-                     f"Error: {str(p1_ErrorInfo)}")
+                     f"Error: {str(p1_errorInfo)}")
 
     ## If the function with the error has not already been processed send an email alert
     if (p1_ErrorLocation not in setOfFunctionsWithErrors):
         errorEmailApi.sendEmailError(p2_ScriptName = scriptName, p2_ScriptPurpose = scriptPurpose, 
                                      p2_ExternalRequirements = externalRequirements, 
-                                     p2_ErrorLocation = p1_ErrorLocation, p2_ErrorInfo = f"{p1_ErrorInfo}: \n\n {traceback.format_exc()}")
+                                     p2_ErrorLocation = p1_ErrorLocation, p2_ErrorInfo = f"{p1_errorInfo}: \n\n {traceback.format_exc()}")
         
         ## Add the function name to the set of functions with errors
         setOfFunctionsWithErrors.add(p1_ErrorLocation)
