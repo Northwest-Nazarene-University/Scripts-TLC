@@ -50,9 +50,9 @@ decade = localSetup.dateDict["decade"]
 
 
 ## Testing variables
-currentDay = 1 ## First week of the month testing value
-currentWeekDay = 0 ## Day of the week testing value 
-currentHour = 1 ## First run of the day testing value
+## currentDay = 1 ## First week of the month testing value make sure to comment out the target terms variable
+## currentWeekDay = 4 ## Day of the week testing value 
+## currentHour = 1 ## First run of the day testing value
 ## currentHour = 16 ## Last run of the day testing value
 
         

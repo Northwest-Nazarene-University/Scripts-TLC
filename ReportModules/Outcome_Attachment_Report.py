@@ -445,7 +445,7 @@ def termOutcomeAttachmentReport (p1_inputTerm
         for index, row in termActiveOutcomeCoursesDF.iterrows():
 
             ## Target a specific course for testing if needed
-            ##if row['Course_sis_id'] == "GF2024_EDUC7160_7A":
+            if row['Course_sis_id'] == "FA2025_NURS2000_01":
             
                 ## If the row is not a nan
                 if not pd.isna(row["Course_sis_id"]):

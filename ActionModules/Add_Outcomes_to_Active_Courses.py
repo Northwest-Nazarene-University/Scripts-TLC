@@ -95,7 +95,16 @@ def retrieveDataForRelevantCommunication (p2_inputTerm
         ## Make a list of the unique outcomes that are not blank 
         ## and a dict to hold the course id of the course named after each outcome
         auxillaryDFDict["Unique Outcomes"], auxillaryDFDict["Outcome Canvas Data Dict"] = getUniqueOutcomesAndOutcomeCoursesDict(p2_inputTerm, rawActiveOutcomeCourseDf, p3_targetDesignator)
-        
+
+        ## If the retrieveDataForRelevantCommunication returned an empty list of unique outcomes or a dict with no keys for the outcome canvas data dict
+        if not auxillaryDFDict["Unique Outcomes"] or not auxillaryDFDict["Outcome Canvas Data Dict"].keys():
+            ## Log the fact that there are no valid outcomes to add to courses
+            localSetup.logger.error(f"\nNo valid outcomes found for term {p2_inputTerm} and target designator {p3_targetDesignator}. No outcomes will be added to courses.")
+            ## Email the fact that there are no valid outcomes to add to courses
+            errorHandler.sendError (f"External Input Error: {functionName}", f"No valid outcomes found for term {p2_inputTerm} and target designator {p3_targetDesignator}. No outcomes will be added to courses.")
+            ## Return an empty dataframe for the active outcome courses df and the auxillary df dict
+            return pd.DataFrame(), auxillaryDFDict
+
         ## Remove any outcomes that don't have corresponding courses
         auxillaryDFDict["Active Outcome Courses DF"] = removeMissingOutcomes (
             rawActiveOutcomeCourseDf
@@ -551,6 +560,7 @@ def removeMissingOutcomes (p1_activeOutcomeCourseDf, p1_uniqueOutcomes, p1_outco
     
     except Exception as Error:
         errorHandler.sendError (functionName, Error)
+        return p1_activeOutcomeCourseDf
 
 ## This function returns a dict with the course id of the course named after each outcome
 def getUniqueOutcomesAndOutcomeCoursesDict (p3_inputTerm, p1_activeOutcomeCourseDf, p4_targetDesignator):
@@ -666,15 +676,29 @@ def getUniqueOutcomesAndOutcomeCoursesDict (p3_inputTerm, p1_activeOutcomeCourse
                     if outcomeGroup['title'] == targetAccountName:
                         ## Set the outcome group canvas id to the id of the outcome group
                         outcomeGroupCanvasId = outcomeGroup['id']
-                        ## Break out of the loop
                         break
+                    continue
                 
                 ## If the outcome group's vendor guid is equal to the outcome parent guid
                 if outcomeGroup['vendor_guid'] == outcomeParentGuid:
                     ## Set the outcome group canvas id to the id of the outcome group
                     outcomeGroupCanvasId = outcomeGroup['id']
-                    ## Break out of the loop
                     break
+
+                ## Fallback: match by the numeric ID embedded in the parent guid (e.g. 'canvas_outcome_group:20965')
+                if (
+                    outcomeParentGuid 
+                    and ':' in str(outcomeParentGuid)
+                    and str(outcomeGroup['id']) == str(outcomeParentGuid).split(':')[-1]
+                    ):
+                    outcomeGroupCanvasId = outcomeGroup['id']
+                    break
+
+            ## Guard: skip this outcome if the outcome group was not found
+            if outcomeGroupCanvasId is None:
+                localSetup.logger.error(f"\nOutcome group not found for parent guid '{outcomeParentGuid}' (outcome: {outcome})")
+                errorHandler.sendError(f"External Input Error: {functionName}", f"Outcome group not found for parent guid '{outcomeParentGuid}' (outcome: {outcome})")
+                continue
 
             ## Define an outcome api url by tagging on the outcome group canvas id 
             ## and /outcomes to the end of the outcome groups api url
@@ -746,69 +770,10 @@ def getUniqueOutcomesAndOutcomeCoursesDict (p3_inputTerm, p1_activeOutcomeCourse
 
 
         return uniqueTargetOutcomes, uniqueOutcomesCanvasData
-
-        # ## Make a dict to hold the course id of the course named after each outcome
-        # outcomeCanvasDataDict = {}
-        
-        # ## For each outcome in the unique outcomes list
-        # for outcome in uniqueOutcomes:
-            
-        #     ## Define a variable to hold the courseIndex
-        #     courseIndex = None
-
-        #     try: ## Irregular try clause, do not comment out in testing
-
-        #         ## Make a list of the indexes where the long_name column is equal to the outcome (there should only be 1)
-        #         courseIndexSearch = allCanvasCoursesDF[allCanvasCoursesDF['long_name'] == outcome].index
-
-        #         ## If the courseIndexs is not empty
-        #         if not courseIndexSearch.empty:
-
-        #             ## Get the first index from the courseIndexSearch
-        #             courseIndex = courseIndexSearch[0]
-
-            
-        #         ## Set the courseIndex to the index of the course with the outcome as the long name
-        #         courseIndex = allCanvasCoursesDF[allCanvasCoursesDF['long_name'] == outcome].index[0]
-            
-        #     ## If no course is found with the outcome as the long name
-        #     except: ## Irregular except clause, do not comment out in testing
-                
-        #         ## Make a list of the indexes where the short_name column is equal to the outcome (there should only be 1)
-        #         courseIndexeSearch = allCanvasCoursesDF[allCanvasCoursesDF['short_name'] == outcome].index
-
-        #         ## If the courseIndexs is not empty
-        #         if not courseIndexeSearch.empty:
-
-        #             ## Get the first index from the courseIndexSearch
-        #             courseIndex = courseIndexeSearch[0]
-                
-        #     ## Finally
-        #     finally:
-
-        #         ## If there is still no course index
-        #         if courseIndex is None:
-
-        #             ## Log the fact that the course was not found
-        #             localSetup.logger.error(f"\nOutcome not found: {outcome}")
-                    
-        #             ## Email the fact that the course was not found
-        #             errorHandler.sendError (f"External Input Error: {functionName}", f"Outcome course not found: {outcome}")
-
-        #             ## Skip to the next outcome
-        #             continue
-                
-        #     ## Use the course index to get the canvas course id from the course with the outcome as the name
-        #     courseCanvasId = allCanvasCoursesDF.loc[courseIndex, 'canvas_course_id']
-                
-        #     ## Add the course id to the outcomeCanvasDataDict
-        #     outcomeCanvasDataDict[outcome] = courseCanvasId
-
-        # ## Return the outcomeCanvasDataDict
-        # return uniqueOutcomes, outcomeCanvasDataDict    
     
     except Exception as Error:
         errorHandler.sendError (functionName, Error)
+        return [], {}
 
 # This function checks whether a term's outcome courses have their associated outcomes and adds them if they don't
 def termOutcomeExporter(p1_inputTerm, p1_targetDesignator):
