@@ -61,7 +61,6 @@ def saveOutcomeAttachmentCourseInfo(saveLocation, fileName, p1_course_name, p1_r
                                     , "Issue": issue
                                     , "Instructor Name": p1_instructor_name
                                     , "Instructor Email": p1_instructor_email})
-                csvFile_2.close()
             p2_newFileCreated[0] = True
 
         ## If it is the second time (or more) in the current run of the script the missing syllabi file is added onto
@@ -74,7 +73,6 @@ def saveOutcomeAttachmentCourseInfo(saveLocation, fileName, p1_course_name, p1_r
                                     , "Issue": issue
                                     , "Instructor Name": p1_instructor_name
                                     , "Instructor Email": p1_instructor_email})
-            csvFile_2.close()
 
     except Exception as Error:
         errorHandler.sendError (functionName, Error)
@@ -309,7 +307,7 @@ def outcomeAttachmentReport(row, p1_rawOutcomesDF, p1_outcomeCoursesMissingAttac
         
             
         ## Make a dict with the outcome titles as keys and the vendor_guids as values
-        uniqueAttachedOutcomesVendorGuidDict = {row['title']: row['vendor_guid'] for index, row in outcomesDF.iterrows()}
+        uniqueAttachedOutcomesVendorGuidDict = {row2['title']: row2['vendor_guid'] for index, row2 in outcomesDF.iterrows()}
         
         ## Check the rubrics in the course for the desired outcomes
         checkRubricOutcomeAlignment(row, targetCourseSisId, uniqueAttachedOutcomes, uniqueAttachedOutcomesVendorGuidDict)
@@ -429,7 +427,7 @@ def termOutcomeAttachmentReport (p1_inputTerm
             if "Outcome" in column and "Area" not in column:
                 
                 ## Replace any nan values with ""
-                termActiveOutcomeCoursesDF[column].fillna("")
+                termActiveOutcomeCoursesDF[column] = termActiveOutcomeCoursesDF[column].fillna("")
 
         ## Define a dict to hold the assignment data for published assignments with outcomes
         outcomeCoursesMissingAttachments = {

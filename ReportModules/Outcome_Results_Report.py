@@ -760,9 +760,6 @@ def termProcessOutcomeResults(p1_inputTerm
 
         ## Build lcoal paths  
         designatorLocalOutputPath = localSetup.getTargetDesignatedOutputPath(termWord, termYear, p1_targetDesignator)
-
-        ## Ensure directories exist
-        os.makedirs(designatorLocalOutputPath, exist_ok=True)
             
         ## Create a dict of the first and second, internal and external output report file paths
         destinationFilePathDict = {
@@ -772,8 +769,6 @@ def termProcessOutcomeResults(p1_inputTerm
                 ),
             "Second Internal Output Report File Path and Name" : os.path.join(
                 designatorLocalOutputPath, 
-                schoolYear, 
-                p1_inputTerm, 
                 f"{p1_inputTerm}_{p1_targetDesignator}_Outcome_Results_Dashboard_Data.xlsx"
                 ),
             "External Output Report File Path and Name" : os.path.join(

@@ -4,6 +4,7 @@
 ## External libraries
 import os, sys, json, pandas as pd, shutil, time, threading
 from datetime import datetime, timedelta
+from typing import Optional
 
 ## Add ResourceModules to the system path
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules"))
@@ -13,9 +14,10 @@ from Local_Setup import LocalSetup
 from TLC_Common import makeApiCall
 from Canvas_Report import CanvasReport
 from Common_Configs import coreCanvasApiUrl, canvasAccessToken
-from Error_Email import errorEmail
+from Error_Email import ErrorEmail
 
-## Define the script name, purpose, and external requirements for logging and error reporting purposes
+
+## Define the script name, purpose, and external requirements for logging and Error reporting purposes
 scriptName = os.path.basename(__file__).replace(".py", "")
 
 scriptPurpose = r"""
@@ -29,18 +31,53 @@ and the "{SISResourcePath}\\output\\pharos" folder
 ## Create the localsetup variable
 localSetup = LocalSetup(datetime.now(), __file__)  ## sets cwd, paths, logs, date parts
 
-## Setup the error handler
-errorHandler = errorEmail(scriptName, scriptPurpose, externalRequirements, localSetup)
+## Setup the Error handler
+ErrorHandler = ErrorEmail(scriptName, scriptPurpose, externalRequirements, localSetup)
+
+def _parse_iso_datetime(dt_str: Optional[str]) -> Optional[datetime]:
+    if not dt_str:
+        return None
+    try:
+        # handle trailing 'Z' (UTC) by converting to +00:00 for fromisoformat
+        if dt_str.endswith("Z"):
+            dt_str = dt_str[:-1] + "+00:00"
+        return datetime.fromisoformat(dt_str)
+    except Exception:
+        return None
 
 ## This function recursively parses discussion post replies to search for a particular user's latest reply
 def getStuMostRecentGradedDiscussionPostDateRecursive(p2_stuCanvasId, p1_stuLastGradedDiscussionPostDate, p1_post):
+    """
+    Recursively search p1_post and its replies for replies by p2_stuCanvasId.
+    Return the most recent 'updated_at' value (string) found for that user,
+    or p1_stuLastGradedDiscussionPostDate if nothing newer is found.
+    Comparison is done on strings (assumes consistent ISO-8601 format).
+    """
     functionName = "Get a Student's Most Recent Graded Discussion Post Date Recursive"
-    if "replies" in p1_post:
-        for reply in p1_post["replies"]:
-            if reply.get("user_id") == p2_stuCanvasId:
-                if not p1_stuLastGradedDiscussionPostDate or p1_stuLastGradedDiscussionPostDate < reply["updated_at"]:
-                    p1_stuLastGradedDiscussionPostDate = reply["updated_at"]
-                getStuMostRecentGradedDiscussionPostDateRecursive(p2_stuCanvasId, p1_stuLastGradedDiscussionPostDate, reply)
+
+    currentBestStr = p1_stuLastGradedDiscussionPostDate if p1_stuLastGradedDiscussionPostDate else None
+
+    replies = p1_post.get("replies") or []
+    for reply in replies:
+        replyUser = reply.get("user_id")
+        replyUpdatedStr = reply.get("updated_at")
+
+        # If this reply is from the target student, compare timestamps as strings
+        if replyUser == p2_stuCanvasId and replyUpdatedStr:
+            if currentBestStr is None or replyUpdatedStr > currentBestStr:
+                currentBestStr = replyUpdatedStr
+
+        # Recurse into nested replies and use its returned result
+        recResult = getStuMostRecentGradedDiscussionPostDateRecursive(
+            p2_stuCanvasId,
+            currentBestStr,
+            reply
+        )
+        if recResult:
+            if currentBestStr is None or recResult > currentBestStr:
+                currentBestStr = recResult
+
+    return currentBestStr
 
 ## This function returns the user's most recent graded discussion post date
 def getStuMostRecentGradedDiscussionPostDate(p1_stuDiscussionListAPIUrl, p1_stuCanvasId):
@@ -142,7 +179,7 @@ def getEnrollmentApiObject(enrollmentId, courseId, parentCourseId, stuId, enroll
 
                 if sectionResponse.status_code != 200:
                     localSetup.logger.warning(f"Failed to retrieve sections for parent course {parentCourseId}")
-                    errorHandler.sendError(functionName, f"Section retrieval failed for parent course {parentCourseId}")
+                    ErrorHandler.sendError(functionName, f"Section retrieval failed for parent course {parentCourseId}")
                     return None, None
 
                 sectionData = json.loads(sectionResponse.text)
@@ -166,8 +203,8 @@ def getEnrollmentApiObject(enrollmentId, courseId, parentCourseId, stuId, enroll
 
             ## If course is concluded, update end date temporarily
             if enrollmentObject.status_code == 400:
-                error400Message = json.loads(enrollmentObject.content.decode('utf-8')).get('message', '')
-                if error400Message == "Can't add an enrollment to a concluded course.":
+                Error400Message = json.loads(enrollmentObject.content.decode('utf-8')).get('message', '')
+                if Error400Message == "Can't add an enrollment to a concluded course.":
                     futureEndDate = (
                         datetime.combine(
                             datetime.utcnow().date() + timedelta(days=1)
@@ -197,7 +234,7 @@ def getEnrollmentApiObject(enrollmentId, courseId, parentCourseId, stuId, enroll
             return enrollmentObject, None
 
     except Exception as Error:
-        errorHandler.sendError(functionName, Error)
+        ErrorHandler.sendError(functionName, Error)
         return None, None
 
 ## This function retrieves assignment analytics for a student and returns:
@@ -337,7 +374,7 @@ def handleEnrollmentDeletion(stuId, enrollmentId, courseId, originalEndDate=""):
         return False
 
     except Exception as Error:
-        errorHandler.sendError(functionName, Error)
+        ErrorHandler.sendError(functionName, Error)
         return False
 
 ## This function determines whether the course is published or not
@@ -493,7 +530,7 @@ def getStuCourseData(
             handleEnrollmentDeletion(p2_stuId, enrollmentId, parentCourseId or p1_targetCourseId, oldCourseEndDate)
 
     except Exception as Error:
-         errorHandler.sendError("functionName", error)
+         ErrorHandler.sendError("functionName", Error)
 
 ## This threaded function gets each student's course data related to each of their enrollments for the current term
 def getStuCurrentCoursesData(
@@ -568,7 +605,7 @@ def getStuCurrentCoursesData(
         localSetup.logger.info(f"{p1_stuId} completed")
 
     except Exception as Error:
-         errorHandler.sendError("functionName", error)
+         ErrorHandler.sendError("functionName", Error)
 
 ## This function retrieves and returns a dict of students' ids and last Canvas access report data points
 def getStuLastCanvasAccessPoints(p1_stuIdsList):
@@ -613,7 +650,7 @@ def getStuLastCanvasAccessPoints(p1_stuIdsList):
         return lastCanvasAccessData
 
     except Exception as Error:
-        errorHandler.sendError(functionName, Error)
+        ErrorHandler.sendError(functionName, Error)
 
 ## This threaded function gets each student's courses and adds them as keys with empty dicts to the student's course data dict
 def getStuCoursesData(
@@ -627,8 +664,8 @@ def getStuCoursesData(
 
         ## Get Canvas user ID for the student
         ## Robustly handle user_id values that can be numeric strings or emails/non-numeric values
-        numericUserIds = pd.to_numeric(p1_filteredCanvasEnrollmentsDf["user_id"], errors="coerce")
-        maskNumeric = numericUserIds == pd.to_numeric(p1_stuId, errors="coerce")
+        numericUserIds = pd.to_numeric(p1_filteredCanvasEnrollmentsDf["user_id"], Errors="coerce")
+        maskNumeric = numericUserIds == pd.to_numeric(p1_stuId, Errors="coerce")
 
         if maskNumeric.any():
             canvasIdDf = p1_filteredCanvasEnrollmentsDf.loc[maskNumeric, "canvas_user_id"]
@@ -671,7 +708,7 @@ def getStuCoursesData(
             p1_stuCoursesData[p2_targetCourseId] = {}
 
     except Exception as Error:
-         errorHandler.sendError("functionName", error)
+         ErrorHandler.sendError("functionName", Error)
 
 ## This function takes a list of current NNU enrollments and gets their Canvas enrollment related activity and grade information
 def getNighthawk360Data(p1_oldEnrollmentDataDf):
@@ -854,7 +891,7 @@ def getNighthawk360Data(p1_oldEnrollmentDataDf):
         return completeStudentEnrollmentDataDict
 
     except Exception as Error:
-         errorHandler.sendError("functionName", error)
+         ErrorHandler.sendError("functionName", Error)
 
 ## This function contains the start and end of the NightHawk 360 data report
 def Nighthawk360CanvasReport():
@@ -934,7 +971,7 @@ def Nighthawk360CanvasReport():
                         localSetup.logger.warning(
                             f"Error: {Error}\nOccurred while processing {p1_courseKey}:{p1_dataPoints[p1_courseKey]} for Student ID: {str(p1_stuId)}"
                         )
-                        errorHandler.sendError("functionName", p1_errorInfo=...)
+                        ErrorHandler.sendError("functionName", p1_ErrorInfo=...)
 
         ## Copy files to external output path
         shutil.copy(activityFilePath, activityPath)
@@ -943,7 +980,7 @@ def Nighthawk360CanvasReport():
         localSetup.logger.info("\nActivity and Data CSVs saved to internal and external paths")
 
     except Exception as Error:
-         errorHandler.sendError("functionName", error)
+         ErrorHandler.sendError("functionName", Error)
 
 if __name__ == "__main__":
 
