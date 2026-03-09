@@ -556,6 +556,10 @@ def removeMissingOutcomes (p1_activeOutcomeCourseDf, p1_uniqueOutcomes, p1_outco
 def getUniqueOutcomesAndOutcomeCoursesDict (p3_inputTerm, p1_activeOutcomeCourseDf, p4_targetDesignator):
     functionName = "Get Unique Outcomes And Outcome Courses Dict"
     
+    ## Initialize return values before try block so they are always safe to return on error
+    uniqueTargetOutcomes = []
+    uniqueOutcomesCanvasData = {}
+
     try:
 
         ## Make a df with one collumn where all outcome columns that don't have area in the name are stacked
@@ -656,7 +660,7 @@ def getUniqueOutcomesAndOutcomeCoursesDict (p3_inputTerm, p1_activeOutcomeCourse
             ## For each outcome group in the outcome groups json list
             for outcomeGroup in outcomeGroupsJsonList:
                 
-                ## If the outcomeParentGuid is nan
+                ## If the outcomeParentGuid is nan/empty — match by account title (root group)
                 if (
                     pd.isna(outcomeParentGuid) 
                     or not outcomeParentGuid 
@@ -668,6 +672,7 @@ def getUniqueOutcomesAndOutcomeCoursesDict (p3_inputTerm, p1_activeOutcomeCourse
                         outcomeGroupCanvasId = outcomeGroup['id']
                         ## Break out of the loop
                         break
+                    continue  ## Skip vendor_guid check when outcomeParentGuid is nan
                 
                 ## If the outcome group's vendor guid is equal to the outcome parent guid
                 if outcomeGroup['vendor_guid'] == outcomeParentGuid:
@@ -675,6 +680,28 @@ def getUniqueOutcomesAndOutcomeCoursesDict (p3_inputTerm, p1_activeOutcomeCourse
                     outcomeGroupCanvasId = outcomeGroup['id']
                     ## Break out of the loop
                     break
+
+                ## Fallback: match by the numeric ID embedded in the parent guid
+                ## e.g. 'canvas_outcome_group:20965' -> match against outcomeGroup['id'] == 20965
+                ## This handles cases where Canvas returns vendor_guid: None in the account listing
+                ## but the ID is still embedded in the parent_guids field of the outcomes export
+                outcomeParentGuidStr = str(outcomeParentGuid)
+                if (
+                    outcomeParentGuid
+                    and ':' in outcomeParentGuidStr
+                    and str(outcomeGroup['id']) == outcomeParentGuidStr.split(':')[-1]
+                    ):
+                    ## Set the outcome group canvas id to the id of the outcome group
+                    outcomeGroupCanvasId = outcomeGroup['id']
+                    ## Break out of the loop
+                    break
+
+            ## Guard: skip this outcome if the outcome group was not found
+            ## rather than making a guaranteed-404 API call to .../None/outcomes
+            if outcomeGroupCanvasId is None:
+                localSetup.logger.error(f"\nOutcome group not found for parent guid '{outcomeParentGuid}' (outcome: {outcome})")
+                errorHandler.sendError(f"External Input Error: {functionName}", f"Outcome group not found for parent guid: '{outcomeParentGuid}' (outcome: {outcome})")
+                continue
 
             ## Define an outcome api url by tagging on the outcome group canvas id 
             ## and /outcomes to the end of the outcome groups api url
@@ -809,6 +836,7 @@ def getUniqueOutcomesAndOutcomeCoursesDict (p3_inputTerm, p1_activeOutcomeCourse
     
     except Exception as Error:
         errorHandler.sendError (functionName, Error)
+        return uniqueTargetOutcomes, uniqueOutcomesCanvasData
 
 # This function checks whether a term's outcome courses have their associated outcomes and adds them if they don't
 def termOutcomeExporter(p1_inputTerm, p1_targetDesignator):
