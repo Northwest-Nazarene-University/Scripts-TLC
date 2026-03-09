@@ -2,8 +2,8 @@
 ## Last Updated by: Bryce Miller
 
 ## External libraries
-import traceback, os, sys, logging, threading, csv, requests, json, pdfkit, re, os, os.path, time
-from datetime import date, datetime
+import os, sys, csv, json, os.path, shutil, threading
+from datetime import datetime
 import pandas as pd
 
 ## Add Script repository to syspath
@@ -13,7 +13,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules")
 from Local_Setup import LocalSetup
 from TLC_Common import makeApiCall, isFileRecent
 from Canvas_Report import CanvasReport
-from Common_Configs import coreCanvasApiUrl, canvasAccessToken
+from Common_Configs import coreCanvasApiUrl, termSchoolYearLogic
 from Error_Email import errorEmail
 
 ## Create the localsetup variable
@@ -278,7 +278,6 @@ def outcomeAttachmentReport(row, p1_rawOutcomesDF, p1_outcomeCoursesMissingAttac
         ## Make variables for the relavent course information
         courseSisId = row["Course_sis_id"]
         courseName = row["Course_name"]
-        parentCourseSisId = row["Parent_Course_sis_id"]
         targetCourseSisId = None
 
         ## If there is a parent course id
@@ -380,11 +379,13 @@ def termOutcomeAttachmentReport (p1_inputTerm
 
     try:
        
-        ## Extract term prefix and decade
+        ## Extract term prefix and decade+
+        
         ## Extract term prefix and decade
         termCodePrefix = p1_inputTerm[:2]  ## e.g., "FA", "SP", "SU"
         termWord = undgTermsCodesToWordsDict.get(termCodePrefix, gradTermsCodesToWordsDict.get(termCodePrefix))
         termYear = int(str(localSetup.dateDict["century"]) + p1_inputTerm[2:])
+        schoolYear = localSetup.getSchoolYear(termWord, termYear)
 
         ## Build local paths  
         designatorLocalOutputPath = localSetup.getTargetDesignatedOutputPath(termWord, termYear, p1_targetDesignator)
@@ -397,6 +398,7 @@ def termOutcomeAttachmentReport (p1_inputTerm
 
         ## Build the designated internal output path
         targetDestinationFilePath = os.path.join(designatorLocalOutputPath, termOutputFileName)
+        targetExternalDestinationFilePath = os.path.join(localSetup.getExternalResourcePath("IE"), schoolYear, p1_inputTerm, termOutputFileName)
 
         ## If the file is recent return
         if isFileRecent(localSetup, targetDestinationFilePath):
@@ -444,8 +446,10 @@ def termOutcomeAttachmentReport (p1_inputTerm
         ## For each row in the termActiveOutcomeCoursesDF
         for index, row in termActiveOutcomeCoursesDF.iterrows():
 
-            ## Target a specific course for testing if needed
-            if row['Course_sis_id'] == "FA2025_NURS2000_01":
+                ## Target a specific course for testing if needed
+                # if row['Course_sis_id'] == "FA2025_NURS2000_01":
+                    
+                #     outcomeAttachmentReport (row, rawOutcomesDF, outcomeCoursesMissingAttachments)
             
                 ## If the row is not a nan
                 if not pd.isna(row["Course_sis_id"]):
@@ -470,7 +474,7 @@ def termOutcomeAttachmentReport (p1_inputTerm
             ## Wait for the thread to finish
             thread.join()
             
-        ## If any of the lists in the outcomeCoursesMissingAttachments dict are not empty
+        # If any of the lists in the outcomeCoursesMissingAttachments dict are not empty
         if any([len(outcomeCoursesMissingAttachments[key]) > 0 for key in outcomeCoursesMissingAttachments.keys()]):
             
             ## Create a dataframe from the outcomeCoursesMissingAttachments dict
@@ -478,6 +482,9 @@ def termOutcomeAttachmentReport (p1_inputTerm
 
             ## Save the dataframe to a csv to both the local and external output paths
             outcomeCoursesMissingAttachmentsDF.to_csv(f"{targetDestinationFilePath}", index = False)
+
+            ## Copy the file to the external destination
+            shutil.copy2(targetDestinationFilePath, targetExternalDestinationFilePath)
 
         return targetDestinationFilePath
 

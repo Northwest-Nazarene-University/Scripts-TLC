@@ -639,6 +639,9 @@ def targetDesignatorProcessOutcomeResults(
             
                 ## Save the DF into an excel file
                 outcomeResultReportDF.to_excel(p1_destinationFilePathDict["Internal Output Report File Path and Name"], sheet_name = "General", index=False)
+
+                ## Copy it to the external resources folder
+                shutil.copy2(p1_destinationFilePathDict["Internal Output Report File Path and Name"], p1_destinationFilePathDict["External Output Report File Path and Name"])
                 
             ## Otherwise
             else:
@@ -731,6 +734,11 @@ def targetDesignatorProcessOutcomeResults(
 
             ## Save the dataframe in the relavent Canvas Resources folder
             outcomeResultsDashboardDataDF.to_excel(p1_destinationFilePathDict["Second Internal Output Report File Path and Name"], sheet_name = "General", index=False)
+
+            ## Copy it to the external resources folder
+            shutil.copy2(p1_destinationFilePathDict["Second Internal Output Report File Path and Name"], p1_destinationFilePathDict["Second External Output Report File Path and Name"])
+
+
     
     except Exception as Error:
         errorHandler.sendError (functionName, Error)
@@ -748,7 +756,7 @@ def termProcessOutcomeResults(p1_inputTerm
         termYear = int(str(localSetup.dateDict["century"]) + p1_inputTerm[2:])
 
         ## Use LocalSetup to calculate school year dynamically
-        schoolYear = localSetup.getSchoolYear(termWord, localSetup.dateDict["year"])
+        schoolYear = localSetup.getSchoolYear(termWord, termYear)
 
         ## Build lcoal paths  
         designatorLocalOutputPath = localSetup.getTargetDesignatedOutputPath(termWord, termYear, p1_targetDesignator)
@@ -758,9 +766,34 @@ def termProcessOutcomeResults(p1_inputTerm
             
         ## Create a dict of the first and second, internal and external output report file paths
         destinationFilePathDict = {
-            "Internal Output Report File Path and Name" : os.path.join(designatorLocalOutputPath, f"{p1_inputTerm}_{p1_targetDesignator}_Outcome_Results_Course_Data.xlsx")
-            , "Second Internal Output Report File Path and Name" : os.path.join(designatorLocalOutputPath, f"{p1_inputTerm}_{p1_targetDesignator}_Outcome_Results_Dashboard_Data.xlsx")
+            "Internal Output Report File Path and Name" : os.path.join(
+                designatorLocalOutputPath, 
+                f"{p1_inputTerm}_{p1_targetDesignator}_Outcome_Results_Course_Data.xlsx"
+                ),
+            "Second Internal Output Report File Path and Name" : os.path.join(
+                designatorLocalOutputPath, 
+                schoolYear, 
+                p1_inputTerm, 
+                f"{p1_inputTerm}_{p1_targetDesignator}_Outcome_Results_Dashboard_Data.xlsx"
+                ),
+            "External Output Report File Path and Name" : os.path.join(
+                localSetup.getExternalResourcePath("IE"), 
+                schoolYear, 
+                p1_inputTerm, 
+                f"{p1_inputTerm}_{p1_targetDesignator}_Outcome_Results_Course_Data.xlsx"
+                ),
+            "Second External Output Report File Path and Name" : os.path.join(
+                localSetup.getExternalResourcePath("IE"), 
+                schoolYear, 
+                p1_inputTerm, 
+                f"{p1_inputTerm}_{p1_targetDesignator}_Outcome_Results_Dashboard_Data.xlsx"
+                )
             }
+        
+        ## For each file path in the destinationFilePathDict
+        for filePath in destinationFilePathDict.values():
+            ## Make sure it exists
+            os.makedirs(os.path.dirname(filePath), exist_ok=True)
         
         ## If the internal output report file and the external output report file already exist
         if (isFileRecent(localSetup, destinationFilePathDict["Internal Output Report File Path and Name"]) 
