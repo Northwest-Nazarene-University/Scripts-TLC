@@ -156,7 +156,7 @@ def _loadsimpSylNamesAndCanvasAccIdsDictFromCsv():
         for index, row in orgsDf.iterrows():
             simpSylAccName = row.get("name")
             ## Skip rows with NaN account_id
-            if pd.isna(accountId):
+            if pd.isna(simpSylAccName):
                 continue
             simpSylNamesAndCanvasAccIdsDict[simpSylAccName] = int(row.get("canvas_account_id", ""))
         logger.info(
@@ -174,7 +174,13 @@ def _loadAllCanvasAccounts():
     try:
         logger.info("\nLoading all Canvas accounts for parent hierarchy lookup...")
         ## Use CanvasReport to get the accounts DataFrame
-        allAccountsDf = CanvasReport.getAccountsDf(localSetup)
+        rawAllAccountsDf = CanvasReport.getAccountsDf(localSetup)
+
+        ## Filter out entries that were not created_by_sis
+        allAccountsDf = rawAllAccountsDf[
+            rawAllAccountsDf["created_by_sis"] == True
+            ].copy()
+
         ## Convert to dictionary with canvas_account_id as key for quick lookup
         accountsDict = {}
         for index, row in allAccountsDf.iterrows():

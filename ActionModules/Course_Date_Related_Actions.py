@@ -179,7 +179,7 @@ def createOutcomeEmailBody (p3_relevantEmail
         emailBodyDict["dynamic cause"] = f"where it appears that less than 75% of the students have been scored for the following {singularOrPluralDict['outcome/outcomes']}:"
         
         ## Assign the missing data alert string
-        emailBodyDict["timeOfYearReminder"] = f"""For outcome data to be recorded, an additional grading step is required for each student that submitted to an assignment with an outcome rubric attached."""
+        emailBodyDict["timeOfYearReminder"] = """For outcome data to be recorded, an additional grading step is required for each student that submitted to an assignment with an outcome rubric attached."""
         
     emailBodyDict["formatedEmaiBody"] = f"""<!DOCTYPE html>
 <html>
@@ -343,11 +343,12 @@ def craftAndSendRelevantEmail(
                                                           )
 
             ## Send the Outcome Email
-            # sendOutlookEmail(p1_subject = emailDetails['Relevant Email']
-            #                  , p1_body = emailDetails['Outcome Email Body']
-            #                  , p1_recipientEmailList = emailDetails['Instructor Email Or Emails String']
-            #                  , p1_shared_mailbox = emailDetails['Client Send/Recieve Email']
-            #                  )
+            test = sendOutlookEmail(p1_subject = emailDetails['Relevant Email']
+                             , p1_body = emailDetails['Outcome Email Body']
+                             , p1_recipientEmailList = emailDetails['Instructor Email Or Emails String']
+                             , p1_shared_mailbox = emailDetails['Client Send/Recieve Email']
+                             )
+            print (1)
 
     except Exception as Error:
         errorHandler.sendError(functionName, Error)
@@ -513,27 +514,33 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
                         targetRow = auxiliaryDfDict["Active Outcome Courses DF"].loc[courseIndex]
                     
                         
-                    ## Create a thread to send the relevant outcome email
-                    communicationThread = threading.Thread(
-                        target=craftAndSendRelevantEmail
-                        , args=(p1_inputTerm
-                                , relevantEmail
-                                , targetRow
-                                , auxiliaryDfDict
-                                )
-                        )
+                    testCraft = craftAndSendRelevantEmail(p1_inputTerm
+                            , relevantEmail
+                            , targetRow
+                            , auxiliaryDfDict
+                            )
+                    
+        #             ## Create a thread to send the relevant outcome email
+        #             communicationThread = threading.Thread(
+        #                 target=craftAndSendRelevantEmail
+        #                 , args=(p1_inputTerm
+        #                         , relevantEmail
+        #                         , targetRow
+        #                         , auxiliaryDfDict
+        #                         )
+        #                 )
                 
-                    ## Start the thread
-                    communicationThread.start()
+        #             ## Start the thread
+        #             communicationThread.start()
                 
-                    ## Add the thread to the list of communication threads
-                    actionThreads.append(communicationThread)
+        #             ## Add the thread to the list of communication threads
+        #             actionThreads.append(communicationThread)
 
-        ## For each thread in the list of communication threads
-        for thread in actionThreads:
+        # ## For each thread in the list of communication threads
+        # for thread in actionThreads:
             
-            ## Wait for the thread to finish
-            thread.join()
+        #     ## Wait for the thread to finish
+        #     thread.join()
 
     except Exception as Error:
         errorHandler.sendError(functionName, Error)
