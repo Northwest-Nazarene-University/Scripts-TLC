@@ -272,7 +272,7 @@ def craftAndSendRelevantEmail(
                 if "Instructor" in key:
         
                     ## If the datapoint is a teacher name
-                    if "name" in key and pd.notna(datapoint):
+                    if "name" in key and isPresent(datapoint):
                 
                         ## If there is already a name in instructorNameOrNamesString
                         if "Instructor Name Or Names String" in emailDetails.keys():
@@ -293,18 +293,18 @@ def craftAndSendRelevantEmail(
                             emailDetails["Instructor Name Or Names String"] = lastName
 
                     ## If the datapoint is a teacher email
-                    elif "email" in key and pd.notna(datapoint):
+                    elif "email" in key and isPresent(datapoint):
 
                         ## If the key does not already exist in the email details
                         if "Instructor Email Or Emails String" not in emailDetails.keys():
                             
-                            ## Add the teacher name to the list of instructor names
+                            ## Add the teacher email to the list of instructor emails
                             emailDetails["Instructor Email Or Emails String"] = f"{datapoint}"
                         
                         ## Otherwise
                         else:
 
-                            ## Add the teacher name to the list of instructor names
+                            ## Add the teacher email to the list of instructor emails
                             emailDetails["Instructor Email Or Emails String"] += f", {datapoint}"
 
 
@@ -348,7 +348,7 @@ def craftAndSendRelevantEmail(
                              , p1_recipientEmailList = emailDetails['Instructor Email Or Emails String']
                              , p1_shared_mailbox = emailDetails['Client Send/Recieve Email']
                              )
-            print (1)
+            print (test)
 
     except Exception as Error:
         errorHandler.sendError(functionName, Error)
