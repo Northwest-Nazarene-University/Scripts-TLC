@@ -346,7 +346,6 @@ def loadExcelFile(filePath, sheetName=None):
     
     for engine in engines:
         try:
-            print(f"Trying engine: {engine}")
             excelFile = pd.ExcelFile(filePath, engine=engine)
             
             ## If sheetName is None, return all sheets as dict
@@ -357,7 +356,6 @@ def loadExcelFile(filePath, sheetName=None):
         
         except Exception as e:
             lastError = e
-            print(f"Engine {engine} failed: {e}")
     
     ## If all attempts fail
     raise RuntimeError(f"Failed to load Excel file after trying all engines. Last error: {lastError}")

@@ -241,11 +241,7 @@ def craftAndSendRelevantEmail(
                         , "Client Contact Name" : automatedOutcomeToolVariablesDict["Client Contact Name"]
                         , "Client Send/Recieve Email" : automatedOutcomeToolVariablesDict["Client Send/Recieve Email"]
                         , "Client Email Signature" : f"""{automatedOutcomeToolVariablesDict["Client Email Signature"]}"""
-                        , "User Contact Name" : (
-                            automatedOutcomeToolVariablesDict["User Contact Name"] 
-                            if isPresent(automatedOutcomeToolVariablesDict["User Contact Name"]) 
-                            else automatedOutcomeToolVariablesDict["Client Contact Name"]
-                            )
+                        , "User Contact Name" : (automatedOutcomeToolVariablesDict["User Contact Name"])
                         , "User Contact Email" :automatedOutcomeToolVariablesDict["User Contact Email"]
                         , "Input Term": p3_inputTerm
                         , "Course Name": p2_row["Course_name"]
@@ -343,12 +339,13 @@ def craftAndSendRelevantEmail(
                                                           )
 
             ## Send the Outcome Email
-            test = sendOutlookEmail(p1_subject = emailDetails['Relevant Email']
+            sendOutlookEmail(p1_subject = emailDetails['Relevant Email']
                              , p1_body = emailDetails['Outcome Email Body']
                              , p1_recipientEmailList = emailDetails['Instructor Email Or Emails String']
                              , p1_shared_mailbox = emailDetails['Client Send/Recieve Email']
                              )
-            print (test)
+            ## info log the test
+            localSetup.logger.info(f"Crafted and sent email with subject: {emailDetails['Relevant Email']} to {emailDetails['Instructor Email Or Emails String']} with body: {emailDetails['Outcome Email Body']}")
 
     except Exception as Error:
         errorHandler.sendError(functionName, Error)

@@ -14,7 +14,7 @@ from Local_Setup import LocalSetup
 from TLC_Common import makeApiCall
 from Canvas_Report import CanvasReport
 from Common_Configs import coreCanvasApiUrl, canvasAccessToken
-from Error_Email import ErrorEmail
+from Error_Email import errorEmail
 
 
 ## Define the script name, purpose, and external requirements for logging and Error reporting purposes
@@ -32,7 +32,7 @@ and the "{SISResourcePath}\\output\\pharos" folder
 localSetup = LocalSetup(datetime.now(), __file__)  ## sets cwd, paths, logs, date parts
 
 ## Setup the Error handler
-ErrorHandler = ErrorEmail(scriptName, scriptPurpose, externalRequirements, localSetup)
+ErrorHandler = errorEmail(scriptName, scriptPurpose, externalRequirements, localSetup)
 
 def _parse_iso_datetime(dt_str: Optional[str]) -> Optional[datetime]:
     if not dt_str:

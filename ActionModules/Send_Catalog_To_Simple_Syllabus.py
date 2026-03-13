@@ -2,9 +2,11 @@
 # Last Updated by: Bryce Miller
 
 ## Import Generic Modules
-import os, sys
+import os, sys, requests
 from datetime import datetime
+from urllib.parse import urljoin
 import pandas as pd
+from bs4 import BeautifulSoup
 
 ## Add Script repository to syspath
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules"))
@@ -14,6 +16,13 @@ scriptName = __file__.replace(".py", "")
 scriptPurpose = r"""
 Send the course catalog to Simple Syllabus with properly mapped organizations.
 This ensures course data is correctly categorized by subject/department based on Canvas account hierarchy.
+
+Before downloading catalogs, the script checks https://catalog.nnu.edu/ for a
+"traditional-undergraduate-catalog-YYYYYYYY" link to determine whether the published
+catalog matches the current academic year or a future one:
+  - Current year match  -> download prod + staging catalogs from CleanCatalog as before.
+  - Future year found   -> download the future catalog PDF and combine it with any
+                           previously downloaded current-year catalog.
 """
 externalRequirements = r"""
 To function properly this script requires:
@@ -21,6 +30,7 @@ To function properly this script requires:
 - Simple Syllabus Organizations.csv in Configs TLC folder
 - Canvas API access via CanvasReport
 - All Accounts.csv from Canvas (Canvas Report)
+- Network access to https://catalog.nnu.edu/ for catalog year detection
 """
 
 ## Initialize LocalSetup and resource helpers
@@ -29,13 +39,13 @@ try:  ## Irregular try clause, do not comment out in testing
     from Canvas_Report import CanvasReport
     from Error_Email import errorEmail
     from TLC_Common import downloadFile, isFileRecent
-    from Common_Configs import simpleSyllabusConfig
+    from Common_Configs import catalogToSimpleSyllabusConfig
 except ImportError:
     from ResourceModules.Local_Setup import LocalSetup
     from ResourceModules.Canvas_Report import CanvasReport
     from ResourceModules.Error_Email import errorEmail
     from ResourceModules.TLC_Common import downloadFile, isFileRecent
-    from ResourceModules.Common_Configs import simpleSyllabusConfig
+    from Configs.Common_Configs import catalogToSimpleSyllabusConfig
 
 # Create LocalSetup and localSetup.logger
 localSetup = LocalSetup(datetime.now(), __file__)
@@ -109,7 +119,7 @@ def _normalizeNameForMatch(p1_name):
 
 def _getCatalogUrlFromConfig(audience="gps", environment="production"):
     """
-    Resolve the CleanCatalog CSV URL using simpleSyllabusConfig.
+    Resolve the CleanCatalog CSV URL using catalogToSimpleSyllabusConfig.
 
     audience: "gps" or "tug"
     environment: "production" or "staging"
@@ -117,15 +127,123 @@ def _getCatalogUrlFromConfig(audience="gps", environment="production"):
     p1_functionName = "_getCatalogUrlFromConfig"
     envKey = "catalogProduction" if environment == "production" else "catalogStaging"
     try:
-        url = simpleSyllabusConfig[envKey][audience]
+        url = catalogToSimpleSyllabusConfig[envKey][audience]
         logger.info(
-            f"\nUsing CleanCatalog URL from simpleSyllabusConfig: "
+            f"\nUsing CleanCatalog URL from catalogToSimpleSyllabusConfig: "
             f"env='{envKey}', audience='{audience}' -> {url}"
         )
         return url
     except Exception as Error:
         errorHandler.sendError(p1_functionName, str(Error))
         raise
+
+
+## =========================================================================
+## CATALOG YEAR DETECTION HELPERS
+## =========================================================================
+
+## This function fetches the HTML from a given URL and returns it as a string
+def _fetchHtml(p1_url, p2_timeout=15):
+    p1_functionName = "_fetchHtml"
+    try:
+        logger.info(f"\nFetching HTML from {p1_url}...")
+        p2_response = requests.get(p1_url, timeout=p2_timeout)
+        p2_response.raise_for_status()
+        return p2_response.text
+    except Exception as Error:
+        logger.warning(f"\nFailed to fetch {p1_url}: {Error}")
+        return None
+
+
+## This function parses the catalog base page HTML for a traditional-undergraduate-catalog-YYYYYYYY link
+def _findTradUndergradCatalogYear(p1_html, p2_baseUrl=catalogToSimpleSyllabusConfig['catalogBaseUrl']):
+    p1_functionName = "_findTradUndergradCatalogYear"
+    try:
+        p2_soup = BeautifulSoup(p1_html, "html.parser")
+        for p2_anchor in p2_soup.find_all("a", href=True):
+            p2_href = p2_anchor["href"]
+            ## Normalize relative links to absolute
+            p2_fullUrl = urljoin(p2_baseUrl, p2_href)
+            p2_match = catalogToSimpleSyllabusConfig['tradUndergradPattern'].search(p2_fullUrl)
+            if p2_match:
+                p2_yearString = p2_match.group(1)
+                logger.info(f"\nFound traditional-undergraduate-catalog link: {p2_fullUrl} (year: {p2_yearString})")
+                return p2_yearString
+        logger.warning(f"\nNo traditional-undergraduate-catalog-YYYYYYYY link found on {p2_baseUrl}")
+        return None
+    except Exception as Error:
+        logger.warning(f"\nError parsing catalog page for year: {Error}")
+        return None
+
+
+## This function extracts PDF links from an HTML page
+def _extractPdfLinksFromPage(p1_html, p2_baseUrl):
+    p1_functionName = "_extractPdfLinksFromPage"
+    try:
+        p2_soup = BeautifulSoup(p1_html, "html.parser")
+        p2_pdfLinks = []
+        p2_seen = set()
+        for p2_anchor in p2_soup.find_all("a", href=True):
+            p2_href = p2_anchor["href"]
+            p2_fullUrl = urljoin(p2_baseUrl, p2_href)
+            if catalogToSimpleSyllabusConfig['pdfLinkPattern'].search(p2_fullUrl) and p2_fullUrl not in p2_seen:
+                p2_seen.add(p2_fullUrl)
+                p2_pdfLinks.append(p2_fullUrl)
+        logger.info(f"\nFound {len(p2_pdfLinks)} PDF link(s) on {p2_baseUrl}")
+        return p2_pdfLinks
+    except Exception as Error:
+        logger.warning(f"\nError extracting PDF links from {p2_baseUrl}: {Error}")
+        return []
+
+
+## This function computes the current academic year string (YYYYYYYY) using LocalSetup
+def _getCurrentAcademicYearString():
+    """
+    Use LocalSetup's school year logic to compute the current academic year as YYYYYYYY.
+    LocalSetup._determineCurrentTerm gives the current term name (e.g., "Spring"),
+    and _getSchoolYearRange gives (startYear, endYear).
+    We concatenate them: e.g., (2025, 2026) -> "20252026".
+    """
+    p1_functionName = "_getCurrentAcademicYearString"
+    try:
+        p2_currentMonth = localSetup.dateDict["month"]
+        p2_currentYear = localSetup.dateDict["year"]
+        p2_currentTerm = localSetup._determineCurrentTerm(p2_currentMonth)
+        p2_startYear, p2_endYear = localSetup._getSchoolYearRange(p2_currentTerm, p2_currentYear)
+        p2_academicYearString = f"{p2_startYear}{p2_endYear}"
+        logger.info(f"\nComputed current academic year: {p2_academicYearString}")
+        return p2_academicYearString
+    except Exception as Error:
+        logger.warning(f"\nFailed to compute current academic year string: {Error}")
+        return None
+
+
+## This function downloads a PDF catalog from a URL and saves it locally
+def _downloadCatalogPdf(p1_pdfUrl, p2_outputDir):
+    p1_functionName = "_downloadCatalogPdf"
+    try:
+        ## Derive a safe filename from the URL
+        p2_filename = os.path.basename(p1_pdfUrl.split("?")[0])
+
+        ## If the filename is empty or too generic, generate one from the URL hash
+        if not p2_filename or len(p2_filename) < 5:
+            import hashlib
+            p2_filename = hashlib.sha1(p1_pdfUrl.encode()).hexdigest()[:12] + ".pdf"
+
+        p2_localPath = os.path.join(p2_outputDir, p2_filename)
+
+        ## If the file was already downloaded recently, skip
+        if isFileRecent(localSetup, p2_localPath):
+            logger.info(f"\nPDF already recent, skipping download: {p2_localPath}")
+            return p2_localPath
+
+        ## Download using TLC_Common.downloadFile (includes retry logic)
+        downloadFile(localSetup, p1_pdfUrl, p2_localPath)
+        logger.info(f"\nDownloaded PDF to {p2_localPath}")
+        return p2_localPath
+    except Exception as Error:
+        logger.warning(f"\nFailed to download PDF from {p1_pdfUrl}: {Error}")
+        return None
 
 
 ## =========================================================================
@@ -150,15 +268,24 @@ def _loadsimpSylNamesAndCanvasAccIdsDictFromCsv():
                 f"\nSimple Syllabus Organizations CSV not found at {simpSylNamesAndCanvasAccIdsDictCsvPath}"
             )
         ## Read the CSV file
-        orgsDf = pd.read_csv(simpSylNamesAndCanvasAccIdsDictCsvPath)
-        ## Convert DataFrame to dictionary with canvas_account_id as key
+        rawOrgsDf = pd.read_csv(simpSylNamesAndCanvasAccIdsDictCsvPath)
+        ## Set NA values to empty string to prevent issues with NaN in account_id
+        orgsDf = rawOrgsDf.fillna("")
+        ## Convert DataFrame to dictionary keyed by org name -> int canvas_account_id
         simpSylNamesAndCanvasAccIdsDict = {}
         for index, row in orgsDf.iterrows():
-            simpSylAccName = row.get("name")
-            ## Skip rows with NaN account_id
-            if pd.isna(simpSylAccName):
+            simpSylAccName = str(row.get("name", "")).strip()
+            canvasAccId = row.get("canvas_account_id", "")
+            ## Skip rows with empty name or account_id
+            if not simpSylAccName or not str(canvasAccId).strip():
                 continue
-            simpSylNamesAndCanvasAccIdsDict[simpSylAccName] = int(row.get("canvas_account_id", ""))
+            try:
+                simpSylNamesAndCanvasAccIdsDict[simpSylAccName] = int(canvasAccId)
+            except (ValueError, TypeError):
+                logger.warning(
+                    f"\nSkipping org '{simpSylAccName}': invalid canvas_account_id '{canvasAccId}'"
+                )
+                continue
         logger.info(
             f"\nLoaded {len(simpSylNamesAndCanvasAccIdsDict)} Simple Syllabus organizations from CSV"
         )
@@ -281,28 +408,35 @@ def buildAccountOrgMap(p2_allAccountsDict, p3_simpSylNamesAndCanvasAccIdsDictDic
             "\nBuilding Canvas account-to-organization mapping from catalog courses..."
         )
 
+        ## Build an inverted lookup keyed by str(account_id) -> {"name": org_name}
+        ## This is the format _findParentOrgAccountId expects for membership checks and name access
+        accountIdToOrgInfo = {
+            str(accId): {"name": orgName}
+            for orgName, accId in p3_simpSylNamesAndCanvasAccIdsDictDict.items()
+        }
 
-        ## STEP 1: Map each catalog account to its Simple Syllabus org
+        ## Map each Simple Syllabus org account to its resolved org in the hierarchy
         accountOrgMap = {}
-        for canvasAccountId in p3_simpSylNamesAndCanvasAccIdsDictDict.values(): ## The keys are the corresponding canvas_account_ids
+        for orgName, canvasAccountId in p3_simpSylNamesAndCanvasAccIdsDictDict.items():
+            canvasAccountIdStr = str(canvasAccountId)
             try:
                 ## Find the org account by walking up the hierarchy
                 p2_orgAccountId = _findParentOrgAccountId(
-                    canvasAccountId, p2_allAccountsDict, p3_simpSylNamesAndCanvasAccIdsDictDict
+                    canvasAccountIdStr, p2_allAccountsDict, accountIdToOrgInfo
                 )
                 if p2_orgAccountId:
-                    accountOrgMap[canvasAccountId] = p2_orgAccountId
-                    orgName = p3_simpSylNamesAndCanvasAccIdsDictDict[p2_orgAccountId]["name"]
+                    accountOrgMap[canvasAccountIdStr] = p2_orgAccountId
+                    resolvedOrgName = accountIdToOrgInfo.get(p2_orgAccountId, {}).get("name", "")
                     logger.info(
-                        f"\nMapped account {canvasAccountId} to organization "
-                        f"{p2_orgAccountId} ({orgName})"
+                        f"\nMapped account {canvasAccountIdStr} to organization "
+                        f"{p2_orgAccountId} ({resolvedOrgName})"
                     )
                 else:
                     logger.warning(
-                        f"\nFailed to find organization for account {canvasAccountId}"
+                        f"\nFailed to find organization for account {canvasAccountIdStr}"
                     )
             except Exception as Error:
-                logger.warning(f"\nError mapping account {canvasAccountId}: {Error}")
+                logger.warning(f"\nError mapping account {canvasAccountIdStr}: {Error}")
                 continue
 
         logger.info(
@@ -583,12 +717,14 @@ def downloadCatalog(p1_url, p2_localPath):
         raise
 
 
-def downloadAllCatalogs():
+## This function downloads prod + staging catalogs (original behavior)
+def _downloadProdAndStagingCatalogs():
     """
     Download all four CleanCatalog exports (prod/staging x gps/tug),
     tag each with environment/audience, and return a single combined DataFrame.
+    This is the original downloadAllCatalogs behavior preserved as an internal helper.
     """
-    p1_functionName = "downloadAllCatalogs"
+    p1_functionName = "_downloadProdAndStagingCatalogs"
     try:
         baseDir = os.path.join(
             localSetup.getInternalResourcePaths("Simple_Syllabus"),
@@ -634,6 +770,175 @@ def downloadAllCatalogs():
         raise
 
 
+## This function handles the future catalog year scenario by downloading the future
+## catalog PDF and combining it with a previously downloaded current-year catalog if available
+def _downloadFutureCatalogWithCurrentFallback(p1_foundYear, p2_currentYear):
+    """
+    When catalog.nnu.edu shows a future catalog year:
+    1. Download the future catalog PDF from the traditional-undergraduate-catalog-<FOUND_YEAR> page.
+    2. Check if a current-year catalog was previously downloaded. If so, combine both
+       into the returned DataFrame by naming the future catalog for the upcoming year.
+    3. If no previously downloaded current catalog exists, return only the future catalog data.
+
+    Falls back to _downloadProdAndStagingCatalogs() if the future page has no PDFs.
+    """
+    p1_functionName = "_downloadFutureCatalogWithCurrentFallback"
+    try:
+        p2_baseDir = os.path.join(
+            localSetup.getInternalResourcePaths("Simple_Syllabus"),
+            "Catalog_Export",
+        )
+        os.makedirs(p2_baseDir, exist_ok=True)
+
+        p2_downloadedPaths = []
+
+        ## STEP 1: Download the future catalog PDF from catalog.nnu.edu
+        p2_futurePageUrl = f"{catalogToSimpleSyllabusConfig['catalogBaseUrl']}traditional-undergraduate-catalog-{p1_foundYear}"
+        p2_futureHtml = _fetchHtml(p2_futurePageUrl)
+
+        if p2_futureHtml:
+            p2_futurePdfs = _extractPdfLinksFromPage(p2_futureHtml, p2_futurePageUrl)
+            for p2_pdfUrl in p2_futurePdfs:
+                p2_localPath = _downloadCatalogPdf(p2_pdfUrl, p2_baseDir)
+                if p2_localPath:
+                    p2_downloadedPaths.append(p2_localPath)
+        else:
+            logger.warning(f"\nCould not fetch future catalog page: {p2_futurePageUrl}")
+
+        ## STEP 2: Check if current-year catalog CSVs were previously downloaded
+        ## Look for production catalog CSVs from a prior run
+        p2_currentCatalogPaths = []
+        for p2_audience in ["gps", "tug"]:
+            p2_currentCsvPath = os.path.join(p2_baseDir, f"production_{p2_audience}_catalog.csv")
+            if os.path.exists(p2_currentCsvPath):
+                logger.info(f"\nFound previously downloaded current catalog: {p2_currentCsvPath}")
+                p2_currentCatalogPaths.append((p2_currentCsvPath, p2_audience))
+
+        ## STEP 3: Build combined DataFrame
+        p2_allDfs = []
+
+        ## Add current catalogs if they exist
+        for p2_csvPath, p2_audience in p2_currentCatalogPaths:
+            try:
+                p2_currentDf = pd.read_csv(p2_csvPath)
+                p2_currentDf["environment"] = "production"
+                p2_currentDf["audience"] = p2_audience
+                p2_allDfs.append(p2_currentDf)
+                logger.info(f"\nLoaded {len(p2_currentDf)} current catalog rows from {p2_csvPath}")
+            except Exception as Error:
+                logger.warning(f"\nFailed to read current catalog CSV {p2_csvPath}: {Error}")
+
+        ## If we downloaded future PDFs but have no CSV catalogs to combine,
+        ## fall back to downloading prod+staging normally so the pipeline has data to process
+        if not p2_allDfs and not p2_downloadedPaths:
+            logger.warning("\nNo future PDFs and no current catalogs found. Falling back to prod+staging download.")
+            return _downloadProdAndStagingCatalogs()
+
+        ## If we have current CSVs, also try to download the future catalog CSVs from staging
+        ## so the pipeline can process them alongside the current ones
+        if p2_allDfs:
+            ## Try downloading staging catalogs as the "future" catalog source
+            for p2_audience in ["gps", "tug"]:
+                try:
+                    p2_stagingUrl = _getCatalogUrlFromConfig(audience=p2_audience, environment="staging")
+                    p2_stagingLocalPath = os.path.join(p2_baseDir, f"staging_{p2_audience}_catalog.csv")
+                    p2_stagingDf = downloadCatalog(p2_stagingUrl, p2_stagingLocalPath)
+                    p2_stagingDf["environment"] = "staging"
+                    p2_stagingDf["audience"] = p2_audience
+                    p2_allDfs.append(p2_stagingDf)
+                    logger.info(f"\nDownloaded staging {p2_audience} catalog as future catalog source")
+                except Exception as Error:
+                    logger.warning(f"\nFailed to download staging {p2_audience} catalog: {Error}")
+
+        if not p2_allDfs:
+            logger.warning("\nNo catalog DataFrames built. Falling back to prod+staging download.")
+            return _downloadProdAndStagingCatalogs()
+
+        p2_combinedDf = pd.concat(p2_allDfs, ignore_index=True)
+        logger.info(
+            f"\nCombined future+current catalogs into {len(p2_combinedDf)} rows "
+            f"(future year: {p1_foundYear}, current year: {p2_currentYear})"
+        )
+
+        ## Log the downloaded PDF paths for reference
+        if p2_downloadedPaths:
+            logger.info(f"\nFuture catalog PDFs downloaded: {p2_downloadedPaths}")
+
+        return p2_combinedDf
+
+    except Exception as Error:
+        errorHandler.sendError(p1_functionName, str(Error))
+        ## On any error, fall back to original behavior
+        logger.warning("\nError in future catalog handling. Falling back to prod+staging download.")
+        return _downloadProdAndStagingCatalogs()
+
+
+def downloadAllCatalogs():
+    """
+    Smart catalog download that first checks https://catalog.nnu.edu/ for the
+    traditional-undergraduate-catalog year to decide what to download:
+
+    1. Compute current academic year via LocalSetup (e.g., "20252026").
+    2. Scrape catalog.nnu.edu for a "traditional-undergraduate-catalog-YYYYYYYY" link.
+    3. If found year == current year -> download prod+staging as before.
+    4. If found year is in the future -> download the future catalog and combine
+       with any previously downloaded current-year catalog.
+    5. If no link found or found year is older -> fall back to prod+staging.
+    """
+    p1_functionName = "downloadAllCatalogs"
+    try:
+        ## STEP 1: Compute current academic year
+        p2_currentAcademicYear = _getCurrentAcademicYearString()
+        if not p2_currentAcademicYear:
+            logger.warning("\nCould not compute current academic year. Falling back to prod+staging download.")
+            return _downloadProdAndStagingCatalogs()
+
+        ## STEP 2: Fetch the catalog base page and find the catalog year
+        p2_baseHtml = _fetchHtml(catalogToSimpleSyllabusConfig['catalogBaseUrl'])
+        if not p2_baseHtml:
+            logger.warning(f"\nCould not fetch {catalogToSimpleSyllabusConfig['catalogBaseUrl']}. Falling back to prod+staging download.")
+            return _downloadProdAndStagingCatalogs()
+
+        p2_foundYear = _findTradUndergradCatalogYear(p2_baseHtml)
+        if not p2_foundYear:
+            logger.warning("\nNo traditional-undergraduate-catalog link found. Falling back to prod+staging download.")
+            return _downloadProdAndStagingCatalogs()
+
+        logger.info(f"\nCatalog year found on site: {p2_foundYear}, current academic year: {p2_currentAcademicYear}")
+
+        ## STEP 3: Compare found year to current year
+        if p2_foundYear == p2_currentAcademicYear:
+            ## Found year matches current academic year -> do existing prod+staging flow
+            logger.info("\nFound catalog year matches current academic year. Downloading prod+staging catalogs.")
+            return _downloadProdAndStagingCatalogs()
+
+        ## STEP 4: Check if found year is in the future
+        try:
+            p2_foundStartYear = int(p2_foundYear[:4])
+            p2_currentStartYear = int(p2_currentAcademicYear[:4])
+        except ValueError:
+            logger.warning(f"\nCould not parse year strings numerically (found={p2_foundYear}, current={p2_currentAcademicYear}). Falling back to prod+staging download.")
+            return _downloadProdAndStagingCatalogs()
+
+        if p2_foundStartYear > p2_currentStartYear:
+            ## Future catalog published early -> download future + check for current
+            logger.info(
+                f"\nFuture catalog year detected ({p2_foundYear}) while current is ({p2_currentAcademicYear}). "
+                f"Downloading future catalog and checking for previously downloaded current catalog."
+            )
+            return _downloadFutureCatalogWithCurrentFallback(p2_foundYear, p2_currentAcademicYear)
+
+        ## STEP 5: Found year is older than current -> fall back
+        logger.info(f"\nFound catalog year ({p2_foundYear}) is older than current ({p2_currentAcademicYear}). Falling back to prod+staging download.")
+        return _downloadProdAndStagingCatalogs()
+
+    except Exception as Error:
+        errorHandler.sendError(p1_functionName, str(Error))
+        ## On any unhandled error, fall back to original behavior
+        logger.warning("\nUnexpected error in downloadAllCatalogs. Falling back to prod+staging download.")
+        return _downloadProdAndStagingCatalogs()
+
+
 ## This function uploads output rows to Simple Syllabus
 def uploadToSimpleSyllabus(p1_outputDf):
     p1_functionName = "uploadToSimpleSyllabus"
@@ -657,7 +962,7 @@ def uploadToSimpleSyllabus(p1_outputDf):
         )
 
         # EXAMPLE: How you'd access SFTP config when you're ready to actually push the file
-        sftpConfig = simpleSyllabusConfig.get("sftp", {})
+        sftpConfig = catalogToSimpleSyllabusConfig.get("sftp", {})
         logger.info(
             f"\nSimple Syllabus SFTP config loaded for future use: "
             f"host={sftpConfig.get('host')}, remote_dir={sftpConfig.get('remote_dir')}"
@@ -679,7 +984,10 @@ def uploadToSimpleSyllabus(p1_outputDf):
 ## Process flow:
 ## 1. Load Simple Syllabus organizations from CSV
 ## 2. Load all Canvas accounts for hierarchy lookup
-## 3. Download catalog from CleanCatalog (via simpleSyllabusConfig)
+## 3. Check catalog.nnu.edu for catalog year, then download accordingly:
+##    a. Current year match -> download prod+staging from CleanCatalog
+##    b. Future year found  -> download future catalog PDF + combine with current if available
+##    c. No link / older    -> fall back to prod+staging
 ## 4. Expand slash titles
 ## 5. Build account-to-org mapping from catalog (KEY CHANGE)
 ## 6. Build output rows using the mapping (with SIS filtering and prod/staging logic)
@@ -703,7 +1011,7 @@ def sendCatalogToSimpleSyllabus(
         if not p2_allAccountsDict:
             raise ValueError("\nFailed to load Canvas accounts")
 
-        ## STEP 3: Download and combine ALL catalogs (prod/staging x gps/tug)
+        ## STEP 3: Download catalogs (with catalog year detection)
         if p1_catalogUrl:
             # Manual single-URL test path
             p2_localDownloadPath = os.path.join(

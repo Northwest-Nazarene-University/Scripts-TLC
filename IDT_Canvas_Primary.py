@@ -45,14 +45,16 @@ from Common_Configs import undgTermsCodesToWordsDict
 
 ## Define time variables
 currentHour = localSetup.dateDict["hour"]
+currentDay = localSetup.dateDict["day"]
+currentWeekDay = localSetup.dateDict["weekDay"]  ## 0=Monday, 4=Friday
 currentMonth = localSetup.dateDict["month"]
 decade = localSetup.dateDict["decade"]
 
 
 ## Testing variables
 ## currentDay = 1 ## First week of the month testing value make sure to comment out the target terms variable
-## currentWeekDay = 4 ## Day of the week testing value 
-## currentHour = 1 ## First run of the day testing value
+## currentWeekDay = 2 ## Day of the week testing value 
+currentHour = 1 ## First run of the day testing value
 ## currentHour = 16 ## Last run of the day testing value
 
         
@@ -273,11 +275,7 @@ def determineTargetTerms():
 
         ## Get the current term codes
         targetTermSet = localSetup.getCurrentTermCodes()
-
-        ## Get weekday and day info
-        currentWeekDay = localSetup.dateDict["weekDay"]  ## 0=Monday, 4=Friday
-        currentDay = localSetup.dateDict["day"]
-
+        
         ## If today is Friday
         if currentWeekDay == 4:
             ## Add current school year, most recent term, and next term

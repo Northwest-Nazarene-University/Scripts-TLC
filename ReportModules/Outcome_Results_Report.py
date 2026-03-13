@@ -701,8 +701,17 @@ def targetDesignatorProcessOutcomeResults(
                 
                 ## Make a filtered outcomeResultReportDF for the current course
                 targetOutcomeResultReportDf = outcomeResultReportDF[outcomeResultReportDF["Course_name"] == targetCourseName]
+                
+                ## test without threading
+                # termCompileCourseOutcomesScores(
+                #     courseDict
+                #     , targetTermEnrollmentDf
+                #     , targetOutcomeResultsDf
+                #     , targetOutcomeResultReportDf
+                #     , outcomeResultsDashboardDataDictList
+                #     , p1_uniqueOutcomeInfoDictOfDicts
+                # )
 
-                ## Create a thread for the current course
                 currentThread = threading.Thread(target=termCompileCourseOutcomesScores
                                                     , args=(courseDict
                                                             , targetTermEnrollmentDf
