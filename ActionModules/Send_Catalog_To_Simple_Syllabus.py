@@ -308,8 +308,14 @@ def _loadAllCanvasAccounts():
             rawAllAccountsDf["created_by_sis"] == True
             ].copy()
 
-        ## Convert to dictionary with canvas_account_id as key for quick lookup
-        accountsDict = {}
+        ## Convert to dictionary with canvas_account_id as key for quick lookup, set the root account in the initial definition
+        accountsDict = {
+            "1" : {
+                "name" : "Northwest Nazarene University",
+                "canvas_account_id" : "1",
+                "parent_id" : None
+                }
+        }
         for index, row in allAccountsDf.iterrows():
             accountId = str(row.get("canvas_account_id", ""))
             parentId = (
