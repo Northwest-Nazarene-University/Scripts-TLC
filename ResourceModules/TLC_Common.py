@@ -164,7 +164,7 @@ def flattenApiObjectToJsonList(localSetup, apiObjectList, apiUrl):
 def makeApiCall(
     localSetup: LocalSetup, 
     p1_apiUrl,
-    p1_header = None,
+    p1_header=None,
     p1_payload=None,
     p1_files=None,
     p1_apiCallType="get",

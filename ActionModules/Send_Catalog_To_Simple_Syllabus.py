@@ -38,13 +38,13 @@ try:  ## Irregular try clause, do not comment out in testing
     from Local_Setup import LocalSetup
     from Canvas_Report import CanvasReport
     from Error_Email import errorEmail
-    from TLC_Common import downloadFile, isFileRecent
+    from TLC_Common import downloadFile, isFileRecent, makeApiCall
     from Common_Configs import catalogToSimpleSyllabusConfig
 except ImportError:
     from ResourceModules.Local_Setup import LocalSetup
     from ResourceModules.Canvas_Report import CanvasReport
     from ResourceModules.Error_Email import errorEmail
-    from ResourceModules.TLC_Common import downloadFile, isFileRecent
+    from ResourceModules.TLC_Common import downloadFile, isFileRecent, makeApiCall
     from Configs.Common_Configs import catalogToSimpleSyllabusConfig
 
 # Create LocalSetup and localSetup.logger
@@ -65,9 +65,9 @@ def splitCourseCode(p1_rawTitle):
         ## Split on spaces and extract first two parts (subject code + number)
         parts = str(p1_rawTitle).split()
         if len(parts) >= 2:
-            p2_subject = parts[0].upper()
-            p2_courseNum = parts[1]
-            return (p2_subject, p2_courseNum)
+            subject = parts[0].upper()
+            courseNum = parts[1]
+            return (subject, courseNum)
     except Exception as Error:
         logger.warning(f"\nFailed to parse course code from '{p1_rawTitle}': {Error}")
     return (p1_rawTitle, "")
@@ -78,12 +78,12 @@ def combineFields(*p1_fields):
     p1_functionName = "combineFields"
     try:
         ## Filter out empty strings and join with spaces
-        p2_combined = " ".join(
+        combined = " ".join(
             str(p1_field).strip()
             for p1_field in p1_fields
             if p1_field and str(p1_field).strip()
         )
-        return p2_combined
+        return combined
     except Exception as Error:
         logger.warning(f"\nFailed to combine fields: {Error}")
         return ""
@@ -101,13 +101,13 @@ def _normalizeNameForMatch(p1_name):
         if not p1_name:
             return ""
         ## Convert to lowercase and strip
-        p2_normalized = p1_name.lower().strip()
+        normalized = p1_name.lower().strip()
         ## Remove common punctuation
-        for p2_char in [".", ",", "-", "_"]:
-            p2_normalized = p2_normalized.replace(p2_char, "")
+        for char in [".", ",", "-", "_"]:
+            normalized = normalized.replace(char, "")
         ## Collapse multiple spaces
-        p2_normalized = " ".join(p2_normalized.split())
-        return p2_normalized
+        normalized = " ".join(normalized.split())
+        return normalized
     except Exception as Error:
         logger.warning(f"\nFailed to normalize name: {Error}")
         return p1_name
@@ -142,57 +142,46 @@ def _getCatalogUrlFromConfig(audience="gps", environment="production"):
 ## CATALOG YEAR DETECTION HELPERS
 ## =========================================================================
 
-## This function fetches the HTML from a given URL and returns it as a string
-def _fetchHtml(p1_url, p2_timeout=15):
-    p1_functionName = "_fetchHtml"
-    try:
-        logger.info(f"\nFetching HTML from {p1_url}...")
-        p2_response = requests.get(p1_url, timeout=p2_timeout)
-        p2_response.raise_for_status()
-        return p2_response.text
-    except Exception as Error:
-        logger.warning(f"\nFailed to fetch {p1_url}: {Error}")
-        return None
-
-
-## This function parses the catalog base page HTML for a traditional-undergraduate-catalog-YYYYYYYY link
-def _findTradUndergradCatalogYear(p1_html, p2_baseUrl=catalogToSimpleSyllabusConfig['catalogBaseUrl']):
+## This function parses the catalog base page HTML for the current academic year traditional-undergraduate-catalog-YYYYYYYY link
+def _findTradUndergradCatalogYear(p1_html, baseUrl=catalogToSimpleSyllabusConfig['catalogBaseUrl']):
     p1_functionName = "_findTradUndergradCatalogYear"
     try:
-        p2_soup = BeautifulSoup(p1_html, "html.parser")
-        for p2_anchor in p2_soup.find_all("a", href=True):
-            p2_href = p2_anchor["href"]
+        ## Parse the HTML and look for links matching the traditional-undergraduate-catalog-YYYYYYYY pattern
+        soup = BeautifulSoup(p1_html, "html.parser")
+        for anchor in soup.find_all("a", href=True):
+            href = anchor["href"]
             ## Normalize relative links to absolute
-            p2_fullUrl = urljoin(p2_baseUrl, p2_href)
-            p2_match = catalogToSimpleSyllabusConfig['tradUndergradPattern'].search(p2_fullUrl)
-            if p2_match:
-                p2_yearString = p2_match.group(1)
-                logger.info(f"\nFound traditional-undergraduate-catalog link: {p2_fullUrl} (year: {p2_yearString})")
-                return p2_yearString
-        logger.warning(f"\nNo traditional-undergraduate-catalog-YYYYYYYY link found on {p2_baseUrl}")
+            fullUrl = urljoin(baseUrl, href)
+            match = catalogToSimpleSyllabusConfig['tradUndergradPattern'].search(fullUrl)
+            if match:
+                yearString = match.group(1)
+                logger.info(f"\nFound traditional-undergraduate-catalog link: {fullUrl} (year: {yearString})")
+                return yearString
+        logger.warning(f"\nNo traditional-undergraduate-catalog-YYYYYYYY link found on {baseUrl}")
         return None
     except Exception as Error:
+        errorEmail = errorHandler.sendError(p1_functionName, str(Error))
         logger.warning(f"\nError parsing catalog page for year: {Error}")
         return None
 
 
 ## This function extracts PDF links from an HTML page
-def _extractPdfLinksFromPage(p1_html, p2_baseUrl):
+def _extractPdfLinksFromPage(p1_html, baseUrl):
     p1_functionName = "_extractPdfLinksFromPage"
     try:
-        p2_soup = BeautifulSoup(p1_html, "html.parser")
-        p2_pdfLinks = []
-        p2_seen = set()
-        for p2_anchor in p2_soup.find_all("a", href=True):
-            p2_href = p2_anchor["href"]
-            p2_fullUrl = urljoin(p2_baseUrl, p2_href)
-            if catalogToSimpleSyllabusConfig['pdfLinkPattern'].search(p2_fullUrl) and p2_fullUrl not in p2_seen:
-                p2_seen.add(p2_fullUrl)
-                p2_pdfLinks.append(p2_fullUrl)
-        logger.info(f"\nFound {len(p2_pdfLinks)} PDF link(s) on {p2_baseUrl}")
-        return p2_pdfLinks
+        soup = BeautifulSoup(p1_html, "html.parser")
+        pdfLinks = []
+        seen = set()
+        for anchor in soup.find_all("a", href=True):
+            href = anchor["href"]
+            fullUrl = urljoin(baseUrl, href)
+            if catalogToSimpleSyllabusConfig['pdfLinkPattern'].search(fullUrl) and fullUrl not in seen:
+                seen.add(fullUrl)
+                pdfLinks.append(fullUrl)
+        logger.info(f"\nFound {len(pdfLinks)} PDF link(s) on {baseUrl}")
+        return pdfLinks
     except Exception as Error:
-        logger.warning(f"\nError extracting PDF links from {p2_baseUrl}: {Error}")
+        logger.warning(f"\nError extracting PDF links from {baseUrl}: {Error}")
         return []
 
 
@@ -206,41 +195,41 @@ def _getCurrentAcademicYearString():
     """
     p1_functionName = "_getCurrentAcademicYearString"
     try:
-        p2_currentMonth = localSetup.dateDict["month"]
-        p2_currentYear = localSetup.dateDict["year"]
-        p2_currentTerm = localSetup._determineCurrentTerm(p2_currentMonth)
-        p2_startYear, p2_endYear = localSetup._getSchoolYearRange(p2_currentTerm, p2_currentYear)
-        p2_academicYearString = f"{p2_startYear}{p2_endYear}"
-        logger.info(f"\nComputed current academic year: {p2_academicYearString}")
-        return p2_academicYearString
+        currentMonth = localSetup.dateDict["month"]
+        currentYear = localSetup.dateDict["year"]
+        currentTerm = localSetup._determineCurrentTerm(currentMonth)
+        startYear, endYear = localSetup._getSchoolYearRange(currentTerm, currentYear)
+        academicYearString = f"{startYear}{endYear}"
+        logger.info(f"\nComputed current academic year: {academicYearString}")
+        return academicYearString
     except Exception as Error:
         logger.warning(f"\nFailed to compute current academic year string: {Error}")
         return None
 
 
 ## This function downloads a PDF catalog from a URL and saves it locally
-def _downloadCatalogPdf(p1_pdfUrl, p2_outputDir):
+def _downloadCatalogPdf(p1_pdfUrl, outputDir):
     p1_functionName = "_downloadCatalogPdf"
     try:
         ## Derive a safe filename from the URL
-        p2_filename = os.path.basename(p1_pdfUrl.split("?")[0])
+        filename = os.path.basename(p1_pdfUrl.split("?")[0])
 
         ## If the filename is empty or too generic, generate one from the URL hash
-        if not p2_filename or len(p2_filename) < 5:
+        if not filename or len(filename) < 5:
             import hashlib
-            p2_filename = hashlib.sha1(p1_pdfUrl.encode()).hexdigest()[:12] + ".pdf"
+            filename = hashlib.sha1(p1_pdfUrl.encode()).hexdigest()[:12] + ".pdf"
 
-        p2_localPath = os.path.join(p2_outputDir, p2_filename)
+        localPath = os.path.join(outputDir, filename)
 
         ## If the file was already downloaded recently, skip
-        if isFileRecent(localSetup, p2_localPath):
-            logger.info(f"\nPDF already recent, skipping download: {p2_localPath}")
-            return p2_localPath
+        if isFileRecent(localSetup, localPath):
+            logger.info(f"\nPDF already recent, skipping download: {localPath}")
+            return localPath
 
         ## Download using TLC_Common.downloadFile (includes retry logic)
-        downloadFile(localSetup, p1_pdfUrl, p2_localPath)
-        logger.info(f"\nDownloaded PDF to {p2_localPath}")
-        return p2_localPath
+        downloadFile(localSetup, p1_pdfUrl, localPath)
+        logger.info(f"\nDownloaded PDF to {localPath}")
+        return localPath
     except Exception as Error:
         logger.warning(f"\nFailed to download PDF from {p1_pdfUrl}: {Error}")
         return None
@@ -251,28 +240,28 @@ def _downloadCatalogPdf(p1_pdfUrl, p2_outputDir):
 ## =========================================================================
 
 ## This function loads Simple Syllabus organizations from the CSV config file
-def _loadsimpSylNamesAndCanvasAccIdsDictFromCsv():
-    functionName = "_loadsimpSylNamesAndCanvasAccIdsDictFromCsv"
+def _loadsimpSylCanvasAccIdsAndNamesDictFromCsv():
+    functionName = "_loadsimpSylCanvasAccIdsAndNamesDictFromCsv"
     try:
         ## Config path for Simple Syllabus Organizations CSV
-        simpSylNamesAndCanvasAccIdsDictCsvPath = os.path.join(
+        simpSylCanvasAccIdsAndNamesDictCsvPath = os.path.join(
             localSetup.configPath,
             "Simple Syllabus Organizations.csv",
         )
         logger.info(
-            f"\nLoading Simple Syllabus organizations from {simpSylNamesAndCanvasAccIdsDictCsvPath}..."
+            f"\nLoading Simple Syllabus organizations from {simpSylCanvasAccIdsAndNamesDictCsvPath}..."
         )
         ## Check if file exists
-        if not os.path.exists(simpSylNamesAndCanvasAccIdsDictCsvPath):
+        if not os.path.exists(simpSylCanvasAccIdsAndNamesDictCsvPath):
             raise FileNotFoundError(
-                f"\nSimple Syllabus Organizations CSV not found at {simpSylNamesAndCanvasAccIdsDictCsvPath}"
+                f"\nSimple Syllabus Organizations CSV not found at {simpSylCanvasAccIdsAndNamesDictCsvPath}"
             )
         ## Read the CSV file
-        rawOrgsDf = pd.read_csv(simpSylNamesAndCanvasAccIdsDictCsvPath)
+        rawOrgsDf = pd.read_csv(simpSylCanvasAccIdsAndNamesDictCsvPath)
         ## Set NA values to empty string to prevent issues with NaN in account_id
         orgsDf = rawOrgsDf.fillna("")
         ## Convert DataFrame to dictionary keyed by org name -> int canvas_account_id
-        simpSylNamesAndCanvasAccIdsDict = {}
+        simpSylCanvasAccIdsAndNamesDict = {}
         for index, row in orgsDf.iterrows():
             simpSylAccName = str(row.get("name", "")).strip()
             canvasAccId = row.get("canvas_account_id", "")
@@ -280,23 +269,23 @@ def _loadsimpSylNamesAndCanvasAccIdsDictFromCsv():
             if not simpSylAccName or not str(canvasAccId).strip():
                 continue
             try:
-                simpSylNamesAndCanvasAccIdsDict[simpSylAccName] = int(canvasAccId)
+                simpSylCanvasAccIdsAndNamesDict[str(canvasAccId)] = simpSylAccName
             except (ValueError, TypeError):
                 logger.warning(
                     f"\nSkipping org '{simpSylAccName}': invalid canvas_account_id '{canvasAccId}'"
                 )
                 continue
         logger.info(
-            f"\nLoaded {len(simpSylNamesAndCanvasAccIdsDict)} Simple Syllabus organizations from CSV"
+            f"\nLoaded {len(simpSylCanvasAccIdsAndNamesDict)} Simple Syllabus organizations from CSV"
         )
-        return simpSylNamesAndCanvasAccIdsDict
+        return simpSylCanvasAccIdsAndNamesDict
     except Exception as Error:
         errorHandler.sendError(functionName, str(Error))
         raise
 
 
 ## This function loads all Canvas accounts for parent lookup
-def _loadAllCanvasAccounts():
+def _loadAllCanvasAccounts(p1_simpSylCanvasAccIdsAndNamesDict):
     p1_functionName = "_loadAllCanvasAccounts"
     try:
         logger.info("\nLoading all Canvas accounts for parent hierarchy lookup...")
@@ -315,8 +304,11 @@ def _loadAllCanvasAccounts():
                 "canvas_account_id" : "1",
                 "parent_id" : None
                 }
-        }
+            }
         for index, row in allAccountsDf.iterrows():
+            ## Skip accounts if their canvas_account_id is not in the Simple Syllabus orgs list, since we won't need to look up parents for accounts that aren't in the orgs list anyway
+            if str(row.get("canvas_account_id", "")) not in p1_simpSylCanvasAccIdsAndNamesDict:
+                continue
             accountId = str(row.get("canvas_account_id", ""))
             parentId = (
                 str(row.get("canvas_parent_id", ""))
@@ -342,8 +334,8 @@ def _loadAllCanvasAccounts():
 ## This function finds the parent organization by walking up the account hierarchy
 def _findParentOrgAccountId(
     p1_courseAccountId,
-    p2_allAccountsDict,
-    p3_simpSylNamesAndCanvasAccIdsDictDict,
+    allAccountsDict,
+    p3_simpSylCanvasAccIdsAndNamesDictDict,
     p4_visitedAccounts=None,
 ):
     p1_functionName = "_findParentOrgAccountId"
@@ -353,47 +345,47 @@ def _findParentOrgAccountId(
             p4_visitedAccounts = set()
 
         ## Get the account ID as string for comparison
-        p2_currentAccountId = str(p1_courseAccountId)
+        currentAccountId = str(p1_courseAccountId)
 
         ## Check if we've already visited this account (prevent circular references)
-        if p2_currentAccountId in p4_visitedAccounts:
+        if currentAccountId in p4_visitedAccounts:
             logger.warning(
-                f"\nCircular reference detected in account hierarchy at account {p2_currentAccountId}"
+                f"\nCircular reference detected in account hierarchy at account {currentAccountId}"
             )
             return ""
 
-        p4_visitedAccounts.add(p2_currentAccountId)
+        p4_visitedAccounts.add(currentAccountId)
 
         ## Check if current account is in Simple Syllabus orgs
-        if p2_currentAccountId in p3_simpSylNamesAndCanvasAccIdsDictDict:
+        if currentAccountId in p3_simpSylCanvasAccIdsAndNamesDictDict:
             logger.info(
                 f"\nFound Simple Syllabus org for account "
-                f"{p2_currentAccountId}: {p3_simpSylNamesAndCanvasAccIdsDictDict[p2_currentAccountId]['name']}"
+                f"{currentAccountId}: {p3_simpSylCanvasAccIdsAndNamesDictDict[currentAccountId]['name']}"
             )
-            return p2_currentAccountId
+            return currentAccountId
 
         ## If not in orgs, try to find parent
-        if p2_currentAccountId not in p2_allAccountsDict:
+        if currentAccountId not in allAccountsDict:
             logger.warning(
-                f"\nAccount {p2_currentAccountId} not found in Canvas accounts"
+                f"\nAccount {currentAccountId} not found in Canvas accounts"
             )
             return ""
 
-        p2_parentAccountId = p2_allAccountsDict[p2_currentAccountId].get("parent_id")
+        parentAccountId = allAccountsDict[currentAccountId].get("parent_id")
 
         ## If no parent or parent is None, we've reached the top
-        if not p2_parentAccountId or p2_parentAccountId == "None":
+        if not parentAccountId or parentAccountId == "None":
             logger.warning(
-                f"\nNo Simple Syllabus org found in hierarchy for account {p2_currentAccountId}"
+                f"\nNo Simple Syllabus org found in hierarchy for account {currentAccountId}"
             )
             return ""
 
         ## Recursively check parent
         logger.info(
-            f"\nAccount {p2_currentAccountId} not in orgs, checking parent {p2_parentAccountId}"
+            f"\nAccount {currentAccountId} not in orgs, checking parent {parentAccountId}"
         )
         return _findParentOrgAccountId(
-            p2_parentAccountId, p2_allAccountsDict, p3_simpSylNamesAndCanvasAccIdsDictDict, p4_visitedAccounts
+            parentAccountId, allAccountsDict, p3_simpSylCanvasAccIdsAndNamesDictDict, p4_visitedAccounts
         )
     except Exception as Error:
         errorHandler.sendError(p1_functionName, str(Error))
@@ -407,7 +399,7 @@ def _findParentOrgAccountId(
 ## This function builds mapping of Canvas account IDs to Simple Syllabus organization IDs from CATALOG ONLY
 ## KEY CHANGE: This function now accepts p1_catalogDf as a parameter, ensuring we ONLY map
 ## accounts that exist in the catalog, not all Canvas accounts
-def buildAccountOrgMap(p2_allAccountsDict, p3_simpSylNamesAndCanvasAccIdsDictDict):
+def buildAccountOrgMap(allAccountsDict, p3_simpSylCanvasAccIdsAndNamesDictDict):
     p1_functionName = "buildAccountOrgMap"
     try:
         logger.info(
@@ -418,24 +410,24 @@ def buildAccountOrgMap(p2_allAccountsDict, p3_simpSylNamesAndCanvasAccIdsDictDic
         ## This is the format _findParentOrgAccountId expects for membership checks and name access
         accountIdToOrgInfo = {
             str(accId): {"name": orgName}
-            for orgName, accId in p3_simpSylNamesAndCanvasAccIdsDictDict.items()
+            for orgName, accId in p3_simpSylCanvasAccIdsAndNamesDictDict.items()
         }
 
         ## Map each Simple Syllabus org account to its resolved org in the hierarchy
         accountOrgMap = {}
-        for orgName, canvasAccountId in p3_simpSylNamesAndCanvasAccIdsDictDict.items():
+        for orgName, canvasAccountId in p3_simpSylCanvasAccIdsAndNamesDictDict.items():
             canvasAccountIdStr = str(canvasAccountId)
             try:
                 ## Find the org account by walking up the hierarchy
-                p2_orgAccountId = _findParentOrgAccountId(
-                    canvasAccountIdStr, p2_allAccountsDict, accountIdToOrgInfo
+                orgAccountId = _findParentOrgAccountId(
+                    canvasAccountIdStr, allAccountsDict, accountIdToOrgInfo
                 )
-                if p2_orgAccountId:
-                    accountOrgMap[canvasAccountIdStr] = p2_orgAccountId
-                    resolvedOrgName = accountIdToOrgInfo.get(p2_orgAccountId, {}).get("name", "")
+                if orgAccountId:
+                    accountOrgMap[canvasAccountIdStr] = orgAccountId
+                    resolvedOrgName = accountIdToOrgInfo.get(orgAccountId, {}).get("name", "")
                     logger.info(
                         f"\nMapped account {canvasAccountIdStr} to organization "
-                        f"{p2_orgAccountId} ({resolvedOrgName})"
+                        f"{orgAccountId} ({resolvedOrgName})"
                     )
                 else:
                     logger.warning(
@@ -458,24 +450,24 @@ def buildAccountOrgMap(p2_allAccountsDict, p3_simpSylNamesAndCanvasAccIdsDictDic
 def expandSlashTitles(p1_catalogDf):
     p1_functionName = "expandSlashTitles"
     try:
-        p2_expandedRows = []
-        for p2_index, p2_row in p1_catalogDf.iterrows():
-            p2_title = str(p2_row.get("course_code", ""))
+        expandedRows = []
+        for index, row in p1_catalogDf.iterrows():
+            title = str(row.get("course_code", ""))
             ## Check if title contains a slash
-            if "/" in p2_title:
-                p2_parts = p2_title.split("/")
+            if "/" in title:
+                parts = title.split("/")
                 ## Create a separate row for each part
-                for p2_part in p2_parts:
-                    p2_newRow = p2_row.copy()
-                    p2_newRow["course_code"] = p2_part.strip()
-                    p2_expandedRows.append(p2_newRow)
+                for part in parts:
+                    newRow = row.copy()
+                    newRow["course_code"] = part.strip()
+                    expandedRows.append(newRow)
             else:
-                p2_expandedRows.append(p2_row)
-        p2_expandedDf = pd.DataFrame(p2_expandedRows)
+                expandedRows.append(row)
+        expandedDf = pd.DataFrame(expandedRows)
         logger.info(
-            f"\nExpanded {len(p1_catalogDf)} rows to {len(p2_expandedDf)} rows after slash expansion"
+            f"\nExpanded {len(p1_catalogDf)} rows to {len(expandedDf)} rows after slash expansion"
         )
-        return p2_expandedDf
+        return expandedDf
     except Exception as Error:
         errorHandler.sendError(p1_functionName, str(Error))
         raise
@@ -538,12 +530,13 @@ def _dedupeProdStaging(p1_catalogDf, activeSisCourses):
 
     # Normalize course_code in catalog
     p1_catalogDf = p1_catalogDf.copy()
-    p1_catalogDf["course_code_norm"] = p1_catalogDf["course_code"].apply(
+    p1_catalogDf["course_code_norm"] = p1_catalogDf["Title"].apply(
         _normalize_course_code
     )
 
     today = datetime.now().date()
     currentSchoolYear = _get_school_year(today)
+    ## TODO Use normal get school year
     nextSchoolYear = currentSchoolYear + 1
 
     def pick_row(group):
@@ -586,7 +579,7 @@ def _dedupeProdStaging(p1_catalogDf, activeSisCourses):
 
 ## This function constructs rows for upload to Simple Syllabus
 ## KEY CHANGE: This function now uses SIS to filter & resolve prod vs staging
-def buildOutputRows(p1_catalogDf, accountOrgMap, p3_simpSylNamesAndCanvasAccIdsDictDict):
+def buildOutputRows(p1_catalogDf, accountOrgMap, p3_simpSylCanvasAccIdsAndNamesDictDict):
     p1_functionName = "buildOutputRows"
     try:
         logger.info("\nBuilding output rows for Simple Syllabus upload...")
@@ -612,7 +605,7 @@ def buildOutputRows(p1_catalogDf, accountOrgMap, p3_simpSylNamesAndCanvasAccIdsD
 
         # Normalize catalog course_code
         p1_catalogDf = p1_catalogDf.copy()
-        p1_catalogDf["course_code_norm"] = p1_catalogDf["course_code"].apply(
+        p1_catalogDf["course_code_norm"] = p1_catalogDf["Title"].apply(
             _normalize_course_code
         )
 
@@ -635,64 +628,99 @@ def buildOutputRows(p1_catalogDf, accountOrgMap, p3_simpSylNamesAndCanvasAccIdsD
         # --- END NEW SIS logic ---
 
         # Validate input
-        p2_requiredColumns = ["course_code", "title", "account_id"]
-        p2_missingColumns = [
-            p2_col for p2_col in p2_requiredColumns if p2_col not in p1_catalogDf.columns
+        requiredColumns = ["course_code", "title", "account_id"]
+        missingColumns = [
+            col for col in requiredColumns if col not in p1_catalogDf.columns
         ]
-        if p2_missingColumns:
-            raise ValueError(f"\nMissing required columns: {p2_missingColumns}")
+        if missingColumns:
+            raise ValueError(f"\nMissing required columns: {missingColumns}")
 
-        p2_outputRows = []
+        # Normalize expected columns: support alternate column names emitted by CleanCatalog
+        # Map known alternate column names to canonical ones used downstream.
+        canon = p1_catalogDf.copy()
 
-        for p2_index, p2_row in p1_catalogDf.iterrows():
+        # course_code: prefer existing 'course_code', else 'Title' (CleanCatalog) or 'course_code_norm'
+        if "course_code" not in canon.columns:
+            if "Title" in canon.columns:
+                canon["course_code"] = canon["Title"]
+            elif "course_code_norm" in canon.columns:
+                canon["course_code"] = canon["course_code_norm"]
+
+        # title: prefer 'title', else 'Name'
+        if "title" not in canon.columns and "Name" in canon.columns:
+            canon["title"] = canon["Name"]
+
+        # account_id: try common alternatives that might appear in different exports
+        if "account_id" not in canon.columns:
+            for alt in ["canvas_account_id", "Account ID", "account", "accountId", "canvas_account"]:
+                if alt in canon.columns:
+                    canon["account_id"] = canon[alt]
+                    break
+
+        # After mapping, validate required columns
+        requiredColumns = ["course_code", "title", "account_id"]
+        missingColumns = [col for col in requiredColumns if col not in canon.columns]
+        if missingColumns:
+            raise ValueError(
+                f"\nMissing required columns after mapping: {missingColumns}. "
+                "Ensure the catalog export contains course code (e.g. 'Title'), "
+                "course title (e.g. 'Name'), and a Canvas account id column."
+            )
+
+        # Use the normalized dataframe going forward
+        p1_catalogDf = canon
+
+        outputRows = []
+
+        for index, row in p1_catalogDf.iterrows():
             try:
                 ## Get account ID and look up org
-                p2_courseAccountId = str(p2_row.get("account_id", "")).strip()
-                p2_courseCode = str(p2_row.get("course_code", ""))
-                if not p2_courseAccountId or p2_courseAccountId.upper() == "NAN":
+                courseAccountId = str(row.get("account_id", "")).strip()
+                courseCode = str(row.get("course_code", ""))
+                if not courseAccountId or courseAccountId.upper() == "NAN":
                     logger.warning(
-                        f"\nNo account ID for course '{p2_courseCode}'. Skipping."
+                        f"\nNo account ID for course '{courseCode}'. Skipping."
                     )
                     continue
 
                 ## Get the organization account ID from mapping
-                p2_orgAccountId = accountOrgMap.get(p2_courseAccountId, "")
-                if not p2_orgAccountId:
+                orgAccountId = accountOrgMap.get(courseAccountId, "")
+                if not orgAccountId:
                     logger.warning(
-                        f"\nNo organization mapping for account '{p2_courseAccountId}' "
-                        f"in course '{p2_courseCode}'. Skipping."
+                        f"\nNo organization mapping for account '{courseAccountId}' "
+                        f"in course '{courseCode}'. Skipping."
                     )
                     continue
 
                 ## Get organization name
-                p2_orgName = p3_simpSylNamesAndCanvasAccIdsDictDict.get(p2_orgAccountId, {}).get(
+                orgName = p3_simpSylCanvasAccIdsAndNamesDictDict.get(orgAccountId, {}).get(
                     "name", ""
                 )
 
                 ## Build output row
-                p2_outputRow = {
-                    "course_code": p2_courseCode,
-                    "course_title": p2_row.get("title", ""),
-                    "organization_id": p2_orgAccountId,
-                    "organization_name": p2_orgName,
-                    "canvas_account_id": p2_courseAccountId,
-                    "sis_course_id": p2_row.get("sis_course_id", ""),
-                    "description": p2_row.get("description", ""),
-                    "environment": p2_row.get("environment", ""),
-                    "audience": p2_row.get("audience", ""),
+                outputRow = {
+                    "course_code": courseCode,
+                    "course_title": row.get("title", ""),
+                    "organization_id": orgAccountId,
+                    "organization_name": orgName,
+                    "canvas_account_id": courseAccountId,
+                    "sis_course_id": row.get("sis_course_id", ""),
+                    "description": row.get("description", ""),
+                    "environment": row.get("environment", ""),
+                    "audience": row.get("audience", ""),
                 }
-                p2_outputRows.append(p2_outputRow)
+                outputRows.append(outputRow)
 
             except Exception as Error:
                 logger.warning(
                     f"\nFailed to build row for course "
-                    f"'{p2_row.get('course_code', 'UNKNOWN')}': {Error}"
+                    f"'{row.get('course_code', 'UNKNOWN')}': {Error}"
                 )
                 continue
 
-        p2_outputDf = pd.DataFrame(p2_outputRows)
-        logger.info(f"\nBuilt {len(p2_outputDf)} output rows for upload")
-        return p2_outputDf
+        outputDf = pd.DataFrame(outputRows)
+        logger.info(f"\nBuilt {len(outputDf)} output rows for upload")
+        return outputDf
     except Exception as Error:
         errorHandler.sendError(p1_functionName, str(Error))
         raise
@@ -703,21 +731,21 @@ def buildOutputRows(p1_catalogDf, accountOrgMap, p3_simpSylNamesAndCanvasAccIdsD
 ## =========================================================================
 
 ## This function downloads catalog from URL and returns as DataFrame
-def downloadCatalog(p1_url, p2_localPath):
+def downloadCatalog(p1_url, localPath):
     p1_functionName = "downloadCatalog"
     try:
-        logger.info(f"\nDownloading catalog from {p1_url} to {p2_localPath}...")
+        logger.info(f"\nDownloading catalog from {p1_url} to {localPath}...")
 
         ## If the file isn't recent
-        if not isFileRecent(localSetup, p2_localPath):
+        if not isFileRecent(localSetup, localPath):
 
             # Use TLC_Common.downloadFile to make a GET call to the URL
-            downloadFile(localSetup, p1_url, p2_localPath)
+            downloadFile(localSetup, p1_url, localPath)
 
         # Now read the downloaded CSV
-        p2_catalogDf = pd.read_csv(p2_localPath)
-        logger.info(f"\nDownloaded {len(p2_catalogDf)} courses from {p1_url}")
-        return p2_catalogDf
+        catalogDf = pd.read_csv(localPath)
+        logger.info(f"\nDownloaded {len(catalogDf)} courses from {p1_url}")
+        return catalogDf
     except Exception as Error:
         errorHandler.sendError(p1_functionName, str(Error))
         raise
@@ -778,7 +806,7 @@ def _downloadProdAndStagingCatalogs():
 
 ## This function handles the future catalog year scenario by downloading the future
 ## catalog PDF and combining it with a previously downloaded current-year catalog if available
-def _downloadFutureCatalogWithCurrentFallback(p1_foundYear, p2_currentYear):
+def _downloadFutureCatalogWithCurrentFallback(p1_foundYear, currentYear):
     """
     When catalog.nnu.edu shows a future catalog year:
     1. Download the future catalog PDF from the traditional-undergraduate-catalog-<FOUND_YEAR> page.
@@ -790,87 +818,90 @@ def _downloadFutureCatalogWithCurrentFallback(p1_foundYear, p2_currentYear):
     """
     p1_functionName = "_downloadFutureCatalogWithCurrentFallback"
     try:
-        p2_baseDir = os.path.join(
+        baseDir = os.path.join(
             localSetup.getInternalResourcePaths("Simple_Syllabus"),
             "Catalog_Export",
         )
-        os.makedirs(p2_baseDir, exist_ok=True)
+        os.makedirs(baseDir, exist_ok=True)
 
-        p2_downloadedPaths = []
+        downloadedPaths = []
 
         ## STEP 1: Download the future catalog PDF from catalog.nnu.edu
-        p2_futurePageUrl = f"{catalogToSimpleSyllabusConfig['catalogBaseUrl']}traditional-undergraduate-catalog-{p1_foundYear}"
-        p2_futureHtml = _fetchHtml(p2_futurePageUrl)
+        futurePageUrl = f"{catalogToSimpleSyllabusConfig['catalogBaseUrl']}traditional-undergraduate-catalog-{p1_foundYear}"
 
-        if p2_futureHtml:
-            p2_futurePdfs = _extractPdfLinksFromPage(p2_futureHtml, p2_futurePageUrl)
-            for p2_pdfUrl in p2_futurePdfs:
-                p2_localPath = _downloadCatalogPdf(p2_pdfUrl, p2_baseDir)
-                if p2_localPath:
-                    p2_downloadedPaths.append(p2_localPath)
+        # Use makeApiCall (with existing retry and logging) instead of undefined _fetchHtml
+        futureResp, _ = makeApiCall(localSetup, futurePageUrl, p1_header = "")
+        futureHtml = futureResp.text if futureResp is not None else None
+
+        if futureHtml:
+            futurePdfs = _extractPdfLinksFromPage(futureHtml, futurePageUrl)
+            for pdfUrl in futurePdfs:
+                localPath = _downloadCatalogPdf(pdfUrl, baseDir)
+                if localPath:
+                    downloadedPaths.append(localPath)
         else:
-            logger.warning(f"\nCould not fetch future catalog page: {p2_futurePageUrl}")
+            logger.warning(f"\nCould not fetch future catalog page: {futurePageUrl}")
 
         ## STEP 2: Check if current-year catalog CSVs were previously downloaded
         ## Look for production catalog CSVs from a prior run
-        p2_currentCatalogPaths = []
-        for p2_audience in ["gps", "tug"]:
-            p2_currentCsvPath = os.path.join(p2_baseDir, f"production_{p2_audience}_catalog.csv")
-            if os.path.exists(p2_currentCsvPath):
-                logger.info(f"\nFound previously downloaded current catalog: {p2_currentCsvPath}")
-                p2_currentCatalogPaths.append((p2_currentCsvPath, p2_audience))
+        currentCatalogPaths = []
+        for audience in ["gps", "tug"]:
+            currentCsvPath = os.path.join(baseDir, f"production_{audience}_catalog.csv")
+            if os.path.exists(currentCsvPath):
+                logger.info(f"\nFound previously downloaded current catalog: {currentCsvPath}")
+                currentCatalogPaths.append((currentCsvPath, audience))
 
         ## STEP 3: Build combined DataFrame
-        p2_allDfs = []
+        allDfs = []
 
         ## Add current catalogs if they exist
-        for p2_csvPath, p2_audience in p2_currentCatalogPaths:
+        for csvPath, audience in currentCatalogPaths:
             try:
-                p2_currentDf = pd.read_csv(p2_csvPath)
-                p2_currentDf["environment"] = "production"
-                p2_currentDf["audience"] = p2_audience
-                p2_allDfs.append(p2_currentDf)
-                logger.info(f"\nLoaded {len(p2_currentDf)} current catalog rows from {p2_csvPath}")
+                currentDf = pd.read_csv(csvPath)
+                currentDf["environment"] = "production"
+                currentDf["audience"] = audience
+                allDfs.append(currentDf)
+                logger.info(f"\nLoaded {len(currentDf)} current catalog rows from {csvPath}")
             except Exception as Error:
-                logger.warning(f"\nFailed to read current catalog CSV {p2_csvPath}: {Error}")
+                logger.warning(f"\nFailed to read current catalog CSV {csvPath}: {Error}")
 
         ## If we downloaded future PDFs but have no CSV catalogs to combine,
         ## fall back to downloading prod+staging normally so the pipeline has data to process
-        if not p2_allDfs and not p2_downloadedPaths:
+        if not allDfs and not downloadedPaths:
             logger.warning("\nNo future PDFs and no current catalogs found. Falling back to prod+staging download.")
             return _downloadProdAndStagingCatalogs()
 
         ## If we have current CSVs, also try to download the future catalog CSVs from staging
         ## so the pipeline can process them alongside the current ones
-        if p2_allDfs:
+        if allDfs:
             ## Try downloading staging catalogs as the "future" catalog source
-            for p2_audience in ["gps", "tug"]:
+            for audience in ["gps", "tug"]:
                 try:
-                    p2_stagingUrl = _getCatalogUrlFromConfig(audience=p2_audience, environment="staging")
-                    p2_stagingLocalPath = os.path.join(p2_baseDir, f"staging_{p2_audience}_catalog.csv")
-                    p2_stagingDf = downloadCatalog(p2_stagingUrl, p2_stagingLocalPath)
-                    p2_stagingDf["environment"] = "staging"
-                    p2_stagingDf["audience"] = p2_audience
-                    p2_allDfs.append(p2_stagingDf)
-                    logger.info(f"\nDownloaded staging {p2_audience} catalog as future catalog source")
+                    stagingUrl = _getCatalogUrlFromConfig(audience=audience, environment="staging")
+                    stagingLocalPath = os.path.join(baseDir, f"staging_{audience}_catalog.csv")
+                    stagingDf = downloadCatalog(stagingUrl, stagingLocalPath)
+                    stagingDf["environment"] = "staging"
+                    stagingDf["audience"] = audience
+                    allDfs.append(stagingDf)
+                    logger.info(f"\nDownloaded staging {audience} catalog as future catalog source")
                 except Exception as Error:
-                    logger.warning(f"\nFailed to download staging {p2_audience} catalog: {Error}")
+                    logger.warning(f"\nFailed to download staging {audience} catalog: {Error}")
 
-        if not p2_allDfs:
+        if not allDfs:
             logger.warning("\nNo catalog DataFrames built. Falling back to prod+staging download.")
             return _downloadProdAndStagingCatalogs()
 
-        p2_combinedDf = pd.concat(p2_allDfs, ignore_index=True)
+        combinedDf = pd.concat(allDfs, ignore_index=True)
         logger.info(
-            f"\nCombined future+current catalogs into {len(p2_combinedDf)} rows "
-            f"(future year: {p1_foundYear}, current year: {p2_currentYear})"
+            f"\nCombined future+current catalogs into {len(combinedDf)} rows "
+            f"(future year: {p1_foundYear}, current year: {currentYear})"
         )
 
         ## Log the downloaded PDF paths for reference
-        if p2_downloadedPaths:
-            logger.info(f"\nFuture catalog PDFs downloaded: {p2_downloadedPaths}")
+        if downloadedPaths:
+            logger.info(f"\nFuture catalog PDFs downloaded: {downloadedPaths}")
 
-        return p2_combinedDf
+        return combinedDf
 
     except Exception as Error:
         errorHandler.sendError(p1_functionName, str(Error))
@@ -891,55 +922,60 @@ def downloadAllCatalogs():
        with any previously downloaded current-year catalog.
     5. If no link found or found year is older -> fall back to prod+staging.
     """
-    p1_functionName = "downloadAllCatalogs"
+    functionName = "downloadAllCatalogs"
     try:
         ## STEP 1: Compute current academic year
-        p2_currentAcademicYear = _getCurrentAcademicYearString()
-        if not p2_currentAcademicYear:
+        currentAcademicYear = _getCurrentAcademicYearString()
+        if not currentAcademicYear:
             logger.warning("\nCould not compute current academic year. Falling back to prod+staging download.")
             return _downloadProdAndStagingCatalogs()
 
         ## STEP 2: Fetch the catalog base page and find the catalog year
-        p2_baseHtml = _fetchHtml(catalogToSimpleSyllabusConfig['catalogBaseUrl'])
-        if not p2_baseHtml:
+        catalogSiteHtlmResponse, _ = makeApiCall(
+            localSetup,
+            catalogToSimpleSyllabusConfig['catalogBaseUrl'],
+            p1_header = ""
+            )
+        baseCatalogHtml = catalogSiteHtlmResponse.text
+        if not baseCatalogHtml:
             logger.warning(f"\nCould not fetch {catalogToSimpleSyllabusConfig['catalogBaseUrl']}. Falling back to prod+staging download.")
             return _downloadProdAndStagingCatalogs()
 
-        p2_foundYear = _findTradUndergradCatalogYear(p2_baseHtml)
-        if not p2_foundYear:
+        foundYear = _findTradUndergradCatalogYear(baseCatalogHtml)
+        if not foundYear:
             logger.warning("\nNo traditional-undergraduate-catalog link found. Falling back to prod+staging download.")
             return _downloadProdAndStagingCatalogs()
 
-        logger.info(f"\nCatalog year found on site: {p2_foundYear}, current academic year: {p2_currentAcademicYear}")
+        logger.info(f"\nCatalog year found on site: {foundYear}, current academic year: {currentAcademicYear}")
 
         ## STEP 3: Compare found year to current year
-        if p2_foundYear == p2_currentAcademicYear:
+        if foundYear == currentAcademicYear:
             ## Found year matches current academic year -> do existing prod+staging flow
             logger.info("\nFound catalog year matches current academic year. Downloading prod+staging catalogs.")
             return _downloadProdAndStagingCatalogs()
 
         ## STEP 4: Check if found year is in the future
         try:
-            p2_foundStartYear = int(p2_foundYear[:4])
-            p2_currentStartYear = int(p2_currentAcademicYear[:4])
+            foundStartYear = int(foundYear[:4])
+            currentStartYear = int(currentAcademicYear[:4])
         except ValueError:
-            logger.warning(f"\nCould not parse year strings numerically (found={p2_foundYear}, current={p2_currentAcademicYear}). Falling back to prod+staging download.")
+            logger.warning(f"\nCould not parse year strings numerically (found={foundYear}, current={currentAcademicYear}). Falling back to prod+staging download.")
             return _downloadProdAndStagingCatalogs()
 
-        if p2_foundStartYear > p2_currentStartYear:
+        if foundStartYear > currentStartYear:
             ## Future catalog published early -> download future + check for current
             logger.info(
-                f"\nFuture catalog year detected ({p2_foundYear}) while current is ({p2_currentAcademicYear}). "
+                f"\nFuture catalog year detected ({foundYear}) while current is ({currentAcademicYear}). "
                 f"Downloading future catalog and checking for previously downloaded current catalog."
             )
-            return _downloadFutureCatalogWithCurrentFallback(p2_foundYear, p2_currentAcademicYear)
+            return _downloadFutureCatalogWithCurrentFallback(foundYear, currentAcademicYear)
 
         ## STEP 5: Found year is older than current -> fall back
-        logger.info(f"\nFound catalog year ({p2_foundYear}) is older than current ({p2_currentAcademicYear}). Falling back to prod+staging download.")
+        logger.info(f"\nFound catalog year ({foundYear}) is older than current ({currentAcademicYear}). Falling back to prod+staging download.")
         return _downloadProdAndStagingCatalogs()
 
     except Exception as Error:
-        errorHandler.sendError(p1_functionName, str(Error))
+        errorHandler.sendError(functionName, str(Error))
         ## On any unhandled error, fall back to original behavior
         logger.warning("\nUnexpected error in downloadAllCatalogs. Falling back to prod+staging download.")
         return _downloadProdAndStagingCatalogs()
@@ -961,10 +997,10 @@ def uploadToSimpleSyllabus(p1_outputDf):
         )
         os.makedirs(outputDir, exist_ok=True)
 
-        p2_outputFile = os.path.join(outputDir, "SimpleSyllabus_Catalog_Export.csv")
-        p1_outputDf.to_csv(p2_outputFile, index=False)
+        outputFile = os.path.join(outputDir, "SimpleSyllabus_Catalog_Export.csv")
+        p1_outputDf.to_csv(outputFile, index=False)
         logger.info(
-            f"\nSuccessfully wrote {len(p1_outputDf)} courses to local file {p2_outputFile}"
+            f"\nSuccessfully wrote {len(p1_outputDf)} courses to local file {outputFile}"
         )
 
         # EXAMPLE: How you'd access SFTP config when you're ready to actually push the file
@@ -1008,57 +1044,57 @@ def sendCatalogToSimpleSyllabus(
         logger.info("\n\nStarting catalog synchronization with Simple Syllabus...")
 
         ## STEP 1: Load Simple Syllabus organizations from CSV
-        p2_simpSylNamesAndCanvasAccIdsDictDict = _loadsimpSylNamesAndCanvasAccIdsDictFromCsv()
-        if not p2_simpSylNamesAndCanvasAccIdsDictDict:
+        simpSylCanvasAccIdsAndNamesDictDict = _loadsimpSylCanvasAccIdsAndNamesDictFromCsv()
+        if not simpSylCanvasAccIdsAndNamesDictDict:
             raise ValueError("\nFailed to load Simple Syllabus organizations")
 
         ## STEP 2: Load all Canvas accounts for parent hierarchy lookup
-        p2_allAccountsDict = _loadAllCanvasAccounts()
-        if not p2_allAccountsDict:
+        allAccountsDict = _loadAllCanvasAccounts(simpSylCanvasAccIdsAndNamesDictDict)
+        if not allAccountsDict:
             raise ValueError("\nFailed to load Canvas accounts")
 
         ## STEP 3: Download catalogs (with catalog year detection)
         if p1_catalogUrl:
             # Manual single-URL test path
-            p2_localDownloadPath = os.path.join(
+            localDownloadPath = os.path.join(
                 localSetup.getInternalResourcePaths("Simple_Syllabus"),
                 "Catalog_Export",
                 "catalog_download_manual.csv",
             )
-            p2_catalogDf = downloadCatalog(p1_catalogUrl, p2_localDownloadPath)
-            p2_catalogDf["environment"] = environment
-            p2_catalogDf["audience"] = audience
+            catalogDf = downloadCatalog(p1_catalogUrl, localDownloadPath)
+            catalogDf["environment"] = environment
+            catalogDf["audience"] = audience
         else:
-            p2_catalogDf = downloadAllCatalogs()
+            catalogDf = downloadAllCatalogs()
 
-        if p2_catalogDf.empty:
+        if catalogDf.empty:
             raise ValueError("\nDownloaded catalog is empty")
 
-        logger.info(f"\nDownloaded/combined {len(p2_catalogDf)} total catalog rows")
+        logger.info(f"\nDownloaded/combined {len(catalogDf)} total catalog rows")
 
         ## STEP 4: Expand slash titles
-        p2_expandedCatalogDf = expandSlashTitles(p2_catalogDf)
+        expandedCatalogDf = expandSlashTitles(catalogDf)
         logger.info(
-            f"\nExpanded to {len(p2_expandedCatalogDf)} courses after slash expansion"
+            f"\nExpanded to {len(expandedCatalogDf)} courses after slash expansion"
         )
 
         ## STEP 5: Build account-to-org mapping from CATALOG ONLY
         accountOrgMap = buildAccountOrgMap(
-            p2_allAccountsDict, p2_simpSylNamesAndCanvasAccIdsDictDict
+            allAccountsDict, simpSylCanvasAccIdsAndNamesDictDict
         )
         if not accountOrgMap:
             raise ValueError("\nFailed to build account-to-org mapping")
 
         ## STEP 6: Build output rows (includes SIS filtering and prod/staging resolution)
-        p2_outputDf = buildOutputRows(
-            p2_expandedCatalogDf, accountOrgMap, p2_simpSylNamesAndCanvasAccIdsDictDict
+        outputDf = buildOutputRows(
+            expandedCatalogDf, accountOrgMap, simpSylCanvasAccIdsAndNamesDictDict
         )
-        if p2_outputDf.empty:
+        if outputDf.empty:
             raise ValueError("\nNo valid output rows generated")
 
         ## STEP 7: Upload to Simple Syllabus
-        p2_uploadSuccess = uploadToSimpleSyllabus(p2_outputDf)
-        if p2_uploadSuccess:
+        uploadSuccess = uploadToSimpleSyllabus(outputDf)
+        if uploadSuccess:
             logger.info("\nCatalog synchronization completed successfully")
             return True
         else:
