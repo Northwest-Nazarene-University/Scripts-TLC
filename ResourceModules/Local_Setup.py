@@ -306,6 +306,15 @@ class LocalSetup:
         Return the school year string for the given term and year. ## e.g. "2023-2024"
         """
         return self._determineSchoolYear(term, year)
+
+    ## Return the current school year based on the current date
+    def getCurrentSchoolYear(self) -> str:
+        """
+        Return the current school year based on the current date using _determineSchoolYear and _determineCurrentTerm.
+        """
+        term = self._determineCurrentTerm(self.dateDict["month"])
+        year = self.dateDict["year"]
+        return self._determineSchoolYear(term, year)
     
     ## Common function to get terms (full year codes)
     def getTerms(self, month: int, year: int) -> set:

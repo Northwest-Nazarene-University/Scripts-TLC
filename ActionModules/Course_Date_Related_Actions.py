@@ -40,7 +40,7 @@ except ImportError:
 os.chdir(os.path.dirname(__file__))
 
 # Define the script name, purpose, and external requirements for logging and error reporting purposes
-scriptName = "Course_Date_Related_Actions"
+scriptName = __file__
 
 scriptPurpose = r"""
 This script determines what course date related actions need to be taken for a specific term, such as sending outcome related emails to instructors, and performs those actions.
@@ -55,9 +55,6 @@ This script requires the following external resources:
 ## Initialize LocalSetup and helpers from ResourceModules
 localSetup = LocalSetup(datetime.now(), __file__)
 errorHandler = errorEmail(scriptName if 'scriptName' in globals() else 'Course_Date_Related_Actions', scriptPurpose, externalRequirements, localSetup)
-
-
-# Canvas API header is provided by makeApiCall default; do not define header here
 
 ## This Function creates a formated Mising Outcome Attachment Email Body
 def createOutcomeEmailBody (p3_relevantEmail
