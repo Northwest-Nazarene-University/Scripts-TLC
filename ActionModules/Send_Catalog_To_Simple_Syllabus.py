@@ -69,7 +69,11 @@ This script requires the following external resources:
 localSetup = LocalSetup(datetime.now(), __file__)
 errorHandler = errorEmail(scriptName, scriptPurpose, externalRequirements, localSetup)
 
+## This function uploads the processed file to Simple Syllabus
+def uploadToSimpleSyllabus(p1_filePath: str):
+    pass
 
+## Helper function to read CSV with encoding fallback
 def _readCsvWithEncoding(filePath: str, **kwargs) -> pd.DataFrame:
     """Read a CSV file trying utf-8-sig first, then latin-1 as fallback."""
     try:
@@ -78,7 +82,7 @@ def _readCsvWithEncoding(filePath: str, **kwargs) -> pd.DataFrame:
         localSetup.logger.warning(f"UTF-8 decode failed for {filePath}, falling back to latin-1")
         return pd.read_csv(filePath, encoding='latin-1', **kwargs)
 
-
+## This function normalizes spacing and delimiters in prerequisite/corequisite strings from the catalog, which often have inconsistent formatting issues.
 def _normalizeRequisiteSpacing(text: str) -> str:
     """
     Fix spacing issues and replace uppercase AND / OR delimiters with commas
@@ -336,6 +340,28 @@ def formatCombinedCatalogForSimpleSyllabus(p1_combinedCatalogDf: pd.DataFrame, p
                 canvasCourseInfoByTerm[termCode] = {}
 
         ## ══════════════════════════════════════════════════════════════════════
+        ## STEP 4.5: Expand rows where the Title column contains multiple
+        ##           course codes separated by "/" (e.g. "MUSC2250/MUSC2254").
+        ##           Each code gets its own row with all other columns identical.
+        ## ══════════════════════════════════════════════════════════════════════
+
+        expandedRows = []
+        for _, row in p1_combinedCatalogDf.iterrows():
+            rawTitle = _safe_strip(row.get("Title", ""))
+            if "/" in rawTitle:
+                ## Split on "/" and create one row per course code
+                codes = [code.strip() for code in rawTitle.split("/") if code.strip()]
+                for code in codes:
+                    newRow = row.copy()
+                    newRow["Title"] = code
+                    expandedRows.append(newRow)
+            else:
+                expandedRows.append(row)
+
+        p1_combinedCatalogDf = pd.DataFrame(expandedRows).reset_index(drop=True)
+        localSetup.logger.info(f"{functionName}: After expanding multi-code rows: {len(p1_combinedCatalogDf)} rows")
+
+        ## ══════════════════════════════════════════════════════════════════════
         ## STEP 5: Process each catalog row — build prerequisites/corequisites,
         ##         expand into per-term rows, and filter by Canvas presence
         ## ══════════════════════════════════════════════════════════════════════
@@ -466,11 +492,17 @@ def formatCombinedCatalogForSimpleSyllabus(p1_combinedCatalogDf: pd.DataFrame, p
             finalCorequisites = _normalizeRequisiteSpacing(combinedCoreqStr)
 
             ## ── Determine which term codes apply to this course ──
-            if catalogType == "gps":
-                ## GPS = graduate — assign to graduate term codes
+            ## Extract the leading numeric portion of the course number (e.g. "6120" from "6120",
+            ## "9220" from "9220S") to decide undergraduate vs graduate.
+            ## Courses numbered 5000+ are graduate; below 5000 are undergraduate.
+            courseNumericMatch = re.match(r'(\d+)', courseNumber)
+            courseNumericValue = int(courseNumericMatch.group(1)) if courseNumericMatch else 0
+
+            if courseNumericValue >= 5000:
+                ## Graduate course — assign to graduate term codes
                 applicableTermCodes = gradTermCodes
             else:
-                ## TUG = undergraduate — assign to undergraduate term codes
+                ## Undergraduate course — assign to undergraduate term codes
                 applicableTermCodes = undgTermCodes
 
             ## ── Create one row per applicable term (if the course exists in Canvas for that term) ──
