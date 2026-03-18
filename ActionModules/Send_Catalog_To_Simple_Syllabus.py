@@ -86,14 +86,11 @@ def _normalizeRequisiteSpacing(text: str) -> str:
 
     The catalog data often jams separate requirements together with uppercase AND/OR
     instead of proper punctuation. This function:
-      1. Replaces standalone uppercase 'AND' / 'OR' (used as list delimiters between
-         distinct requirements) with commas.
-         (e.g. 'COMP6120 AND:Admission into...' -> 'COMP6120, Admission into...')
-      2. Splits apart words jammed together at lowercase→uppercase boundaries
+      1. Splits apart words jammed together at lowercase→uppercase boundaries
          (e.g. 'permissionAdmission' -> 'permission, Admission')
-      3. Inserts a space after periods jammed against a capital letter
+      2. Inserts a space after periods jammed against a capital letter
          (e.g. 'program.COMP3480' -> 'program. COMP3480')
-      4. Does NOT touch lowercase 'or'/'and' inside phrases like 'or instructor's approval'
+      3. Does NOT touch lowercase 'or'/'and' inside phrases like 'or instructor's approval'
 
     Examples:
         'Completion of COMP2750 or COMP6120 AND:Admission into BSU's accelerated
@@ -113,26 +110,16 @@ def _normalizeRequisiteSpacing(text: str) -> str:
     if not text:
         return text
 
-    ## Step 1: Replace uppercase AND/OR (with optional colon/period) that act as delimiters
-    ## Replace 'AND:' followed by content  ->  ', '
-    text = re.sub(r'\s*AND\s*:\s*', ', ', text)
-    ## Replace standalone ' AND ' between requirements  ->  ', '
-    ## Only match uppercase AND surrounded by spaces (not inside a word)
-    text = re.sub(r'\s+AND\s+', ', ', text)
-    ## Replace standalone ' OR ' between requirements  ->  ', '
-    ## But only uppercase OR (preserve lowercase 'or' in phrases like "or instructor's approval")
-    text = re.sub(r'\s+OR\s+', ', ', text)
-
-    ## Step 2: Split apart words jammed at lowercase→Uppercase boundary
+    ## Step 1: Split apart words jammed at lowercase→Uppercase boundary
     ## e.g. 'permissionAdmission' -> 'permission, Admission'
     ## This catches cases where the catalog data has no delimiter at all
     text = re.sub(r'([a-z])([A-Z][a-z])', r'\1, \2', text)
 
-    ## Step 3: Insert space after period jammed against a capital letter
+    ## Step 2: Insert space after period jammed against a capital letter
     ## e.g. 'program.COMP3480' -> 'program. COMP3480'
     text = re.sub(r'\.([A-Z])', r'. \1', text)
 
-    ## Step 4: Clean up artifacts
+    ## Step 3: Clean up artifacts
     ## Collapse multiple commas into one
     text = re.sub(r',\s*,+', ',', text)
     ## Remove comma right after a period  (". ," -> ".")
