@@ -231,8 +231,40 @@ def uploadToSimpleSyllabus(p1_filePath: str):
         ## ── Retrieve the private key password (encrypted via Fernet) ──
         privateKeyPassword = _getSimpleSyllabusPrivateKeyPassword()
 
-        ## ── Load the private key with the password ──
-        privateKey = paramiko.RSAKey.from_private_key_file(privateKeyPath, password=privateKeyPassword)
+        ## ── Normalize password: treat empty string the same as no passphrase ──
+        ## paramiko distinguishes between None (no passphrase) and "" (empty passphrase),
+        ## and OpenSSH keys fail with "" when they have no passphrase.
+        normalizedPassword = privateKeyPassword if privateKeyPassword else None
+
+        ## ── Load the private key ──
+        ## Use paramiko.PKey.from_private_key_file() which auto-detects the key algorithm
+        ## and correctly handles OpenSSH format (BEGIN OPENSSH PRIVATE KEY) for all key types
+        ## (Ed25519, RSA, ECDSA, etc.). The type-specific classes (RSAKey, Ed25519Key, etc.)
+        ## cannot read OpenSSH-format keys that don't match their exact type.
+        privateKey = None
+        for pwd in (normalizedPassword, None):
+            try:
+                privateKey = paramiko.PKey.from_private_key_file(privateKeyPath, password=pwd)
+                if pwd is None and normalizedPassword is not None:
+                    localSetup.logger.info(f"{functionName}: SSH private key loaded successfully (passphrase ignored — key has no passphrase)")
+                elif pwd is None:
+                    localSetup.logger.info(f"{functionName}: SSH private key loaded successfully (no passphrase)")
+                else:
+                    localSetup.logger.info(f"{functionName}: SSH private key loaded successfully (with passphrase)")
+                break
+            except paramiko.ssh_exception.PasswordRequiredException:
+                ## Key requires a passphrase but none was supplied — no point trying None next
+                localSetup.logger.error(f"{functionName}: Key requires a passphrase but none was found in SSPrivKP.txt")
+                break
+            except (paramiko.ssh_exception.SSHException, ValueError):
+                continue
+
+        if privateKey is None:
+            raise ValueError(
+                f"{functionName}: Could not load SSH private key from {privateKeyPath}. "
+                f"Verify the key format (OpenSSH format detected) and that the passphrase "
+                f"in SSPrivKP.txt is correct."
+            )
         localSetup.logger.info(f"{functionName}: SSH private key loaded successfully")
 
         ## ── Connect to the SFTP server with retry logic ──
