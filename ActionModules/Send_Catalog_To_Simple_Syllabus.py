@@ -219,11 +219,11 @@ def uploadToSimpleSyllabus(p1_filePath: str):
             raise ValueError(f"{functionName}: SFTP host or username missing from configuration")
 
         ## ── Locate the SSH private key in the config path ──
-        privateKeyPath = os.path.join(localSetup.configPath, "Simple_Syllabus_Private_Key.pem")
+        privateKeyPath = os.path.join(localSetup.configPath, "Simple_Syllabus_Private_Key.txt")
         if not os.path.exists(privateKeyPath):
             raise FileNotFoundError(
                 f"{functionName}: SSH private key not found at {privateKeyPath}. "
-                f"Please place 'Simple_Syllabus_Private_Key.pem' in the config directory."
+                f"Please place 'Simple_Syllabus_Private_Key.txt' in the config directory."
             )
 
         localSetup.logger.info(f"{functionName}: Using SSH private key at {privateKeyPath}")
