@@ -3,12 +3,7 @@
 
 ## Import Generic Moduels
 
-from calendar import c
-from math import e
-import os, sys, threading, asyncio
-import re
-import requests
-import pandas as pd
+import os, sys, time, re, pandas as pd, paramiko
 from datetime import datetime
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
@@ -20,7 +15,7 @@ try: ## Irregular try clause, do not comment out in testing
     from Local_Setup import LocalSetup
     from Canvas_Report import CanvasReport
     from Error_Email import errorEmail
-    from TLC_Common import isPresent, downloadFile, makeApiCall
+    from TLC_Common import isPresent, downloadFile, makeApiCall, getEncryptionKey
     from Add_Outcomes_to_Active_Courses import (
         retrieveDataForRelevantCommunication,
         getUniqueOutcomesAndOutcomeCoursesDict,
@@ -32,7 +27,7 @@ except ImportError:
     from ResourceModules.Local_Setup import LocalSetup
     from ResourceModules.Canvas_Report import CanvasReport
     from ResourceModules.Error_Email import errorEmail
-    from ResourceModules.TLC_Common import isPresent, downloadFile, makeApiCall
+    from ResourceModules.TLC_Common import isPresent, downloadFile, makeApiCall, getEncryptionKey
     from ActionModules.Add_Outcomes_to_Active_Courses import (
             retrieveDataForRelevantCommunication,
             getUniqueOutcomesAndOutcomeCoursesDict,
@@ -49,6 +44,9 @@ from Common_Configs import (
     gradTermsCodesToWordsDict,
 )
 
+## Cryptography import for Fernet encryption (same pattern as Core_Microsoft_Api.py)
+from cryptography.fernet import Fernet
+
 ## Set working directory
 os.chdir(os.path.dirname(__file__))
 
@@ -63,15 +61,239 @@ This script requires the following external resources:
 1. Access to the Canvas API for retrieving course and instructor data.
 2. Access to the email system for sending outcome related emails to instructors.
 3. The ResourceModules and ActionModules directories in the Scripts TLC directory for additional functionality.
+4. Access to the Simple Syllabus SFTP server via SSH private key authentication.
+5. The SSH private key file and its password stored in the config path.
 """
 
 ## Initialize LocalSetup and helpers from ResourceModules
 localSetup = LocalSetup(datetime.now(), __file__)
 errorHandler = errorEmail(scriptName, scriptPurpose, externalRequirements, localSetup)
 
-## This function uploads the processed file to Simple Syllabus
+
+## ══════════════════════════════════════════════════════════════════════════════
+## SFTP Private Key Password Management
+## ══════════════════════════════════════════════════════════════════════════════
+
+## This function retrieves the Simple Syllabus SFTP private key password.
+## On first run it reads the plaintext password from SSPrivKP.txt, encrypts it
+## using the repository's Fernet encryption setup (same pattern as Core_Microsoft_Api.py),
+## saves the encrypted version as SSPrivKP_Encrypted.txt, and deletes the plaintext file.
+## On subsequent runs it reads and decrypts the encrypted file.
+def _getSimpleSyllabusPrivateKeyPassword() -> str:
+    """
+    Retrieve the SSH private key password for Simple Syllabus SFTP.
+
+    Flow:
+        1. If an encrypted password file (SSPrivKP_Encrypted.txt) exists,
+           read it and decrypt using the Fernet encryption key from .env.
+        2. If only the plaintext password file (SSPrivKP.txt) exists,
+           read it, encrypt it, save as SSPrivKP_Encrypted.txt, then
+           delete the plaintext file.
+        3. If neither file exists, raise an error.
+
+    Returns:
+        str: The decrypted private key password.
+
+    Raises:
+        FileNotFoundError: If neither the plaintext nor encrypted password file exists.
+    """
+
+    functionName = "_getSimpleSyllabusPrivateKeyPassword"
+
+    ## Define file paths
+    plaintextPasswordPath = os.path.join(localSetup.configPath, "SSPrivKP.txt")
+    encryptedPasswordPath = os.path.join(localSetup.configPath, "SSPrivKP_Encrypted.txt")
+
+    ## Get the Fernet encryption key (same as Core_Microsoft_Api.py)
+    encryptionKey = getEncryptionKey(localSetup)
+    fernet = Fernet(encryptionKey)
+
+    ## Case 1: Encrypted file already exists — decrypt and return
+    if os.path.exists(encryptedPasswordPath):
+        localSetup.logger.info(f"{functionName}: Reading encrypted private key password from {encryptedPasswordPath}")
+        with open(encryptedPasswordPath, "r") as encFile:
+            encryptedContent = encFile.read().strip()
+        decryptedPassword = fernet.decrypt(encryptedContent.encode()).decode()
+        return decryptedPassword
+
+    ## Case 2: Only plaintext file exists — encrypt, save, delete plaintext
+    if os.path.exists(plaintextPasswordPath):
+        localSetup.logger.info(f"{functionName}: Found plaintext password file at {plaintextPasswordPath}. Encrypting...")
+        with open(plaintextPasswordPath, "r") as ptFile:
+            plaintextPassword = ptFile.read().strip()
+
+        ## Encrypt the password
+        encryptedData = fernet.encrypt(plaintextPassword.encode())
+
+        ## Save the encrypted password
+        with open(encryptedPasswordPath, "w") as encFile:
+            encFile.write(encryptedData.decode())
+        localSetup.logger.info(f"{functionName}: Encrypted password saved to {encryptedPasswordPath}")
+
+        ## Delete the plaintext file
+        os.remove(plaintextPasswordPath)
+        localSetup.logger.info(f"{functionName}: Plaintext password file {plaintextPasswordPath} deleted for security")
+
+        return plaintextPassword
+
+    ## Case 3: Neither file exists
+    raise FileNotFoundError(
+        f"{functionName}: Neither '{plaintextPasswordPath}' nor '{encryptedPasswordPath}' found in config path. "
+        f"Please place the private key password in '{plaintextPasswordPath}' and re-run."
+    )
+
+
+## ══════════════════════════════════════════════════════════════════════════════
+## SFTP Upload Function
+## ══════════════════════════════════════════════════════════════════════════════
+
+## This function uploads the processed Course Extract CSV to Simple Syllabus via SFTP
 def uploadToSimpleSyllabus(p1_filePath: str):
-    pass
+    """
+    Uploads the Course Extract CSV file to the Simple Syllabus SFTP server.
+
+    The function:
+        1. Validates the local file exists and is a CSV.
+        2. Reads the CSV to sanitize headers per Simple Syllabus EXT-CSV requirements:
+           - Only alphanumeric, underscores, forward slashes, and dashes allowed.
+           - No special characters, parentheses, colons, leading/trailing spaces, or blank headers.
+        3. Re-saves the sanitized CSV with UTF-8 encoding (no BOM).
+        4. Retrieves the SSH private key password (encrypted via Fernet).
+        5. Connects to the Simple Syllabus SFTP server using SSH private key authentication.
+        6. Uploads the file to the configured remote /imports directory.
+        7. Closes the SFTP and SSH connections.
+
+    Args:
+        p1_filePath (str): The local file path to the Course Extract CSV to upload.
+
+    Raises:
+        FileNotFoundError: If the local file or SSH key does not exist.
+        Exception: If the SFTP connection or upload fails after all retries.
+    """
+
+    functionName = "uploadToSimpleSyllabus"
+
+    try:
+        localSetup.logger.info(f"{functionName}: Starting upload of {p1_filePath} to Simple Syllabus SFTP")
+
+        ## ── Validate the local file ──
+        if not os.path.exists(p1_filePath):
+            raise FileNotFoundError(f"{functionName}: File not found: {p1_filePath}")
+
+        ## ── Sanitize CSV headers per Simple Syllabus EXT-CSV requirements ──
+        ## Acceptable: A-Z, a-z, 0-9, underscores, forward slashes, dashes
+        ## Unacceptable: special chars (@#$%&* etc), parentheses, colons, leading/trailing spaces, blank headers
+        sanitizedDf = _readCsvWithEncoding(p1_filePath)
+
+        sanitizedHeaders = []
+        for header in sanitizedDf.columns:
+            ## Strip leading/trailing whitespace
+            cleaned = str(header).strip()
+            ## Replace unacceptable characters with underscores
+            ## Keep: alphanumeric, underscores, forward slashes, dashes, spaces (spaces between words are OK in CSV headers)
+            cleaned = re.sub(r'[^A-Za-z0-9_/\- ]', '', cleaned)
+            ## Collapse multiple spaces into one
+            cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+            ## If header is blank after cleaning, assign a placeholder
+            if not cleaned:
+                cleaned = f"Column_{len(sanitizedHeaders) + 1}"
+            sanitizedHeaders.append(cleaned)
+
+        sanitizedDf.columns = sanitizedHeaders
+
+        ## Re-save with sanitized headers and UTF-8 encoding (no BOM)
+        sanitizedDf.to_csv(p1_filePath, index=False, encoding='utf-8')
+        localSetup.logger.info(f"{functionName}: Sanitized CSV headers and re-saved to {p1_filePath}")
+
+        ## ── Retrieve SFTP configuration from catalogToSimpleSyllabusConfig ──
+        sftpConfig = catalogToSimpleSyllabusConfig.get("sftp", {})
+        if not sftpConfig:
+            raise ValueError(f"{functionName}: 'sftp' configuration missing from catalogToSimpleSyllabusConfig")
+
+        sftpHost = sftpConfig.get("host")
+        sftpPort = sftpConfig.get("port", 22)
+        sftpUsername = sftpConfig.get("username")
+        sftpRemoteDir = sftpConfig.get("remote_dir", "/imports")
+
+        if not sftpHost or not sftpUsername:
+            raise ValueError(f"{functionName}: SFTP host or username missing from configuration")
+
+        ## ── Locate the SSH private key in the config path ──
+        privateKeyPath = os.path.join(localSetup.configPath, "Simple_Syllabus_Private_Key.pem")
+        if not os.path.exists(privateKeyPath):
+            raise FileNotFoundError(
+                f"{functionName}: SSH private key not found at {privateKeyPath}. "
+                f"Please place 'Simple_Syllabus_Private_Key.pem' in the config directory."
+            )
+
+        localSetup.logger.info(f"{functionName}: Using SSH private key at {privateKeyPath}")
+
+        ## ── Retrieve the private key password (encrypted via Fernet) ──
+        privateKeyPassword = _getSimpleSyllabusPrivateKeyPassword()
+
+        ## ── Load the private key with the password ──
+        privateKey = paramiko.RSAKey.from_private_key_file(privateKeyPath, password=privateKeyPassword)
+        localSetup.logger.info(f"{functionName}: SSH private key loaded successfully")
+
+        ## ── Connect to the SFTP server with retry logic ──
+        ## Pattern follows Get_Slate_Info.py and Incoming_Student_Report.py
+        attempt = 0
+        retries = 5
+        ssh_client = paramiko.SSHClient()
+        ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+        while attempt < retries:
+            try:
+                ssh_client.connect(
+                    hostname=sftpHost,
+                    port=sftpPort,
+                    username=sftpUsername,
+                    pkey=privateKey,
+                    banner_timeout=60,
+                )
+                localSetup.logger.info(f"{functionName}: Successfully connected to SFTP server {sftpHost}:{sftpPort}")
+                break
+
+            except Exception as connError:
+                attempt += 1
+                if attempt < retries:
+                    localSetup.logger.warning(
+                        f"{functionName}: Attempt {attempt} failed: {connError}. Retrying in 1 minute..."
+                    )
+                    time.sleep(60)
+                else:
+                    localSetup.logger.error(
+                        f"{functionName}: Attempt {attempt} failed: {connError}. No more retries."
+                    )
+                    errorHandler.sendError(functionName, p1_errorInfo=connError)
+                    raise
+
+        ## ── Open SFTP session and upload the file ──
+        sftp_client = ssh_client.open_sftp()
+
+        try:
+            ## Build the remote file path
+            localFileName = os.path.basename(p1_filePath)
+            remoteFilePath = f"{sftpRemoteDir}/{localFileName}"
+
+            localSetup.logger.info(f"{functionName}: Uploading {p1_filePath} to {remoteFilePath}")
+            sftp_client.put(p1_filePath, remoteFilePath)
+            localSetup.logger.info(f"{functionName}: File uploaded successfully to {remoteFilePath}")
+
+        finally:
+            ## Close the SFTP client and SSH connection
+            sftp_client.close()
+            ssh_client.close()
+            localSetup.logger.info(f"{functionName}: SFTP and SSH connections closed")
+
+    except Exception as Error:
+        localSetup.logger.error(f"{functionName}: {Error}")
+        raise
+
+
+## ══════════════════════════════════════════════════════════════════════════════
+## CSV Helpers
+## ══════════════════════════════════════════════════════════════════════════════
 
 ## Helper function to read CSV with encoding fallback
 def _readCsvWithEncoding(filePath: str, **kwargs) -> pd.DataFrame:
@@ -397,29 +619,34 @@ def formatCombinedCatalogForSimpleSyllabus(p1_combinedCatalogDf: pd.DataFrame, p
             rawConcurrent = _safe_strip(catalogRow.get("Concurrent", ""))
             rawConcurrentRequisite = _safe_strip(catalogRow.get("Concurrent Requisite", ""))
 
-            ## ── Prereqs & Coreqs Rule 2: Remove verbatim free-text duplicates only ──
-            ## Rule 4 handles course-code-level deduplication after combining, so Rule 2
-            ## should only clear columns whose content is IDENTICAL to another column
-            ## AND contains no course codes (to avoid interfering with Rule 4).
+            ## ── Normalize spacing in all requisite fields (Rule 0) ──
+            rawPrerequisites = _normalizeRequisiteSpacing(rawPrerequisites)
+            rawPrerequisiteCourses = _normalizeRequisiteSpacing(rawPrerequisiteCourses)
+            rawPrereqOrCoreq = _normalizeRequisiteSpacing(rawPrereqOrCoreq)
+            rawRecommendedPrereqs = _normalizeRequisiteSpacing(rawRecommendedPrereqs)
+            rawCorequisites = _normalizeRequisiteSpacing(rawCorequisites)
+            rawCorequisiteCourses = _normalizeRequisiteSpacing(rawCorequisiteCourses)
+            rawConcurrent = _normalizeRequisiteSpacing(rawConcurrent)
+            rawConcurrentRequisite = _normalizeRequisiteSpacing(rawConcurrentRequisite)
 
-            allPrereqTexts = [rawPrerequisites, rawPrerequisiteCourses, rawPrereqOrCoreq, rawRecommendedPrereqs]
+            ## ── Rule 2: Remove cross-column duplicates, prioritizing prereq columns ──
+            ## If the same text appears in both a prereq-related and coreq-related column,
+            ## remove it from the coreq-related column
+            prereqTexts = {rawPrerequisites, rawPrerequisiteCourses, rawPrereqOrCoreq, rawRecommendedPrereqs}
+            prereqTexts.discard("")
 
-            for prereqText in allPrereqTexts:
-                ## Only deduplicate free-text (no course codes) — course codes are handled by Rule 4
-                if prereqText and not _extractCourseCodes(prereqText):
-                    if rawConcurrent and rawConcurrent == prereqText:
-                        rawConcurrent = ""
-                    if rawConcurrentRequisite and rawConcurrentRequisite == prereqText:
-                        rawConcurrentRequisite = ""
-
-            for coreqText in [rawCorequisites, rawCorequisiteCourses, rawConcurrent, rawConcurrentRequisite]:
-                ## Only deduplicate free-text (no course codes) — course codes are handled by Rule 4
-                if coreqText and not _extractCourseCodes(coreqText):
-                    if rawPrereqOrCoreq and rawPrereqOrCoreq == coreqText:
-                        rawPrereqOrCoreq = ""
+            if rawConcurrent and rawConcurrent in prereqTexts:
+                rawConcurrent = ""
+            if rawConcurrentRequisite and rawConcurrentRequisite in prereqTexts:
+                rawConcurrentRequisite = ""
+            if rawCorequisites and rawCorequisites in prereqTexts:
+                rawCorequisites = ""
+            if rawCorequisiteCourses and rawCorequisiteCourses in prereqTexts:
+                rawCorequisiteCourses = ""
 
             ## ── Build combined Prerequisites string (Rule 1) ──
             prereqParts = []
+
             ## Put Prerequisites & Prerequisite Courses first
             basePrereq = _combineTextFragments(rawPrerequisites, rawPrerequisiteCourses)
             if basePrereq:
@@ -436,86 +663,75 @@ def formatCombinedCatalogForSimpleSyllabus(p1_combinedCatalogDf: pd.DataFrame, p
             ## ── Build combined Corequisites string (Rule 3) ──
             combinedCoreq = _combineTextFragments(rawCorequisites, rawCorequisiteCourses, rawConcurrent, rawConcurrentRequisite)
 
-            ## ── Combine into working strings for Rule 4 ──
-            combinedPrereqStr = ". ".join(prereqParts) if prereqParts else ""
-            combinedCoreqStr = combinedCoreq
-
-            ## ── Prereqs & Coreqs Rule 4: If any course codes are duplicated between ──
-            ## ── the two combined strings, remove from both and add to "Prerequisite or Corequisite:" ──
-            prereqCodes = _extractCourseCodes(combinedPrereqStr)
-            coreqCodes = _extractCourseCodes(combinedCoreqStr)
-            sharedCodes = prereqCodes & coreqCodes
+            ## ── Rule 4: Move course codes duplicated between prereqs and coreqs into ──
+            ## the "Prerequisite or Corequisite:" section
+            prereqCodesAll = _extractCourseCodes(". ".join(prereqParts))
+            coreqCodesAll = _extractCourseCodes(combinedCoreq)
+            sharedCodes = prereqCodesAll & coreqCodesAll
 
             if sharedCodes:
-                ## Remove shared codes from both strings
-                for code in sharedCodes:
-                    combinedPrereqStr = re.sub(r',?\s*' + re.escape(code) + r'\s*,?', '', combinedPrereqStr)
-                    combinedCoreqStr = re.sub(r',?\s*' + re.escape(code) + r'\s*,?', '', combinedCoreqStr)
+                ## Remove the shared codes from wherever they currently appear
+                ## and add them to the "Prerequisite or Corequisite:" section
+                sharedCodesStr = ", ".join(sorted(sharedCodes))
 
-                ## Clean up any leftover artifacts, including orphaned AND/OR conjunctions
-                combinedPrereqStr = re.sub(r'\b(AND|OR)\s*\.', '.', combinedPrereqStr)
-                combinedPrereqStr = re.sub(r'\b(AND|OR)\s*$', '', combinedPrereqStr)
-                combinedPrereqStr = re.sub(r'\s+', ' ', combinedPrereqStr).strip().strip(',').strip()
-                combinedCoreqStr = re.sub(r'\b(AND|OR)\s*\.', '.', combinedCoreqStr)
-                combinedCoreqStr = re.sub(r'\b(AND|OR)\s*$', '', combinedCoreqStr)
-                combinedCoreqStr = re.sub(r'\s+', ' ', combinedCoreqStr).strip().strip(',').strip()
-
-                ## Add shared codes to the Prerequisite or Corequisite section.
-                ## Deduplicate against any codes already present in the existing
-                ## "Prerequisite or Corequisite:" section to prevent double-injection.
-                existingPrereqOrCoreqCodes = _extractCourseCodes(
-                    combinedPrereqStr.split("Prerequisite or Corequisite:")[-1]
-                    if "Prerequisite or Corequisite:" in combinedPrereqStr
-                    else ""
-                )
-                newSharedCodes = sorted(sharedCodes - existingPrereqOrCoreqCodes)
-
-                if newSharedCodes:
-                    sharedCodesStr = ", ".join(newSharedCodes)
-                    if "Prerequisite or Corequisite:" in combinedPrereqStr:
-                        ## Append to existing section
-                        combinedPrereqStr = combinedPrereqStr.replace(
-                            "Prerequisite or Corequisite:",
-                            f"Prerequisite or Corequisite: {sharedCodesStr},"
-                        )
-                        ## Clean up trailing/double commas
-                        combinedPrereqStr = re.sub(r',\s*\.', '.', combinedPrereqStr)
-                        combinedPrereqStr = re.sub(r',\s*$', '', combinedPrereqStr)
-                    else:
-                        if combinedPrereqStr:
-                            combinedPrereqStr += f". Prerequisite or Corequisite: {sharedCodesStr}"
+                ## Remove from prereq parts (rebuild without those codes)
+                cleanedPrereqParts = []
+                for part in prereqParts:
+                    cleanedPart = part
+                    for code in sharedCodes:
+                        cleanedPart = cleanedPart.replace(code, "")
+                    ## Clean up leftover commas/spaces
+                    cleanedPart = re.sub(r',\s*,+', ',', cleanedPart)
+                    cleanedPart = re.sub(r'\s+', ' ', cleanedPart).strip().strip(',').strip()
+                    if cleanedPart and not cleanedPart.startswith("Prerequisite or Corequisite:"):
+                        cleanedPrereqParts.append(cleanedPart)
+                    elif cleanedPart.startswith("Prerequisite or Corequisite:"):
+                        ## Append the shared codes to the existing section
+                        existingPoC = cleanedPart.replace("Prerequisite or Corequisite:", "").strip()
+                        if existingPoC:
+                            cleanedPrereqParts.append(f"Prerequisite or Corequisite: {existingPoC}, {sharedCodesStr}")
                         else:
-                            combinedPrereqStr = f"Prerequisite or Corequisite: {sharedCodesStr}"
+                            cleanedPrereqParts.append(f"Prerequisite or Corequisite: {sharedCodesStr}")
 
-            ## Apply spacing normalization to final prerequisite/corequisite strings
-            finalPrerequisites = _normalizeRequisiteSpacing(combinedPrereqStr)
-            finalCorequisites = _normalizeRequisiteSpacing(combinedCoreqStr)
+                ## If no "Prerequisite or Corequisite:" section was already present, add one
+                hasPoCSection = any(p.startswith("Prerequisite or Corequisite:") for p in cleanedPrereqParts)
+                if not hasPoCSection:
+                    cleanedPrereqParts.append(f"Prerequisite or Corequisite: {sharedCodesStr}")
 
-            ## ── Determine which term codes apply to this course ──
-            ## Extract the leading numeric portion of the course number (e.g. "6120" from "6120",
-            ## "9220" from "9220S") to decide undergraduate vs graduate.
-            ## Courses numbered 5000+ are graduate; below 5000 are undergraduate.
-            courseNumericMatch = re.match(r'(\d+)', courseNumber)
-            courseNumericValue = int(courseNumericMatch.group(1)) if courseNumericMatch else 0
+                prereqParts = cleanedPrereqParts
 
-            if courseNumericValue >= 5000:
-                ## Graduate course — assign to graduate term codes
+                ## Remove from coreq string
+                for code in sharedCodes:
+                    combinedCoreq = combinedCoreq.replace(code, "")
+                combinedCoreq = re.sub(r',\s*,+', ',', combinedCoreq)
+                combinedCoreq = re.sub(r'\s+', ' ', combinedCoreq).strip().strip(',').strip()
+
+            ## ── Final prerequisite and corequisite strings ──
+            finalPrerequisites = ". ".join(prereqParts)
+            finalPrerequisites = re.sub(r'\s+', ' ', finalPrerequisites).strip()
+            finalPrerequisites = re.sub(r'\.\s*\.', '.', finalPrerequisites)
+
+            finalCorequisites = combinedCoreq
+
+            ## ── Determine which terms this course applies to ──
+            if catalogType == "gps":
                 applicableTermCodes = gradTermCodes
-            else:
-                ## Undergraduate course — assign to undergraduate term codes
+            elif catalogType == "tug":
                 applicableTermCodes = undgTermCodes
+            else:
+                applicableTermCodes = targetTermCodes
 
-            ## ── Create one row per applicable term (if the course exists in Canvas for that term) ──
+            ## ── Expand into per-term rows, filtering by Canvas presence ──
             for termCode in applicableTermCodes:
+                termName = termCodeToNameDict.get(termCode, "")
+                if not termName:
+                    continue
+
+                ## Check if this course exists in Canvas for this term
                 courseCode = title  ## e.g. "ACCT2065"
                 termCourseInfo = canvasCourseInfoByTerm.get(termCode, {})
-
-                ## Check if this course code exists in Canvas for this term
                 if courseCode not in termCourseInfo:
-                    continue  ## Course not offered in this term; skip
-
-                ## Resolve the term name from the terms DataFrame (use as-is)
-                termName = termCodeToNameDict.get(termCode, termCode)
+                    continue
 
                 ## Resolve Parent Organization from the course's canvas_account_id
                 courseCanvasAccountId = termCourseInfo[courseCode]
@@ -534,7 +750,7 @@ def formatCombinedCatalogForSimpleSyllabus(p1_combinedCatalogDf: pd.DataFrame, p
                     "Corequisites": finalCorequisites,
                 })
 
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ═══════════════���══════════════════════════════════════════════════════
         ## STEP 6: Build the output DataFrame and save
         ## ══════════════════════════════════════════════════════════════════════
 
@@ -698,8 +914,15 @@ def processCatalogCoursesAndUploadToSimpleSyllabus():
     try:
         combinedCatalogCourseReportDf, catalogSchoolYear = retrieveCatalogCourseReportsDfs()
         courseExtractDf = formatCombinedCatalogForSimpleSyllabus(combinedCatalogCourseReportDf, catalogSchoolYear)
-        # Placeholder for uploading the processed file to Simple Syllabus
-        # This would involve using the Simple Syllabus API or another method to upload the file
+
+        ## Build the path to the saved Course Extract CSV
+        baseCatalogPath = localSetup.getInternalResourcePaths("Catalog")
+        catalogPath = os.path.join(baseCatalogPath, catalogSchoolYear)
+        courseExtractFilePath = os.path.join(catalogPath, "Course Extract.csv")
+
+        ## Upload the processed file to Simple Syllabus via SFTP
+        uploadToSimpleSyllabus(courseExtractFilePath)
+
         localSetup.logger.info(f"{functionName}: Successfully processed catalog courses and uploaded to Simple Syllabus")
     except Exception as Error:
         localSetup.logger.error(f"{functionName}: {Error}")
