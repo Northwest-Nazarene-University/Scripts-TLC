@@ -70,6 +70,62 @@ localSetup = LocalSetup(datetime.now(), __file__)
 errorHandler = errorEmail(scriptName, scriptPurpose, externalRequirements, localSetup)
 
 
+## ── FIX 1: Helper to read CSVs with proper encoding (utf-8-sig with latin-1 fallback) ──
+def _readCsvWithEncoding(filePath: str, **kwargs) -> pd.DataFrame:
+    """Read a CSV file trying utf-8-sig first, then latin-1 as fallback."""
+    try:
+        return pd.read_csv(filePath, encoding='utf-8-sig', **kwargs)
+    except (UnicodeDecodeError, UnicodeError):
+        localSetup.logger.warning(f"UTF-8 decode failed for {filePath}, falling back to latin-1")
+        return pd.read_csv(filePath, encoding='latin-1', **kwargs)
+
+
+## ── FIX 2: Helper to normalize internal spacing in prerequisite/corequisite text ──
+def _normalizeRequisiteSpacing(text: str) -> str:
+    """
+    Fix internal spacing issues in prerequisite/corequisite strings.
+    
+    Examples:
+        'COMP6120 AND:Admission into' -> 'COMP6120 AND: Admission into'
+        'programORCOMP2750' -> 'program OR COMP2750'
+        'permissionAdmission' -> 'permission Admission' (capital letter boundary)
+        'COMP3480 (or taken concurrently)' -> unchanged (already spaced)
+    """
+    if not text:
+        return text
+
+    ## Insert space before uppercase conjunctions (AND, OR) that are jammed against a preceding word
+    ## e.g. 'programORCOMP2750' -> 'program OR COMP2750'
+    ## e.g. 'approval.COMP3480' -> 'approval. COMP3480'
+    text = re.sub(r'([a-z.)])(?:AND|OR)(?=[A-Z(])', lambda m: m.group(0)[:len(m.group(1))] + ' ' + m.group(0)[len(m.group(1)):], text)
+    
+    ## More targeted: insert space before 'AND' or 'OR' when preceded by lowercase/period and followed by uppercase/digit
+    text = re.sub(r'([a-z.)0-9])(AND)([^a-z])', r'\1 \2\3', text)
+    text = re.sub(r'([a-z.)0-9])(OR)([A-Z(0-9])', r'\1 \2 \3', text)
+    
+    ## Insert space after 'AND' or 'OR' when followed directly by a word character
+    text = re.sub(r'\b(AND)([A-Za-z(])', r'\1 \2', text)
+    text = re.sub(r'\b(OR)([A-Za-z(])', r'\1 \2', text)
+    
+    ## Insert space after colon when followed directly by a non-space character
+    ## e.g. 'AND:Admission' -> 'AND: Admission'
+    text = re.sub(r':([^\s])', r': \1', text)
+    
+    ## Insert space at lowercase-to-uppercase boundaries where words are jammed together
+    ## e.g. 'permissionAdmission' -> 'permission Admission'
+    ## But don't break things like 'BSU's' or normal camelCase within course codes
+    text = re.sub(r'([a-z])([A-Z][a-z])', r'\1 \2', text)
+    
+    ## Insert space after a period followed directly by a capital letter (no space)
+    ## e.g. 'approval.COMP3480' -> 'approval. COMP3480'
+    text = re.sub(r'\.([A-Z])', r'. \1', text)
+    
+    ## Collapse any multiple spaces into single space
+    text = re.sub(r'\s+', ' ', text).strip()
+
+    return text
+
+
 ## This function formats the combined catalog course report df into the format needed for Simple Syllabus and saves as a new CSV
 def formatCombinedCatalogForSimpleSyllabus(p1_combinedCatalogDf: pd.DataFrame, p1_catalogSchoolYear: str) -> pd.DataFrame:
     """
@@ -131,16 +187,31 @@ def formatCombinedCatalogForSimpleSyllabus(p1_combinedCatalogDf: pd.DataFrame, p
             result = re.sub(r'\.\s*\.', '.', result)
             return result
 
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ═══════════════════════════════════════════════════════════════[...]
         ## STEP 1: Determine term codes for the catalog school year
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ═══════════════════════════════════════════════════════════════[...]
 
         currentSchoolYear = localSetup.getCurrentSchoolYear()
-        
-        if p1_catalogSchoolYear == currentSchoolYear:
+
+        ## Parse the start year from each school year string (e.g. "2025-2026" → 2025)
+        currentStartYear = int(currentSchoolYear.split("-")[0])
+        catalogStartYear = int(p1_catalogSchoolYear.split("-")[0])
+
+        if catalogStartYear == currentStartYear:
             targetTermCodes = localSetup.getCurrentSchoolYearTermCodes()
-        else:
+        elif catalogStartYear > currentStartYear:
             targetTermCodes = localSetup.getNextSchoolYearTermCodes()
+        else:
+            ## Catalog year is in the past — processing it could overwrite historical data.
+            ## Log, send an error notification, and halt.
+            errorMsg = (
+                f"{functionName}: Catalog school year '{p1_catalogSchoolYear}' is in the past "
+                f"(current school year is '{currentSchoolYear}'). "
+                f"Processing a past catalog year risks overwriting historical data. Halting."
+            )
+            localSetup.logger.error(errorMsg)
+            errorHandler.sendError(functionName, ValueError(errorMsg))
+            raise ValueError(errorMsg)
 
         localSetup.logger.info(f"{functionName}: Catalog school year={p1_catalogSchoolYear}, "
                                f"current school year={currentSchoolYear}, "
@@ -175,8 +246,9 @@ def formatCombinedCatalogForSimpleSyllabus(p1_combinedCatalogDf: pd.DataFrame, p
         ## ══════════════════════════════════════════════════════════════════════
 
         ## Load the Simple Syllabus Organizations CSV from the config path
+        ## FIX 1: Use _readCsvWithEncoding instead of pd.read_csv
         simpleSyllabusOrgsPath = os.path.join(localSetup.configPath, "Simple Syllabus Organizations.csv")
-        simpleSyllabusOrgsDf = pd.read_csv(simpleSyllabusOrgsPath)
+        simpleSyllabusOrgsDf = _readCsvWithEncoding(simpleSyllabusOrgsPath)
 
         ## Build a set of canvas_account_ids that are valid Simple Syllabus organizations
         ## (only rows that have a canvas_account_id)
@@ -276,6 +348,7 @@ def formatCombinedCatalogForSimpleSyllabus(p1_combinedCatalogDf: pd.DataFrame, p
 
             ## ── Get other fields ──
             name = _safe_strip(catalogRow.get("Name", "")).upper()
+            classProgram = _safe_strip(catalogRow.get("Class Program", ""))
             description = _safe_strip(catalogRow.get("Description", ""))
             credits = catalogRow.get("Credits", "")
             catalogType = _safe_strip(catalogRow.get("Catalog Type", "")).lower()
@@ -363,8 +436,9 @@ def formatCombinedCatalogForSimpleSyllabus(p1_combinedCatalogDf: pd.DataFrame, p
                     else:
                         combinedPrereqStr = f"Prerequisite or Corequisite: {sharedCodesStr}"
 
-            finalPrerequisites = combinedPrereqStr
-            finalCorequisites = combinedCoreqStr
+            ## Apply spacing normalization to final prerequisite/corequisite strings
+            finalPrerequisites = _normalizeRequisiteSpacing(combinedPrereqStr)
+            finalCorequisites = _normalizeRequisiteSpacing(combinedCoreqStr)
 
             ## ── Determine which term codes apply to this course ──
             if catalogType == "gps":
@@ -396,6 +470,7 @@ def formatCombinedCatalogForSimpleSyllabus(p1_combinedCatalogDf: pd.DataFrame, p
                     "Course Number": courseNumber,
                     "Title": name,
                     "Parent Organization": parentOrg,
+                    "Class Program": classProgram,
                     "Description": description,
                     "Credits": credits,
                     "Prerequisites": finalPrerequisites,
@@ -406,9 +481,10 @@ def formatCombinedCatalogForSimpleSyllabus(p1_combinedCatalogDf: pd.DataFrame, p
         ## STEP 6: Build the output DataFrame and save
         ## ══════════════════════════════════════════════════════════════════════
 
+        ## FIX 3: Add "Class Program" to the column list
         courseExtractDf = pd.DataFrame(extractRows, columns=[
             "Term", "Subject", "Course Number", "Title", "Parent Organization",
-            "Description", "Credits", "Prerequisites", "Corequisites"
+            "Class Program", "Description", "Credits", "Prerequisites", "Corequisites"
         ])
 
         ## Remove exact duplicate rows
@@ -420,7 +496,8 @@ def formatCombinedCatalogForSimpleSyllabus(p1_combinedCatalogDf: pd.DataFrame, p
         catalogPath = os.path.join(baseCatalogPath, p1_catalogSchoolYear)
         os.makedirs(catalogPath, exist_ok=True)
         outputFilePath = os.path.join(catalogPath, "Course Extract.csv")
-        courseExtractDf.to_csv(outputFilePath, index=False)
+        ## FIX 1: Write with explicit utf-8 encoding
+        courseExtractDf.to_csv(outputFilePath, index=False, encoding='utf-8')
 
         localSetup.logger.info(f"{functionName}: Successfully formatted {len(courseExtractDf)} rows and saved to {outputFilePath}")
 
@@ -544,7 +621,8 @@ def retrieveCatalogCourseReportsDfs():
         ## Open the downloaded files as dfs, add a column for catalog type, and combine into a single df
         combinedCatalogCourseReportDf = pd.DataFrame()
         for catalogType, filePath in catalogCourseReportsDict.items():
-            catalogCourseReportsDf = pd.read_csv(filePath)
+            ## FIX 1: Use _readCsvWithEncoding instead of pd.read_csv
+            catalogCourseReportsDf = _readCsvWithEncoding(filePath)
             catalogCourseReportsDf['Catalog Type'] = catalogType
             if combinedCatalogCourseReportDf.empty:
                 combinedCatalogCourseReportDf = catalogCourseReportsDf
@@ -552,7 +630,8 @@ def retrieveCatalogCourseReportsDfs():
                 combinedCatalogCourseReportDf = pd.concat([combinedCatalogCourseReportDf, catalogCourseReportsDf], ignore_index=True)
 
         ## Save the combined df as a new CSV in the same location as the downloaded reports, with a name like "Combined Catalog Course Report.csv"
-        combinedCatalogCourseReportDf.to_csv(os.path.join(catalogRootPath, "Combined Catalog Course Report.csv"), index=False)
+        ## FIX 1: Write with explicit utf-8 encoding
+        combinedCatalogCourseReportDf.to_csv(os.path.join(catalogRootPath, "Combined Catalog Course Report.csv"), index=False, encoding='utf-8')
                 
         return combinedCatalogCourseReportDf, catalogSchoolYear
 
