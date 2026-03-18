@@ -41,7 +41,13 @@ except ImportError:
         )
 
 ## Get catalogToSimpleSyllabusConfig from configs
-from Common_Configs import catalogToSimpleSyllabusConfig
+from Common_Configs import (
+    catalogToSimpleSyllabusConfig,
+    undgTermsWordsToCodesDict,
+    undgTermsCodesToWordsDict,
+    gradTermsWordsToCodesDict,
+    gradTermsCodesToWordsDict,
+)
 
 ## Set working directory
 os.chdir(os.path.dirname(__file__))
@@ -63,7 +69,366 @@ This script requires the following external resources:
 localSetup = LocalSetup(datetime.now(), __file__)
 errorHandler = errorEmail(scriptName, scriptPurpose, externalRequirements, localSetup)
 
+
 ## This function formats the combined catalog course report df into the format needed for Simple Syllabus and saves as a new CSV
+def formatCombinedCatalogForSimpleSyllabus(p1_combinedCatalogDf: pd.DataFrame, p1_catalogSchoolYear: str) -> pd.DataFrame:
+    """
+    Formats the combined catalog course report DataFrame into the Simple Syllabus Course Extract format.
+    
+    Steps:
+        1. Determine whether the catalog school year is current or next, and get the appropriate term codes.
+        2. Retrieve the Canvas terms DataFrame to map term codes to human-readable term names.
+        3. Load the Simple Syllabus Organizations CSV and the Canvas accounts hierarchy to build
+           a Parent Organization lookup for each course.
+        4. For each catalog course, determine which terms it belongs to (undergrad vs graduate).
+        5. Expand each course into one row per applicable term, only if the course exists in Canvas for that term.
+        6. Split 'Title' into 'Subject' (first 4 chars) and 'Course Number' (remainder).
+        7. Combine prerequisite and corequisite columns per the specified rules.
+        8. Resolve 'Parent Organization' by walking up the Canvas account hierarchy until a
+           Simple Syllabus Organization match is found.
+        9. Save the result as a new CSV.
+
+    Args:
+        p1_combinedCatalogDf (pd.DataFrame): The combined catalog DataFrame with columns:
+            Title, Name, Class Program, Description, Credits, Prerequisites, Corequisites,
+            Prerequisite Courses, Corequisite Courses, Concurrent, Concurrent Requisite,
+            Catalog Type, Recommended Prerequisites, Prerequisite or Corequisite
+        p1_catalogSchoolYear (str): The catalog school year string, e.g. "2025-2026".
+
+    Returns:
+        pd.DataFrame: The formatted DataFrame in Simple Syllabus Course Extract format.
+    """
+
+    functionName = "formatCombinedCatalogForSimpleSyllabus"
+
+    try:
+        localSetup.logger.info(f"{functionName}: Starting formatting of combined catalog for Simple Syllabus")
+
+        ## ── Helper: safe string strip that handles NaN/None ──
+        def _safe_strip(val):
+            if pd.isna(val) or val is None:
+                return ""
+            return str(val).strip()
+
+        ## ── Helper: extract all course codes from a text string ──
+        _courseCodePattern = re.compile(r'[A-Z]{3,4}\d{4}[A-Z]?')
+
+        def _extractCourseCodes(text: str) -> set:
+            if not text:
+                return set()
+            return set(_courseCodePattern.findall(text))
+
+        ## ── Helper: combine text fragments, removing duplicates and fixing spacing ──
+        def _combineTextFragments(*fragments) -> str:
+            combined = []
+            for fragment in fragments:
+                cleaned = _safe_strip(fragment)
+                if cleaned and cleaned not in combined:
+                    combined.append(cleaned)
+            result = ". ".join(combined)
+            ## Clean up spacing: collapse multiple spaces, fix ". ." patterns
+            result = re.sub(r'\s+', ' ', result).strip()
+            result = re.sub(r'\.\s*\.', '.', result)
+            return result
+
+        ## ══════════════════════════════════════════════════════════════════════
+        ## STEP 1: Determine term codes for the catalog school year
+        ## ══════════════════════════════════════════════════════════════════════
+
+        currentSchoolYear = localSetup.getCurrentSchoolYear()
+        
+        if p1_catalogSchoolYear == currentSchoolYear:
+            targetTermCodes = localSetup.getCurrentSchoolYearTermCodes()
+        else:
+            targetTermCodes = localSetup.getNextSchoolYearTermCodes()
+
+        localSetup.logger.info(f"{functionName}: Catalog school year={p1_catalogSchoolYear}, "
+                               f"current school year={currentSchoolYear}, "
+                               f"target term codes={targetTermCodes}")
+
+        ## ══════════════════════════════════════════════════════════════════════
+        ## STEP 2: Retrieve the Canvas terms DataFrame and build lookup
+        ## ══════════════════════════════════════════════════════════════════════
+
+        termsDf = CanvasReport.getTermsDf(localSetup)
+        ## The terms df has columns like 'term_id' (SIS term id) and 'name'
+        ## Build a dict: term_code -> term name  (e.g. "SU26" -> "Undergraduate SUMMER SEMESTER 2026")
+        termCodeToNameDict = {}
+        if termsDf is not None and not termsDf.empty:
+            for _, row in termsDf.iterrows():
+                termSisId = _safe_strip(row.get("term_id", ""))
+                termName = _safe_strip(row.get("name", ""))
+                if termSisId and termSisId in targetTermCodes and termName:
+                    termCodeToNameDict[termSisId] = termName
+
+        localSetup.logger.info(f"{functionName}: Term code to name mapping: {termCodeToNameDict}")
+
+        ## Separate term codes into undergraduate and graduate
+        undgTermCodes = [tc for tc in targetTermCodes 
+                         if tc[:2] in undgTermsCodesToWordsDict]
+        gradTermCodes = [tc for tc in targetTermCodes 
+                         if tc[:2] in gradTermsCodesToWordsDict]
+
+        ## ══════════════════════════════════════════════════════════════════════
+        ## STEP 3: Load Simple Syllabus Organizations and Canvas Accounts
+        ##         hierarchy to build the Parent Organization lookup
+        ## ══════════════════════════════════════════════════════════════════════
+
+        ## Load the Simple Syllabus Organizations CSV from the config path
+        simpleSyllabusOrgsPath = os.path.join(localSetup.configPath, "Simple Syllabus Organizations.csv")
+        simpleSyllabusOrgsDf = pd.read_csv(simpleSyllabusOrgsPath)
+
+        ## Build a set of canvas_account_ids that are valid Simple Syllabus organizations
+        ## (only rows that have a canvas_account_id)
+        validOrgCanvasIds = set()
+        canvasIdToOrgNameDict = {}
+        for _, orgRow in simpleSyllabusOrgsDf.iterrows():
+            orgCanvasId = orgRow.get("canvas_account_id")
+            orgName = _safe_strip(orgRow.get("name", ""))
+            if pd.notna(orgCanvasId) and orgName:
+                validOrgCanvasIds.add(int(orgCanvasId))
+                canvasIdToOrgNameDict[int(orgCanvasId)] = orgName
+
+        ## Retrieve the Canvas accounts hierarchy
+        accountsDf = CanvasReport.getAccountsDf(localSetup)
+
+        ## Build a lookup: canvas_account_id -> canvas_parent_id from the accounts report
+        accountParentDict = {}  ## canvas_account_id -> canvas_parent_id
+        accountNameDict = {}    ## canvas_account_id -> name
+        if accountsDf is not None and not accountsDf.empty:
+            for _, accRow in accountsDf.iterrows():
+                canvasAccId = accRow.get("canvas_account_id")
+                canvasParentId = accRow.get("canvas_parent_id")
+                accName = _safe_strip(accRow.get("name", ""))
+                if pd.notna(canvasAccId):
+                    canvasAccId = int(canvasAccId)
+                    accountParentDict[canvasAccId] = int(canvasParentId) if pd.notna(canvasParentId) else None
+                    accountNameDict[canvasAccId] = accName
+
+        ## Helper: Resolve a canvas_account_id to the closest matching Simple Syllabus org name
+        ## by walking up the parent chain
+        def _resolveParentOrganization(canvasAccountId) -> str:
+            """Walk up the Canvas account hierarchy to find the closest matching SS org."""
+            if pd.isna(canvasAccountId):
+                return ""
+            currentId = int(canvasAccountId)
+            visited = set()
+            while currentId and currentId not in visited:
+                visited.add(currentId)
+                if currentId in canvasIdToOrgNameDict:
+                    return canvasIdToOrgNameDict[currentId]
+                ## Walk up to parent
+                parentId = accountParentDict.get(currentId)
+                if parentId is None or parentId == 1:
+                    ## Reached root without finding a match
+                    if 1 in canvasIdToOrgNameDict:
+                        return canvasIdToOrgNameDict[1]
+                    return ""
+                currentId = parentId
+            return ""
+
+        ## ══════════════════════════════════════════════════════════════════════
+        ## STEP 4: Retrieve Canvas courses for each target term to:
+        ##         a) filter catalog courses that don't exist in Canvas
+        ##         b) resolve the Parent Organization from the course's canvas_account_id
+        ## ══════════════════════════════════════════════════════════════════════
+
+        ## Build per-term lookups: { termCode: { courseCode: canvas_account_id } }
+        canvasCourseInfoByTerm = {}  ## { termCode: { "ACCT2065": canvas_account_id, ... } }
+        for termCode in targetTermCodes:
+            try:
+                coursesDf = CanvasReport.getCoursesDf(localSetup, termCode)
+                courseInfo = {}
+                if coursesDf is not None and not coursesDf.empty:
+                    for _, crsRow in coursesDf.iterrows():
+                        courseId = crsRow.get("course_id")
+                        canvasAccId = crsRow.get("canvas_account_id")
+                        if pd.isna(courseId) or "_" not in str(courseId):
+                            continue
+                        parts = str(courseId).split("_")
+                        if len(parts) >= 2:
+                            courseCode = parts[1]
+                            ## Keep the first occurrence (or overwrite — all sections share the same account)
+                            if courseCode not in courseInfo:
+                                courseInfo[courseCode] = canvasAccId
+                canvasCourseInfoByTerm[termCode] = courseInfo
+            except Exception as termError:
+                localSetup.logger.warning(f"{functionName}: Could not retrieve courses for term {termCode}: {termError}")
+                canvasCourseInfoByTerm[termCode] = {}
+
+        ## ══════════════════════════════════════════════════════════════════════
+        ## STEP 5: Process each catalog row — build prerequisites/corequisites,
+        ##         expand into per-term rows, and filter by Canvas presence
+        ## ══════════════════════════════════════════════════════════════════════
+
+        extractRows = []
+
+        for _, catalogRow in p1_combinedCatalogDf.iterrows():
+
+            ## ── Parse Title into Subject and Course Number ──
+            title = _safe_strip(catalogRow.get("Title", ""))
+            if len(title) < 5:
+                localSetup.logger.warning(f"{functionName}: Skipping row with short/missing Title: '{title}'")
+                continue
+
+            subject = title[:4]
+            courseNumber = title[4:]
+
+            ## ── Get other fields ──
+            name = _safe_strip(catalogRow.get("Name", "")).upper()
+            description = _safe_strip(catalogRow.get("Description", ""))
+            credits = catalogRow.get("Credits", "")
+            catalogType = _safe_strip(catalogRow.get("Catalog Type", "")).lower()
+
+            ## ── PREREQUISITE / COREQUISITE PROCESSING ──
+
+            rawPrerequisites = _safe_strip(catalogRow.get("Prerequisites", ""))
+            rawPrerequisiteCourses = _safe_strip(catalogRow.get("Prerequisite Courses", ""))
+            rawPrereqOrCoreq = _safe_strip(catalogRow.get("Prerequisite or Corequisite", ""))
+            rawRecommendedPrereqs = _safe_strip(catalogRow.get("Recommended Prerequisites", ""))
+            rawCorequisites = _safe_strip(catalogRow.get("Corequisites", ""))
+            rawCorequisiteCourses = _safe_strip(catalogRow.get("Corequisite Courses", ""))
+            rawConcurrent = _safe_strip(catalogRow.get("Concurrent", ""))
+            rawConcurrentRequisite = _safe_strip(catalogRow.get("Concurrent Requisite", ""))
+
+            ## ── Prereqs & Coreqs Rule 2: Remove duplicates between prereq and coreq columns ──
+            ## If Concurrent content is duplicated in a prereq column, clear Concurrent
+            allPrereqTexts = [rawPrerequisites, rawPrerequisiteCourses, rawPrereqOrCoreq, rawRecommendedPrereqs]
+
+            for prereqText in allPrereqTexts:
+                if prereqText:
+                    if rawConcurrent and rawConcurrent == prereqText:
+                        rawConcurrent = ""
+                    if rawConcurrentRequisite and rawConcurrentRequisite == prereqText:
+                        rawConcurrentRequisite = ""
+
+            ## Also check: if coreq text appears in prereq columns, clear from coreq side
+            for coreqText in [rawCorequisites, rawCorequisiteCourses, rawConcurrent, rawConcurrentRequisite]:
+                if coreqText:
+                    if rawPrereqOrCoreq and rawPrereqOrCoreq == coreqText:
+                        rawPrereqOrCoreq = ""
+
+            ## ── Build combined Prerequisites string (Rule 1) ──
+            prereqParts = []
+            ## Put Prerequisites & Prerequisite Courses first
+            basePrereq = _combineTextFragments(rawPrerequisites, rawPrerequisiteCourses)
+            if basePrereq:
+                prereqParts.append(basePrereq)
+
+            ## "Prerequisite or Corequisite:" section
+            if rawPrereqOrCoreq:
+                prereqParts.append(f"Prerequisite or Corequisite: {rawPrereqOrCoreq}")
+
+            ## "Recommended Prerequisites:" section
+            if rawRecommendedPrereqs:
+                prereqParts.append(f"Recommended Prerequisites: {rawRecommendedPrereqs}")
+
+            ## ── Build combined Corequisites string (Rule 3) ──
+            combinedCoreq = _combineTextFragments(rawCorequisites, rawCorequisiteCourses, rawConcurrent, rawConcurrentRequisite)
+
+            ## ── Combine into working strings for Rule 4 ──
+            combinedPrereqStr = ". ".join(prereqParts) if prereqParts else ""
+            combinedCoreqStr = combinedCoreq
+
+            ## ── Prereqs & Coreqs Rule 4: If any course codes are duplicated between ──
+            ## ── the two combined strings, remove from both and add to "Prerequisite or Corequisite:" ──
+            prereqCodes = _extractCourseCodes(combinedPrereqStr)
+            coreqCodes = _extractCourseCodes(combinedCoreqStr)
+            sharedCodes = prereqCodes & coreqCodes
+
+            if sharedCodes:
+                ## Remove shared codes from both strings
+                for code in sharedCodes:
+                    combinedPrereqStr = re.sub(r',?\s*' + re.escape(code) + r'\s*,?', '', combinedPrereqStr)
+                    combinedCoreqStr = re.sub(r',?\s*' + re.escape(code) + r'\s*,?', '', combinedCoreqStr)
+
+                ## Clean up any leftover artifacts
+                combinedPrereqStr = re.sub(r'\s+', ' ', combinedPrereqStr).strip().strip(',').strip()
+                combinedCoreqStr = re.sub(r'\s+', ' ', combinedCoreqStr).strip().strip(',').strip()
+
+                ## Add shared codes to the Prerequisite or Corequisite section
+                sharedCodesStr = ", ".join(sorted(sharedCodes))
+                if "Prerequisite or Corequisite:" in combinedPrereqStr:
+                    ## Append to existing section
+                    combinedPrereqStr = combinedPrereqStr.replace(
+                        "Prerequisite or Corequisite:",
+                        f"Prerequisite or Corequisite: {sharedCodesStr},"
+                    )
+                    ## Clean up trailing/double commas
+                    combinedPrereqStr = re.sub(r',\s*\.', '.', combinedPrereqStr)
+                    combinedPrereqStr = re.sub(r',\s*$', '', combinedPrereqStr)
+                else:
+                    if combinedPrereqStr:
+                        combinedPrereqStr += f". Prerequisite or Corequisite: {sharedCodesStr}"
+                    else:
+                        combinedPrereqStr = f"Prerequisite or Corequisite: {sharedCodesStr}"
+
+            finalPrerequisites = combinedPrereqStr
+            finalCorequisites = combinedCoreqStr
+
+            ## ── Determine which term codes apply to this course ──
+            if catalogType == "gps":
+                ## GPS = graduate — assign to graduate term codes
+                applicableTermCodes = gradTermCodes
+            else:
+                ## TUG = undergraduate — assign to undergraduate term codes
+                applicableTermCodes = undgTermCodes
+
+            ## ── Create one row per applicable term (if the course exists in Canvas for that term) ──
+            for termCode in applicableTermCodes:
+                courseCode = title  ## e.g. "ACCT2065"
+                termCourseInfo = canvasCourseInfoByTerm.get(termCode, {})
+
+                ## Check if this course code exists in Canvas for this term
+                if courseCode not in termCourseInfo:
+                    continue  ## Course not offered in this term; skip
+
+                ## Resolve the term name from the terms DataFrame (use as-is)
+                termName = termCodeToNameDict.get(termCode, termCode)
+
+                ## Resolve Parent Organization from the course's canvas_account_id
+                courseCanvasAccountId = termCourseInfo[courseCode]
+                parentOrg = _resolveParentOrganization(courseCanvasAccountId)
+
+                extractRows.append({
+                    "Term": termName,
+                    "Subject": subject,
+                    "Course Number": courseNumber,
+                    "Title": name,
+                    "Parent Organization": parentOrg,
+                    "Description": description,
+                    "Credits": credits,
+                    "Prerequisites": finalPrerequisites,
+                    "Corequisites": finalCorequisites,
+                })
+
+        ## ══════════════════════════════════════════════════════════════════════
+        ## STEP 6: Build the output DataFrame and save
+        ## ══════════════════════════════════════════════════════════════════════
+
+        courseExtractDf = pd.DataFrame(extractRows, columns=[
+            "Term", "Subject", "Course Number", "Title", "Parent Organization",
+            "Description", "Credits", "Prerequisites", "Corequisites"
+        ])
+
+        ## Remove exact duplicate rows
+        courseExtractDf.drop_duplicates(inplace=True)
+        courseExtractDf.reset_index(drop=True, inplace=True)
+
+        ## Save the Course Extract CSV
+        baseCatalogPath = localSetup.getInternalResourcePaths("Catalog")
+        catalogPath = os.path.join(baseCatalogPath, p1_catalogSchoolYear)
+        os.makedirs(catalogPath, exist_ok=True)
+        outputFilePath = os.path.join(catalogPath, "Course Extract.csv")
+        courseExtractDf.to_csv(outputFilePath, index=False)
+
+        localSetup.logger.info(f"{functionName}: Successfully formatted {len(courseExtractDf)} rows and saved to {outputFilePath}")
+
+        return courseExtractDf
+
+    except Exception as Error:
+        localSetup.logger.error(f"{functionName}: {Error}")
+        raise
 
 
 ## This function determines the school year for the catalog based on the provided catalog links, 
@@ -200,8 +565,7 @@ def processCatalogCoursesAndUploadToSimpleSyllabus():
     functionName = "processCatalogCoursesAndUploadToSimpleSyllabus"
     try:
         combinedCatalogCourseReportDf, catalogSchoolYear = retrieveCatalogCourseReportsDfs()
-        # Placeholder for formatting the combined catalog course report df into the format needed for Simple Syllabus and saving as a new CSV
-        # This would involve reading the CSVs, transforming the data, and saving a new CSV
+        courseExtractDf = formatCombinedCatalogForSimpleSyllabus(combinedCatalogCourseReportDf, catalogSchoolYear)
         # Placeholder for uploading the processed file to Simple Syllabus
         # This would involve using the Simple Syllabus API or another method to upload the file
         localSetup.logger.info(f"{functionName}: Successfully processed catalog courses and uploaded to Simple Syllabus")
