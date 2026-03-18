@@ -70,7 +70,6 @@ localSetup = LocalSetup(datetime.now(), __file__)
 errorHandler = errorEmail(scriptName, scriptPurpose, externalRequirements, localSetup)
 
 
-## ── FIX 1: Helper to read CSVs with proper encoding (utf-8-sig with latin-1 fallback) ──
 def _readCsvWithEncoding(filePath: str, **kwargs) -> pd.DataFrame:
     """Read a CSV file trying utf-8-sig first, then latin-1 as fallback."""
     try:
@@ -80,48 +79,70 @@ def _readCsvWithEncoding(filePath: str, **kwargs) -> pd.DataFrame:
         return pd.read_csv(filePath, encoding='latin-1', **kwargs)
 
 
-## ── FIX 2: Helper to normalize internal spacing in prerequisite/corequisite text ──
 def _normalizeRequisiteSpacing(text: str) -> str:
     """
-    Fix internal spacing issues in prerequisite/corequisite strings.
-    
+    Fix spacing issues and replace uppercase AND / OR delimiters with commas
+    in prerequisite/corequisite strings from the catalog.
+
+    The catalog data often jams separate requirements together with uppercase AND/OR
+    instead of proper punctuation. This function:
+      1. Replaces standalone uppercase 'AND' / 'OR' (used as list delimiters between
+         distinct requirements) with commas.
+         (e.g. 'COMP6120 AND:Admission into...' -> 'COMP6120, Admission into...')
+      2. Splits apart words jammed together at lowercase→uppercase boundaries
+         (e.g. 'permissionAdmission' -> 'permission, Admission')
+      3. Inserts a space after periods jammed against a capital letter
+         (e.g. 'program.COMP3480' -> 'program. COMP3480')
+      4. Does NOT touch lowercase 'or'/'and' inside phrases like 'or instructor's approval'
+
     Examples:
-        'COMP6120 AND:Admission into' -> 'COMP6120 AND: Admission into'
-        'programORCOMP2750' -> 'program OR COMP2750'
-        'permissionAdmission' -> 'permission Admission' (capital letter boundary)
-        'COMP3480 (or taken concurrently)' -> unchanged (already spaced)
+        'Completion of COMP2750 or COMP6120 AND:Admission into BSU's accelerated
+         Master of Science degree program OR Instructor permission.'
+        ->
+        'Completion of COMP2750 or COMP6120, Admission into BSU's accelerated
+         Master of Science degree program, Instructor permission.'
+
+        'Instructor permissionAdmission into BSU's accelerated Master of Science
+         degree program.COMP3480 (or taken concurrently)'
+        ->
+        'Instructor permission, Admission into BSU's accelerated Master of Science
+         degree program. COMP3480 (or taken concurrently)'
+
+        'ARDE2430, ARDE2760, or instructor's approval.' -> unchanged
     """
     if not text:
         return text
 
-    ## Insert space before uppercase conjunctions (AND, OR) that are jammed against a preceding word
-    ## e.g. 'programORCOMP2750' -> 'program OR COMP2750'
-    ## e.g. 'approval.COMP3480' -> 'approval. COMP3480'
-    text = re.sub(r'([a-z.)])(?:AND|OR)(?=[A-Z(])', lambda m: m.group(0)[:len(m.group(1))] + ' ' + m.group(0)[len(m.group(1)):], text)
-    
-    ## More targeted: insert space before 'AND' or 'OR' when preceded by lowercase/period and followed by uppercase/digit
-    text = re.sub(r'([a-z.)0-9])(AND)([^a-z])', r'\1 \2\3', text)
-    text = re.sub(r'([a-z.)0-9])(OR)([A-Z(0-9])', r'\1 \2 \3', text)
-    
-    ## Insert space after 'AND' or 'OR' when followed directly by a word character
-    text = re.sub(r'\b(AND)([A-Za-z(])', r'\1 \2', text)
-    text = re.sub(r'\b(OR)([A-Za-z(])', r'\1 \2', text)
-    
-    ## Insert space after colon when followed directly by a non-space character
-    ## e.g. 'AND:Admission' -> 'AND: Admission'
-    text = re.sub(r':([^\s])', r': \1', text)
-    
-    ## Insert space at lowercase-to-uppercase boundaries where words are jammed together
-    ## e.g. 'permissionAdmission' -> 'permission Admission'
-    ## But don't break things like 'BSU's' or normal camelCase within course codes
-    text = re.sub(r'([a-z])([A-Z][a-z])', r'\1 \2', text)
-    
-    ## Insert space after a period followed directly by a capital letter (no space)
-    ## e.g. 'approval.COMP3480' -> 'approval. COMP3480'
+    ## Step 1: Replace uppercase AND/OR (with optional colon/period) that act as delimiters
+    ## Replace 'AND:' followed by content  ->  ', '
+    text = re.sub(r'\s*AND\s*:\s*', ', ', text)
+    ## Replace standalone ' AND ' between requirements  ->  ', '
+    ## Only match uppercase AND surrounded by spaces (not inside a word)
+    text = re.sub(r'\s+AND\s+', ', ', text)
+    ## Replace standalone ' OR ' between requirements  ->  ', '
+    ## But only uppercase OR (preserve lowercase 'or' in phrases like "or instructor's approval")
+    text = re.sub(r'\s+OR\s+', ', ', text)
+
+    ## Step 2: Split apart words jammed at lowercase→Uppercase boundary
+    ## e.g. 'permissionAdmission' -> 'permission, Admission'
+    ## This catches cases where the catalog data has no delimiter at all
+    text = re.sub(r'([a-z])([A-Z][a-z])', r'\1, \2', text)
+
+    ## Step 3: Insert space after period jammed against a capital letter
+    ## e.g. 'program.COMP3480' -> 'program. COMP3480'
     text = re.sub(r'\.([A-Z])', r'. \1', text)
-    
-    ## Collapse any multiple spaces into single space
+
+    ## Step 4: Clean up artifacts
+    ## Collapse multiple commas into one
+    text = re.sub(r',\s*,+', ',', text)
+    ## Remove comma right after a period  (". ," -> ".")
+    text = re.sub(r'\.\s*,', '.', text)
+    ## Remove comma right before a period  (", ." -> ".")
+    text = re.sub(r',\s*\.', '.', text)
+    ## Collapse multiple spaces
     text = re.sub(r'\s+', ' ', text).strip()
+    ## Clean leading/trailing commas
+    text = text.strip(',').strip()
 
     return text
 
@@ -187,9 +208,9 @@ def formatCombinedCatalogForSimpleSyllabus(p1_combinedCatalogDf: pd.DataFrame, p
             result = re.sub(r'\.\s*\.', '.', result)
             return result
 
-        ## ═══════════════════════════════════════════════════════════════[...]
+        ## ══════════════════════════════════════════════════════════════════════
         ## STEP 1: Determine term codes for the catalog school year
-        ## ═══════════════════════════════════════════════════════════════[...]
+        ## ══════════════════════════════════════════════════════════════════════
 
         currentSchoolYear = localSetup.getCurrentSchoolYear()
 
@@ -246,7 +267,6 @@ def formatCombinedCatalogForSimpleSyllabus(p1_combinedCatalogDf: pd.DataFrame, p
         ## ══════════════════════════════════════════════════════════════════════
 
         ## Load the Simple Syllabus Organizations CSV from the config path
-        ## FIX 1: Use _readCsvWithEncoding instead of pd.read_csv
         simpleSyllabusOrgsPath = os.path.join(localSetup.configPath, "Simple Syllabus Organizations.csv")
         simpleSyllabusOrgsDf = _readCsvWithEncoding(simpleSyllabusOrgsPath)
 
@@ -364,20 +384,24 @@ def formatCombinedCatalogForSimpleSyllabus(p1_combinedCatalogDf: pd.DataFrame, p
             rawConcurrent = _safe_strip(catalogRow.get("Concurrent", ""))
             rawConcurrentRequisite = _safe_strip(catalogRow.get("Concurrent Requisite", ""))
 
-            ## ── Prereqs & Coreqs Rule 2: Remove duplicates between prereq and coreq columns ──
-            ## If Concurrent content is duplicated in a prereq column, clear Concurrent
+            ## ── Prereqs & Coreqs Rule 2: Remove verbatim free-text duplicates only ──
+            ## Rule 4 handles course-code-level deduplication after combining, so Rule 2
+            ## should only clear columns whose content is IDENTICAL to another column
+            ## AND contains no course codes (to avoid interfering with Rule 4).
+
             allPrereqTexts = [rawPrerequisites, rawPrerequisiteCourses, rawPrereqOrCoreq, rawRecommendedPrereqs]
 
             for prereqText in allPrereqTexts:
-                if prereqText:
+                ## Only deduplicate free-text (no course codes) — course codes are handled by Rule 4
+                if prereqText and not _extractCourseCodes(prereqText):
                     if rawConcurrent and rawConcurrent == prereqText:
                         rawConcurrent = ""
                     if rawConcurrentRequisite and rawConcurrentRequisite == prereqText:
                         rawConcurrentRequisite = ""
 
-            ## Also check: if coreq text appears in prereq columns, clear from coreq side
             for coreqText in [rawCorequisites, rawCorequisiteCourses, rawConcurrent, rawConcurrentRequisite]:
-                if coreqText:
+                ## Only deduplicate free-text (no course codes) — course codes are handled by Rule 4
+                if coreqText and not _extractCourseCodes(coreqText):
                     if rawPrereqOrCoreq and rawPrereqOrCoreq == coreqText:
                         rawPrereqOrCoreq = ""
 
@@ -415,26 +439,40 @@ def formatCombinedCatalogForSimpleSyllabus(p1_combinedCatalogDf: pd.DataFrame, p
                     combinedPrereqStr = re.sub(r',?\s*' + re.escape(code) + r'\s*,?', '', combinedPrereqStr)
                     combinedCoreqStr = re.sub(r',?\s*' + re.escape(code) + r'\s*,?', '', combinedCoreqStr)
 
-                ## Clean up any leftover artifacts
+                ## Clean up any leftover artifacts, including orphaned AND/OR conjunctions
+                combinedPrereqStr = re.sub(r'\b(AND|OR)\s*\.', '.', combinedPrereqStr)
+                combinedPrereqStr = re.sub(r'\b(AND|OR)\s*$', '', combinedPrereqStr)
                 combinedPrereqStr = re.sub(r'\s+', ' ', combinedPrereqStr).strip().strip(',').strip()
+                combinedCoreqStr = re.sub(r'\b(AND|OR)\s*\.', '.', combinedCoreqStr)
+                combinedCoreqStr = re.sub(r'\b(AND|OR)\s*$', '', combinedCoreqStr)
                 combinedCoreqStr = re.sub(r'\s+', ' ', combinedCoreqStr).strip().strip(',').strip()
 
-                ## Add shared codes to the Prerequisite or Corequisite section
-                sharedCodesStr = ", ".join(sorted(sharedCodes))
-                if "Prerequisite or Corequisite:" in combinedPrereqStr:
-                    ## Append to existing section
-                    combinedPrereqStr = combinedPrereqStr.replace(
-                        "Prerequisite or Corequisite:",
-                        f"Prerequisite or Corequisite: {sharedCodesStr},"
-                    )
-                    ## Clean up trailing/double commas
-                    combinedPrereqStr = re.sub(r',\s*\.', '.', combinedPrereqStr)
-                    combinedPrereqStr = re.sub(r',\s*$', '', combinedPrereqStr)
-                else:
-                    if combinedPrereqStr:
-                        combinedPrereqStr += f". Prerequisite or Corequisite: {sharedCodesStr}"
+                ## Add shared codes to the Prerequisite or Corequisite section.
+                ## Deduplicate against any codes already present in the existing
+                ## "Prerequisite or Corequisite:" section to prevent double-injection.
+                existingPrereqOrCoreqCodes = _extractCourseCodes(
+                    combinedPrereqStr.split("Prerequisite or Corequisite:")[-1]
+                    if "Prerequisite or Corequisite:" in combinedPrereqStr
+                    else ""
+                )
+                newSharedCodes = sorted(sharedCodes - existingPrereqOrCoreqCodes)
+
+                if newSharedCodes:
+                    sharedCodesStr = ", ".join(newSharedCodes)
+                    if "Prerequisite or Corequisite:" in combinedPrereqStr:
+                        ## Append to existing section
+                        combinedPrereqStr = combinedPrereqStr.replace(
+                            "Prerequisite or Corequisite:",
+                            f"Prerequisite or Corequisite: {sharedCodesStr},"
+                        )
+                        ## Clean up trailing/double commas
+                        combinedPrereqStr = re.sub(r',\s*\.', '.', combinedPrereqStr)
+                        combinedPrereqStr = re.sub(r',\s*$', '', combinedPrereqStr)
                     else:
-                        combinedPrereqStr = f"Prerequisite or Corequisite: {sharedCodesStr}"
+                        if combinedPrereqStr:
+                            combinedPrereqStr += f". Prerequisite or Corequisite: {sharedCodesStr}"
+                        else:
+                            combinedPrereqStr = f"Prerequisite or Corequisite: {sharedCodesStr}"
 
             ## Apply spacing normalization to final prerequisite/corequisite strings
             finalPrerequisites = _normalizeRequisiteSpacing(combinedPrereqStr)
@@ -481,7 +519,6 @@ def formatCombinedCatalogForSimpleSyllabus(p1_combinedCatalogDf: pd.DataFrame, p
         ## STEP 6: Build the output DataFrame and save
         ## ══════════════════════════════════════════════════════════════════════
 
-        ## FIX 3: Add "Class Program" to the column list
         courseExtractDf = pd.DataFrame(extractRows, columns=[
             "Term", "Subject", "Course Number", "Title", "Parent Organization",
             "Class Program", "Description", "Credits", "Prerequisites", "Corequisites"
@@ -496,7 +533,6 @@ def formatCombinedCatalogForSimpleSyllabus(p1_combinedCatalogDf: pd.DataFrame, p
         catalogPath = os.path.join(baseCatalogPath, p1_catalogSchoolYear)
         os.makedirs(catalogPath, exist_ok=True)
         outputFilePath = os.path.join(catalogPath, "Course Extract.csv")
-        ## FIX 1: Write with explicit utf-8 encoding
         courseExtractDf.to_csv(outputFilePath, index=False, encoding='utf-8')
 
         localSetup.logger.info(f"{functionName}: Successfully formatted {len(courseExtractDf)} rows and saved to {outputFilePath}")
@@ -621,7 +657,6 @@ def retrieveCatalogCourseReportsDfs():
         ## Open the downloaded files as dfs, add a column for catalog type, and combine into a single df
         combinedCatalogCourseReportDf = pd.DataFrame()
         for catalogType, filePath in catalogCourseReportsDict.items():
-            ## FIX 1: Use _readCsvWithEncoding instead of pd.read_csv
             catalogCourseReportsDf = _readCsvWithEncoding(filePath)
             catalogCourseReportsDf['Catalog Type'] = catalogType
             if combinedCatalogCourseReportDf.empty:
@@ -630,7 +665,6 @@ def retrieveCatalogCourseReportsDfs():
                 combinedCatalogCourseReportDf = pd.concat([combinedCatalogCourseReportDf, catalogCourseReportsDf], ignore_index=True)
 
         ## Save the combined df as a new CSV in the same location as the downloaded reports, with a name like "Combined Catalog Course Report.csv"
-        ## FIX 1: Write with explicit utf-8 encoding
         combinedCatalogCourseReportDf.to_csv(os.path.join(catalogRootPath, "Combined Catalog Course Report.csv"), index=False, encoding='utf-8')
                 
         return combinedCatalogCourseReportDf, catalogSchoolYear
