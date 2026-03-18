@@ -128,19 +128,19 @@ def buildCatalogSchoolYearRelatedLocalPath(p1_catalogLinksDict: dict) -> str:
             )
 
             # Parse home page HTML with BeautifulSoup
-            schoolYear = _tryParseCatalogSchoolYearFromCatalogHomeHtml(homeResponse.text)
-            if schoolYear:
+            catalogSchoolYear = _tryParseCatalogSchoolYearFromCatalogHomeHtml(homeResponse.text)
+            if catalogSchoolYear:
                 break
 
-        if not schoolYear:
+        if not catalogSchoolYear:
             nowYear = datetime.now().year
-            schoolYear = f"{nowYear}-{nowYear+1}"
-            localSetup.logger.warning(f"{functionName}: Could not determine catalog school year; defaulting to {schoolYear}")
+            catalogSchoolYear = f"{nowYear}-{nowYear+1}"
+            localSetup.logger.warning(f"{functionName}: Could not determine catalog school year; defaulting to {catalogSchoolYear}")
 
         baseCatalogPath = localSetup.getInternalResourcePaths("Catalog")
-        catalogPath = os.path.join(baseCatalogPath, schoolYear)
+        catalogPath = os.path.join(baseCatalogPath, catalogSchoolYear)
         os.makedirs(catalogPath, exist_ok=True)
-        return catalogPath
+        return catalogPath, catalogSchoolYear
 
     except Exception as Error:
         localSetup.logger.error(f"{functionName}: {Error}")
@@ -156,7 +156,7 @@ def retrieveCatalogCourseReportsDfs():
         if not catalogLinks or not isinstance(catalogLinks, dict):
             raise ValueError("catalogToSimpleSyllabusConfig['catalogProduction'] missing or invalid")
 
-        catalogRootPath = buildCatalogSchoolYearRelatedLocalPath(catalogLinks)
+        catalogRootPath, catalogSchoolYear = buildCatalogSchoolYearRelatedLocalPath(catalogLinks)
 
         catalogCourseReportsDict = {}
         for catalogType, downloadUrl in catalogLinks.items():
@@ -182,11 +182,14 @@ def retrieveCatalogCourseReportsDfs():
             catalogCourseReportsDf = pd.read_csv(filePath)
             catalogCourseReportsDf['Catalog Type'] = catalogType
             if combinedCatalogCourseReportDf.empty:
-                combinedCatalogCourseReportDf = catalogCourseReportsDict
+                combinedCatalogCourseReportDf = catalogCourseReportsDf
             else:
-                combinedCatalogCourseReportDf = pd.concat(combinedCatalogCourseReportDf, catalogCourseReportsDf, ignore_index=True)
+                combinedCatalogCourseReportDf = pd.concat([combinedCatalogCourseReportDf, catalogCourseReportsDf], ignore_index=True)
 
-        return combinedCatalogCourseReportDf
+        ## Save the combined df as a new CSV in the same location as the downloaded reports, with a name like "Combined Catalog Course Report.csv"
+        combinedCatalogCourseReportDf.to_csv(os.path.join(catalogRootPath, "Combined Catalog Course Report.csv"), index=False)
+                
+        return combinedCatalogCourseReportDf, catalogSchoolYear
 
     except Exception as Error:
         localSetup.logger.error(f"{functionName}: {Error}")
@@ -196,7 +199,7 @@ def retrieveCatalogCourseReportsDfs():
 def processCatalogCoursesAndUploadToSimpleSyllabus():
     functionName = "processCatalogCoursesAndUploadToSimpleSyllabus"
     try:
-        combinedCatalogCourseReportDf = retrieveCatalogCourseReportsDfs()
+        combinedCatalogCourseReportDf, catalogSchoolYear = retrieveCatalogCourseReportsDfs()
         # Placeholder for formatting the combined catalog course report df into the format needed for Simple Syllabus and saving as a new CSV
         # This would involve reading the CSVs, transforming the data, and saving a new CSV
         # Placeholder for uploading the processed file to Simple Syllabus
