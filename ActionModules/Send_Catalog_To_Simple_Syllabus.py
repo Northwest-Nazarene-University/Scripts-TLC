@@ -79,68 +79,48 @@ errorHandler = errorEmail(scriptName, scriptPurpose, externalRequirements, local
 ## using the repository's Fernet encryption setup (same pattern as Core_Microsoft_Api.py),
 ## saves the encrypted version as SSPrivKP_Encrypted.txt, and deletes the plaintext file.
 ## On subsequent runs it reads and decrypts the encrypted file.
-def _getSimpleSyllabusPrivateKeyPassword() -> str:
+def _getSimpleSyllabusPrivateKeyPassword():
     """
     Retrieve the SSH private key password for Simple Syllabus SFTP.
-
-    Flow:
-        1. If an encrypted password file (SSPrivKP_Encrypted.txt) exists,
-           read it and decrypt using the Fernet encryption key from .env.
-        2. If only the plaintext password file (SSPrivKP.txt) exists,
-           read it, encrypt it, save as SSPrivKP_Encrypted.txt, then
-           delete the plaintext file.
-        3. If neither file exists, raise an error.
-
-    Returns:
-        str: The decrypted private key password.
-
-    Raises:
-        FileNotFoundError: If neither the plaintext nor encrypted password file exists.
+    Returns None if the key has no passphrase (neither password file exists).
     """
-
     functionName = "_getSimpleSyllabusPrivateKeyPassword"
 
-    ## Define file paths
     plaintextPasswordPath = os.path.join(localSetup.configPath, "SSPrivKP.txt")
     encryptedPasswordPath = os.path.join(localSetup.configPath, "SSPrivKP_Encrypted.txt")
 
-    ## Get the Fernet encryption key (same as Core_Microsoft_Api.py)
-    encryptionKey = getEncryptionKey(localSetup)
-    fernet = Fernet(encryptionKey)
-
-    ## Case 1: Encrypted file already exists — decrypt and return
+    ## Case 1: Encrypted file exists — decrypt and return
     if os.path.exists(encryptedPasswordPath):
+        encryptionKey = getEncryptionKey(localSetup)
+        fernet = Fernet(encryptionKey)
         localSetup.logger.info(f"{functionName}: Reading encrypted private key password from {encryptedPasswordPath}")
         with open(encryptedPasswordPath, "r") as encFile:
             encryptedContent = encFile.read().strip()
         decryptedPassword = fernet.decrypt(encryptedContent.encode()).decode()
-        return decryptedPassword
+        return decryptedPassword if decryptedPassword else None
 
-    ## Case 2: Only plaintext file exists — encrypt, save, delete plaintext
+    ## Case 2: Plaintext file exists — encrypt, save, delete plaintext, return password
     if os.path.exists(plaintextPasswordPath):
-        localSetup.logger.info(f"{functionName}: Found plaintext password file at {plaintextPasswordPath}. Encrypting...")
+        encryptionKey = getEncryptionKey(localSetup)
+        fernet = Fernet(encryptionKey)
+        localSetup.logger.info(f"{functionName}: Found plaintext password at {plaintextPasswordPath}. Encrypting...")
         with open(plaintextPasswordPath, "r") as ptFile:
             plaintextPassword = ptFile.read().strip()
-
-        ## Encrypt the password
+        if not plaintextPassword:
+            ## Empty file means no passphrase — delete and treat as no password
+            os.remove(plaintextPasswordPath)
+            localSetup.logger.info(f"{functionName}: Plaintext password file was empty; treating as no passphrase")
+            return None
         encryptedData = fernet.encrypt(plaintextPassword.encode())
-
-        ## Save the encrypted password
         with open(encryptedPasswordPath, "w") as encFile:
             encFile.write(encryptedData.decode())
-        localSetup.logger.info(f"{functionName}: Encrypted password saved to {encryptedPasswordPath}")
-
-        ## Delete the plaintext file
         os.remove(plaintextPasswordPath)
-        localSetup.logger.info(f"{functionName}: Plaintext password file {plaintextPasswordPath} deleted for security")
-
+        localSetup.logger.info(f"{functionName}: Encrypted and deleted plaintext password file")
         return plaintextPassword
 
-    ## Case 3: Neither file exists
-    raise FileNotFoundError(
-        f"{functionName}: Neither '{plaintextPasswordPath}' nor '{encryptedPasswordPath}' found in config path. "
-        f"Please place the private key password in '{plaintextPasswordPath}' and re-run."
-    )
+    ## Case 3: Neither file exists — key has no passphrase
+    localSetup.logger.info(f"{functionName}: No password file found; assuming key has no passphrase")
+    return None
 
 
 ## ══════════════════════════════════════════════════════════════════════════════
@@ -219,51 +199,45 @@ def uploadToSimpleSyllabus(p1_filePath: str):
             raise ValueError(f"{functionName}: SFTP host or username missing from configuration")
 
         ## ── Locate the SSH private key in the config path ──
-        privateKeyPath = os.path.join(localSetup.configPath, "Simple_Syllabus_Private_Key.txt")
+        ## Key file is SimpSylSSH.txt (no passphrase)
+        privateKeyPath = os.path.join(localSetup.configPath, "SimpSylSSH.txt")
         if not os.path.exists(privateKeyPath):
             raise FileNotFoundError(
                 f"{functionName}: SSH private key not found at {privateKeyPath}. "
-                f"Please place 'Simple_Syllabus_Private_Key.txt' in the config directory."
+                f"Please place 'SimpSylSSH.txt' in the config directory."
             )
 
         localSetup.logger.info(f"{functionName}: Using SSH private key at {privateKeyPath}")
 
-        ## ── Retrieve the private key password (encrypted via Fernet) ──
+        ## ── Retrieve the private key password (None if no passphrase) ──
         privateKeyPassword = _getSimpleSyllabusPrivateKeyPassword()
 
-        ## ── Normalize password: treat empty string the same as no passphrase ──
-        ## paramiko 4.0 uses passphrase= (not password=) and distinguishes
-        ## between None (no passphrase) and "" (empty string).
+        ## ── Normalize password: encode str -> bytes for paramiko 4.0, or None ──
+        ## paramiko 4.0 PKey.from_path() requires passphrase as bytes or None
         normalizedPassword = privateKeyPassword.encode("utf-8") if privateKeyPassword else None
 
         ## ── Load the private key ──
-        ## paramiko 4.0+: PKey.from_path() auto-detects key type and handles
-        ## OpenSSH format (BEGIN OPENSSH PRIVATE KEY) for all algorithms.
-        ## Try with passphrase first, then without (in case the key has no passphrase).
+        ## paramiko 4.0+: PKey.from_path() auto-detects key type (Ed25519, RSA, etc.)
+        ## and handles OpenSSH format. passphrase must be bytes or None.
         privateKey = None
         pwdAttempts = [normalizedPassword, None] if normalizedPassword is not None else [None]
         for pwd in pwdAttempts:
             try:
                 privateKey = paramiko.PKey.from_path(privateKeyPath, passphrase=pwd)
-                if pwd is None and normalizedPassword is not None:
-                    localSetup.logger.info(f"{functionName}: SSH private key loaded successfully (passphrase ignored — key has no passphrase)")
-                elif pwd is None:
-                    localSetup.logger.info(f"{functionName}: SSH private key loaded successfully (no passphrase)")
-                else:
-                    localSetup.logger.info(f"{functionName}: SSH private key loaded successfully (with passphrase)")
+                logMsg = "with passphrase" if pwd else "no passphrase"
+                localSetup.logger.info(f"{functionName}: SSH private key loaded successfully ({logMsg})")
                 break
             except paramiko.ssh_exception.PasswordRequiredException:
-                ## Key requires a passphrase but none supplied — no point trying None
-                localSetup.logger.error(f"{functionName}: Key requires a passphrase but none was found in SSPrivKP.txt")
+                localSetup.logger.error(f"{functionName}: Key requires a passphrase but none was provided")
                 break
-            except (paramiko.ssh_exception.SSHException, ValueError):
+            except (paramiko.ssh_exception.SSHException, ValueError) as e:
+                localSetup.logger.warning(f"{functionName}: Key load attempt failed (pwd={'set' if pwd else 'None'}): {e}")
                 continue
 
         if privateKey is None:
             raise ValueError(
                 f"{functionName}: Could not load SSH private key from {privateKeyPath}. "
-                f"Verify the key format (OpenSSH format detected) and that the passphrase "
-                f"in SSPrivKP.txt is correct."
+                f"Verify the key is a valid OpenSSH format key (Ed25519/RSA/ECDSA)."
             )
         localSetup.logger.info(f"{functionName}: SSH private key loaded successfully")
 
