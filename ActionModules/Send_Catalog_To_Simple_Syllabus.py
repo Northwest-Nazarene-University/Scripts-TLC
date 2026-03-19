@@ -232,19 +232,19 @@ def uploadToSimpleSyllabus(p1_filePath: str):
         privateKeyPassword = _getSimpleSyllabusPrivateKeyPassword()
 
         ## ── Normalize password: treat empty string the same as no passphrase ──
-        ## paramiko distinguishes between None (no passphrase) and "" (empty passphrase),
-        ## and OpenSSH keys fail with "" when they have no passphrase.
-        normalizedPassword = privateKeyPassword if privateKeyPassword else None
+        ## paramiko 4.0 uses passphrase= (not password=) and distinguishes
+        ## between None (no passphrase) and "" (empty string).
+        normalizedPassword = privateKeyPassword.encode("utf-8") if privateKeyPassword else None
 
         ## ── Load the private key ──
-        ## Use paramiko.PKey.from_private_key_file() which auto-detects the key algorithm
-        ## and correctly handles OpenSSH format (BEGIN OPENSSH PRIVATE KEY) for all key types
-        ## (Ed25519, RSA, ECDSA, etc.). The type-specific classes (RSAKey, Ed25519Key, etc.)
-        ## cannot read OpenSSH-format keys that don't match their exact type.
+        ## paramiko 4.0+: PKey.from_path() auto-detects key type and handles
+        ## OpenSSH format (BEGIN OPENSSH PRIVATE KEY) for all algorithms.
+        ## Try with passphrase first, then without (in case the key has no passphrase).
         privateKey = None
-        for pwd in (normalizedPassword, None):
+        pwdAttempts = [normalizedPassword, None] if normalizedPassword is not None else [None]
+        for pwd in pwdAttempts:
             try:
-                privateKey = paramiko.PKey.from_private_key_file(privateKeyPath, password=pwd)
+                privateKey = paramiko.PKey.from_path(privateKeyPath, passphrase=pwd)
                 if pwd is None and normalizedPassword is not None:
                     localSetup.logger.info(f"{functionName}: SSH private key loaded successfully (passphrase ignored — key has no passphrase)")
                 elif pwd is None:
@@ -253,7 +253,7 @@ def uploadToSimpleSyllabus(p1_filePath: str):
                     localSetup.logger.info(f"{functionName}: SSH private key loaded successfully (with passphrase)")
                 break
             except paramiko.ssh_exception.PasswordRequiredException:
-                ## Key requires a passphrase but none was supplied — no point trying None next
+                ## Key requires a passphrase but none supplied — no point trying None
                 localSetup.logger.error(f"{functionName}: Key requires a passphrase but none was found in SSPrivKP.txt")
                 break
             except (paramiko.ssh_exception.SSHException, ValueError):
