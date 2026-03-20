@@ -69,6 +69,11 @@ Error Description/Code: {p1_errorInfo}
             self.localSetup.logger.error(f"\nError email already sent for {p1_functionName}")
             return
 
+        ## ---- Sensitive-keyword list (lowercase) ----
+        _SENSITIVE_KEYS = {"password", "passwd", "secret", "token", "api_key",
+                           "apikey", "access_token", "refresh_token", "credential",
+                           "client_secret", "authorization", "auth"}
+
         
         # Try to get the actual exception object
         exc = p1_errorInfo if isinstance(p1_errorInfo, BaseException) else None
@@ -80,22 +85,37 @@ Error Description/Code: {p1_errorInfo}
                 exc = excValue
 
         if exc is not None:
-            # Build traceback with locals captured in each frame
-            tbExc = traceback.TracebackException.from_exception(exc, capture_locals=True)
-            traceWithLocals = ''.join(tbExc.format())
+            # Build traceback WITH locals for the full log file
+            tbExcFull = traceback.TracebackException.from_exception(exc, capture_locals=True)
+            traceWithLocals = ''.join(tbExcFull.format())
+
+            # Build a sanitized version for the email (no locals)
+            tbExcSafe = traceback.TracebackException.from_exception(exc, capture_locals=False)
+            traceSafe = ''.join(tbExcSafe.format())
         else:
-            # Fallback: no specific exception object, just use standard traceback
+            # Fallback: no specific exception object
             traceWithLocals = traceback.format_exc()
+            traceSafe = traceWithLocals
 
 
-        ## Format the full error info with traceback
+        ## ---- Redact sensitive values from the safe trace ----
+        for line in traceSafe.splitlines():
+            for key in _SENSITIVE_KEYS:
+                if key in line.lower():
+                    traceSafe = traceSafe.replace(line, f"  {key}=<REDACTED>")
+                    break
+
+        ## Full info for the LOCAL log only (includes locals for debugging)
         fullErrorInfo = f"{p1_errorInfo}: \n\n{traceWithLocals}"
 
-        ## Log the full error info
+        ## Log the full (unsanitized) error info locally
         self.localSetup.logger.error(f"\nFull Error Info:\n{fullErrorInfo}")
 
+        ## Save the sanitized error info for the email (no locals, sensitive info redacted)
+        safeErrorInfo = f"{p1_errorInfo}: \n\n{traceSafe}"
+
         ## Create the formatted email body
-        emailBody = self._createErrorEmailBody(p1_functionName, fullErrorInfo)
+        emailBody = self._createErrorEmailBody(p1_functionName, safeErrorInfo)
 
         ## Send the error alert email
         sendOutlookEmail(

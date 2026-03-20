@@ -384,20 +384,22 @@ def runAsASubprocess ():
     ## If the first sys argu passed is 'Outlook'
     if sys.argv[1].lower() == 'outlook':  
         
-        ## Check if at least 6 sys arguments are passed
-        if not len(sys.argv) >= 6:
+        ## Check if at least 5 sys arguments are passed (body now comes from stdin)
+        if not len(sys.argv) >= 5:
 
             ## self.localSetup.logger.info the usage of the outlook portion of the script
-            localSetup.logger.info("Usage: graphConfigType: <Outlook or OneDrive>, microsoftUsername: <MicrosoftEmailAddress>, subject: <EmailSubject>, body: <EmailBody>, recipientEmailList: <RecipientEmailList>, optional shared_mailbox: <SharedMailboxAddress>")
+            localSetup.logger.info("Usage: graphConfigType: <Outlook or OneDrive>, microsoftUsername: <MicrosoftEmailAddress>, subject: <EmailSubject>, recipientEmailList: <RecipientEmailList>, optional shared_mailbox: <SharedMailboxAddress>  |  body is read from stdin")
             sys.exit(2)   
 
         ## Save the sys arguments as variables
         configType = sys.argv[1]
         MicrosoftUserName = sys.argv[2]
         subject = sys.argv[3]
-        body = sys.argv[4]
-        recipientEmailList = sys.argv[5]
-        shared_mailbox = sys.argv[6]
+        recipientEmailList = sys.argv[4]
+        shared_mailbox = sys.argv[5] if len(sys.argv) >= 6 else ""
+
+        ## Read the email body from stdin (avoids Windows command-line length limits)
+        body = sys.stdin.read()
 
         ## Create a outlookApi object
         outlookApi = CoreMicrosoftAPI(localSetup, graphConfigType = configType, microsoftUserName = MicrosoftUserName)
@@ -456,16 +458,17 @@ def sendOutlookEmail (p1_microsoftUserName = serviceEmailAccount, p1_subject = "
     import subprocess        
     
     ## Run this python script file as a subprocess with all of the neccessary microsoft object and emailer variables
+    ## The email body is passed via stdin to avoid the Windows command-line character limit (~32,767 chars)
     subprocessResult = subprocess.run([
                                     "python"
                                     , os.path.abspath(__file__)
                                     , "Outlook"
                                     , p1_microsoftUserName
                                     , p1_subject
-                                    , p1_body
                                     , p1_recipientEmailList
                                     , p1_shared_mailbox
                                     ]
+                                    , input = p1_body
                                     , capture_output = True
                                     , text = True
                                     )
