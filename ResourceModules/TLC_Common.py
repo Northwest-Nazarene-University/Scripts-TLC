@@ -217,6 +217,17 @@ def makeApiCall(
     ## log the response status code
     if not p1_apiObject.status_code or p1_apiObject.status_code not in [200, 400]:
         if p1_apiObject.status_code:
+            ## --- SPECIAL CASE: 429 Rate Limit ---
+            if p1_apiObject.status_code == 429:
+                retryAfter = int(p1_apiObject.headers.get("Retry-After", 60))
+                localSetup.logger.warning(
+                    f"Rate limited (429) on {p1_apiUrl}. "
+                    f"Waiting {retryAfter}s before retry..."
+                )
+                p1_apiObject.close()
+                time.sleep(retryAfter)
+                raise Exception(f"Rate limited (429) on {p1_apiUrl}")
+
             ## --- SPECIAL CASE: 409 Conflict for PUT/PATCH ---
             if p1_apiObject.status_code == 409 and p1_apiCallType.lower() in ["put", "patch", "post"]:
                 localSetup.logger.warning(f"Received 409 Conflict for {p1_apiCallType.upper()} {p1_apiUrl}. Checking for active existing item...")

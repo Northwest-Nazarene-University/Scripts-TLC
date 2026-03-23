@@ -452,11 +452,15 @@ def getStuCourseData(
             return "Remove"
 
         ## Get enrollment ID
-        enrollmentId = enrollmentDf["canvas_enrollment_id"].values[0]
+        ## Prefer an active (non-deleted) enrollment row when both exist in the includeDeleted report
+        activeDf = enrollmentDf[enrollmentDf["status"].str.lower() != "deleted"]
+        selectedDf = activeDf if not activeDf.empty else enrollmentDf
+
+        enrollmentId = selectedDf["canvas_enrollment_id"].values[0]
         p2_stuCoursesData[p1_targetCourseId]["canvas_enrollment_id"] = enrollmentId
 
-        ## Check if enrollment is deleted
-        enrollmentDeleted = enrollmentDf["status"].values[0].lower() == "deleted"
+        ## Check if enrollment is deleted (only true when NO active row exists)
+        enrollmentDeleted = activeDf.empty
 
         ## Get enrollment object
         enrollmentObject, oldCourseEndDate = getEnrollmentApiObject(enrollmentId, p1_targetCourseId, parentCourseId,  p2_stuId, enrollmentDeleted)
@@ -664,8 +668,8 @@ def getStuCoursesData(
 
         ## Get Canvas user ID for the student
         ## Robustly handle user_id values that can be numeric strings or emails/non-numeric values
-        numericUserIds = pd.to_numeric(p1_filteredCanvasEnrollmentsDf["user_id"], Errors="coerce")
-        maskNumeric = numericUserIds == pd.to_numeric(p1_stuId, Errors="coerce")
+        numericUserIds = pd.to_numeric(p1_filteredCanvasEnrollmentsDf["user_id"], errors="coerce")
+        maskNumeric = numericUserIds == pd.to_numeric(p1_stuId, errors="coerce")
 
         if maskNumeric.any():
             canvasIdDf = p1_filteredCanvasEnrollmentsDf.loc[maskNumeric, "canvas_user_id"]
