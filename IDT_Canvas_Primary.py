@@ -40,7 +40,7 @@ The full contents of the repository found at https://github.com/NNU-IDT-Scripts/
 ## Initialize the local setup object and error handler
 localSetup = LocalSetup(datetime.now(), __file__)
 errorHandler = errorEmail(scriptName, scriptPurpose, externalRequirements, localSetup)
-
+ 
 from Common_Configs import undgTermsCodesToWordsDict
 
 ## Define time variables
@@ -54,7 +54,7 @@ decade = localSetup.dateDict["decade"]
 ## Testing variables
 ## currentDay = 1 ## First week of the month testing value make sure to comment out the target terms variable
 ## currentWeekDay = 2 ## Day of the week testing value 
-currentHour = 1 ## First run of the day testing value
+## currentHour = 1 ## First run of the day testing value
 ## currentHour = 16 ## Last run of the day testing value
 
         

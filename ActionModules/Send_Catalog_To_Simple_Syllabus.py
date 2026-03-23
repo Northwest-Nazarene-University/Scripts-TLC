@@ -142,6 +142,8 @@ def uploadToSimpleSyllabus(p1_filePath: str):
         5. Connects to the Simple Syllabus SFTP server using SSH private key authentication.
         6. Uploads the file to the configured remote /imports directory.
         7. Closes the SFTP and SSH connections.
+        8. On successful upload, writes a success tag file next to the Combined Catalog CSV
+           so that subsequent runs can detect whether anything has changed since last upload.
 
     Args:
         p1_filePath (str): The local file path to the Course Extract CSV to upload.
@@ -292,6 +294,16 @@ def uploadToSimpleSyllabus(p1_filePath: str):
             ssh_client.close()
             localSetup.logger.info(f"{functionName}: SFTP and SSH connections closed")
 
+        ## ── Tag the Combined Catalog CSV with a success marker ──
+        ## Write a sentinel file next to the Combined Catalog CSV at the catalog root path
+        ## so that retrieveCatalogCourseReportsDfs can detect if anything changed since last successful upload
+        catalogDir = os.path.dirname(p1_filePath)
+        successTagPath = os.path.join(catalogDir, "Combined Catalog Course Report_UPLOAD_SUCCESS.txt")
+        with open(successTagPath, "w", encoding="utf-8") as tagFile:
+            tagFile.write(f"Upload successful at {datetime.now().isoformat()}\n")
+            tagFile.write(f"Uploaded file: {p1_filePath}\n")
+        localSetup.logger.info(f"{functionName}: Success tag written to {successTagPath}")
+
     except Exception as Error:
         localSetup.logger.error(f"{functionName}: {Error}")
         raise
@@ -415,12 +427,40 @@ def formatCombinedCatalogForSimpleSyllabus(p1_combinedCatalogDf: pd.DataFrame, p
             return set(_courseCodePattern.findall(text))
 
         ## ── Helper: combine text fragments, removing duplicates and fixing spacing ──
-        def _combineTextFragments(*fragments) -> str:
+        ## Now accepts tuples of (label, value) so that the 2nd, 3rd, etc. fragments
+        ## are prefixed with their original column name for clarity.
+        ## Example: _combineTextFragments(("Prerequisites", "Program Admission"), ("Prerequisite Courses", "EDUC8521"))
+        ##   -> "Program Admission. Prerequisite Courses: EDUC8521"
+        def _combineTextFragments(*labeledFragments) -> str:
+            """
+            Combine labeled text fragments into a single string.
+            
+            Args:
+                *labeledFragments: Each argument is either:
+                    - A tuple of (label: str, value: str)  — label is the original column name
+                    - A plain str (for backward compatibility; treated as label="" for the first, but should not happen)
+            
+            Returns:
+                str: Combined string where the first non-empty fragment appears as-is,
+                     and subsequent non-empty fragments are prefixed with their label + ": ".
+            """
             combined = []
-            for fragment in fragments:
-                cleaned = _safe_strip(fragment)
+            for item in labeledFragments:
+                if isinstance(item, tuple):
+                    label, value = item
+                else:
+                    label, value = "", item
+                cleaned = _safe_strip(value)
                 if cleaned and cleaned not in combined:
-                    combined.append(cleaned)
+                    if len(combined) == 0:
+                        ## First fragment: no label prefix
+                        combined.append(cleaned)
+                    else:
+                        ## Subsequent fragments: prefix with original column name
+                        if label:
+                            combined.append(f"{label}: {cleaned}")
+                        else:
+                            combined.append(cleaned)
             result = ". ".join(combined)
             ## Clean up spacing: collapse multiple spaces, fix ". ." patterns
             result = re.sub(r'\s+', ' ', result).strip()
@@ -650,11 +690,14 @@ def formatCombinedCatalogForSimpleSyllabus(p1_combinedCatalogDf: pd.DataFrame, p
             if rawCorequisiteCourses and rawCorequisiteCourses in prereqTexts:
                 rawCorequisiteCourses = ""
 
-            ## ── Build combined Prerequisites string (Rule 1) ──
+                        ## ── Build combined Prerequisites string (Rule 1) ──
             prereqParts = []
 
             ## Put Prerequisites & Prerequisite Courses first
-            basePrereq = _combineTextFragments(rawPrerequisites, rawPrerequisiteCourses)
+            basePrereq = _combineTextFragments(
+                ("Prerequisites", rawPrerequisites),
+                ("Prerequisite Courses", rawPrerequisiteCourses)
+            )
             if basePrereq:
                 prereqParts.append(basePrereq)
 
@@ -667,7 +710,12 @@ def formatCombinedCatalogForSimpleSyllabus(p1_combinedCatalogDf: pd.DataFrame, p
                 prereqParts.append(f"Recommended Prerequisites: {rawRecommendedPrereqs}")
 
             ## ── Build combined Corequisites string (Rule 3) ──
-            combinedCoreq = _combineTextFragments(rawCorequisites, rawCorequisiteCourses, rawConcurrent, rawConcurrentRequisite)
+            combinedCoreq = _combineTextFragments(
+                ("Corequisites", rawCorequisites),
+                ("Corequisite Courses", rawCorequisiteCourses),
+                ("Concurrent", rawConcurrent),
+                ("Concurrent Requisite", rawConcurrentRequisite)
+            )
 
             ## ── Rule 4: Move course codes duplicated between prereqs and coreqs into ──
             ## the "Prerequisite or Corequisite:" section
@@ -905,10 +953,51 @@ def retrieveCatalogCourseReportsDfs():
             else:
                 combinedCatalogCourseReportDf = pd.concat([combinedCatalogCourseReportDf, catalogCourseReportsDf], ignore_index=True)
 
+        ## ── Check whether the new combined catalog differs from the last successfully uploaded version ──
+        combinedCsvPath = os.path.join(catalogRootPath, "Combined Catalog Course Report.csv")
+        successTagPath = os.path.join(catalogRootPath, "Combined Catalog Course Report_UPLOAD_SUCCESS.txt")
+
+        if os.path.exists(combinedCsvPath) and os.path.exists(successTagPath):
+            ## A previous combined catalog exists AND was successfully uploaded
+            try:
+                previousCombinedDf = _readCsvWithEncoding(combinedCsvPath)
+
+                ## Compare the new combined df against the previous one
+                ## Sort both by all columns and reset index to ensure consistent comparison
+                newSorted = combinedCatalogCourseReportDf.sort_values(
+                    by=list(combinedCatalogCourseReportDf.columns)
+                ).reset_index(drop=True)
+                prevSorted = previousCombinedDf.sort_values(
+                    by=list(previousCombinedDf.columns)
+                ).reset_index(drop=True)
+
+                if newSorted.equals(prevSorted):
+                    localSetup.logger.info(
+                        f"{functionName}: No changes detected in the combined catalog since last successful upload. Skipping."
+                    )
+                    return combinedCatalogCourseReportDf, catalogSchoolYear, False
+                else:
+                    localSetup.logger.info(
+                        f"{functionName}: Changes detected in the combined catalog since last successful upload. Proceeding."
+                    )
+            except Exception as compareError:
+                localSetup.logger.warning(
+                    f"{functionName}: Could not compare with previous catalog ({compareError}). Proceeding with upload."
+                )
+        else:
+            localSetup.logger.info(
+                f"{functionName}: No previous successfully uploaded combined catalog found. Proceeding."
+            )
+
         ## Save the combined df as a new CSV in the same location as the downloaded reports, with a name like "Combined Catalog Course Report.csv"
-        combinedCatalogCourseReportDf.to_csv(os.path.join(catalogRootPath, "Combined Catalog Course Report.csv"), index=False, encoding='utf-8')
-                
-        return combinedCatalogCourseReportDf, catalogSchoolYear
+        combinedCatalogCourseReportDf.to_csv(combinedCsvPath, index=False, encoding='utf-8')
+
+        ## If the success tag exists from a prior run but the data HAS changed, remove the stale tag
+        if os.path.exists(successTagPath):
+            os.remove(successTagPath)
+            localSetup.logger.info(f"{functionName}: Removed stale success tag at {successTagPath}")
+
+        return combinedCatalogCourseReportDf, catalogSchoolYear, True
 
     except Exception as Error:
         localSetup.logger.error(f"{functionName}: {Error}")
@@ -918,7 +1007,15 @@ def retrieveCatalogCourseReportsDfs():
 def processCatalogCoursesAndUploadToSimpleSyllabus():
     functionName = "processCatalogCoursesAndUploadToSimpleSyllabus"
     try:
-        combinedCatalogCourseReportDf, catalogSchoolYear = retrieveCatalogCourseReportsDfs()
+        combinedCatalogCourseReportDf, catalogSchoolYear, hasChanges = retrieveCatalogCourseReportsDfs()
+
+        ## If no changes since last successful upload, exit early
+        if not hasChanges:
+            localSetup.logger.info(
+                f"{functionName}: No changes detected in catalog data since last successful upload. Exiting early."
+            )
+            return
+
         courseExtractDf = formatCombinedCatalogForSimpleSyllabus(combinedCatalogCourseReportDf, catalogSchoolYear)
 
         ## Build the path to the saved Course Extract CSV
