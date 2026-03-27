@@ -11,7 +11,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules")
 
 ## New resource modules
 from Local_Setup import LocalSetup
-from TLC_Common import makeApiCall, isFileRecent
+from TLC_Common import makeApiCall, isFileRecent, isPresent
 from Canvas_Report import CanvasReport
 from Common_Configs import coreCanvasApiUrl, termSchoolYearLogic
 from Error_Email import errorEmail
@@ -296,7 +296,7 @@ def outcomeAttachmentReport(row, p1_rawOutcomesDF, p1_outcomeCoursesMissingAttac
         uniqueAttachedOutcomes = {row[key]: False for key in row.index 
             if "Outcome" in key 
             and "Area" not in key 
-            and str(row[key]) != "nan"
+            and isPresent(row[key])
             }
             
         ## Make a filtered df by keeping only the rows where the outcome is in the uniqueAttachedOutcomes and the row['Outcome Area'] is in the title
@@ -445,26 +445,26 @@ def termOutcomeAttachmentReport (p1_inputTerm
         for index, row in termActiveOutcomeCoursesDF.iterrows():
 
                 ## Target a specific course for testing if needed
-                # if row['Course_sis_id'] == "FA2025_NURS2000_01":
+                if row['Course_sis_id'] == "SP2026_EDUC3090_1L":
                     
-                #     outcomeAttachmentReport (row, rawOutcomesDF, outcomeCoursesMissingAttachments)
+                    outcomeAttachmentReport (row, rawOutcomesDF, outcomeCoursesMissingAttachments)
             
                 ## If the row is not a nan
-                if not pd.isna(row["Course_sis_id"]):
+                # if not pd.isna(row["Course_sis_id"]):
                 
-                    ## Create a thread to process the row
-                    outcomeAttachmentReportThread = threading.Thread(target=outcomeAttachmentReport
-                                                                     , args=(row
-                                                                             , rawOutcomesDF
-                                                                             , outcomeCoursesMissingAttachments
-                                                                             )
-                                                                     )
+                #     ## Create a thread to process the row
+                #     outcomeAttachmentReportThread = threading.Thread(target=outcomeAttachmentReport
+                #                                                      , args=(row
+                #                                                              , rawOutcomesDF
+                #                                                              , outcomeCoursesMissingAttachments
+                #                                                              )
+                #                                                      )
                 
-                    ## Start the thread
-                    outcomeAttachmentReportThread.start()
+                #     ## Start the thread
+                #     outcomeAttachmentReportThread.start()
                 
-                    ## Add the thread to the ongoing threads list
-                    outcomeAttachmentReportThreads.append(outcomeAttachmentReportThread)
+                #     ## Add the thread to the ongoing threads list
+                #     outcomeAttachmentReportThreads.append(outcomeAttachmentReportThread)
                 
         ## For each thread in the ongoing threads list
         for thread in outcomeAttachmentReportThreads:

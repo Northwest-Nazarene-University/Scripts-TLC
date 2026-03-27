@@ -302,7 +302,7 @@ def craftAndSendRelevantEmail(
 
 
                 ## If the datapoint is an outcome
-                elif "Outcome" in key and pd.notna(datapoint) and key != "Outcome Area":
+                elif "Outcome" in key and isPresent(datapoint) and key != "Outcome Area":
                     
                     ## If the email is a missing required data email
                     if "Missing" in p2_relevantEmail:
@@ -311,6 +311,18 @@ def craftAndSendRelevantEmail(
                         if datapoint not in filteredUnassessedOutcomeCoursesDF["Outcome_Title"].values:
                             
                             ## Skip the datapoint
+                            continue
+                        
+                    ## If the email is a Reminder email (Midterm or Finals)
+                    elif "Reminder" in p2_relevantEmail:
+
+                        ## Build a filtered df of outcomes missing attachments for this course
+                        filteredWithoutAttachmentsDF = p1_auxiliaryDfDict["Outcome Courses Without Attachments DF"][
+                            p1_auxiliaryDfDict["Outcome Courses Without Attachments DF"]["Course_name"] == p2_row["Course_name"]
+                        ]
+
+                        ## If the outcome is not in the missing-attachment report's Required Outcome column, skip it
+                        if filteredWithoutAttachmentsDF.empty or datapoint not in filteredWithoutAttachmentsDF["Required Outcome"].values:
                             continue
 
                     ## If the key does not already exist in the email details
@@ -450,7 +462,7 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
                         
                 ## Otherwise, if it is the Monday of the week before the course's midpoint (e.g. week 7 in a 16 week course)
                 elif (row['Course Week'] == (int(row["Course Final Week"] / 2) - 1)
-                      and localSetup.initialDateTime.weekday() == 0
+                      and localSetup.initialDateTime.weekday() == 4
                       ): ## Casting the result of courseLength / 2 to int rounds the number down        
             
                     ## If the course is an Outcome course
