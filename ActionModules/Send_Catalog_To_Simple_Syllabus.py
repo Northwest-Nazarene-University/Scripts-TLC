@@ -691,6 +691,7 @@ def formatCombinedCatalogForSimpleSyllabus(p1_combinedCatalogDf: pd.DataFrame, p
                 rawCorequisiteCourses = ""
 
                         ## ── Build combined Prerequisites string (Rule 1) ──
+            ## Each part is a (label, content) tuple; label may be empty for the base prereqs
             prereqParts = []
 
             ## Put Prerequisites & Prerequisite Courses first
@@ -699,15 +700,15 @@ def formatCombinedCatalogForSimpleSyllabus(p1_combinedCatalogDf: pd.DataFrame, p
                 ("Prerequisite Courses", rawPrerequisiteCourses)
             )
             if basePrereq:
-                prereqParts.append(basePrereq)
+                prereqParts.append(("", basePrereq))
 
             ## "Prerequisite or Corequisite:" section
             if rawPrereqOrCoreq:
-                prereqParts.append(f"Prerequisite or Corequisite: {rawPrereqOrCoreq}")
+                prereqParts.append(("Prerequisite or Corequisite", rawPrereqOrCoreq))
 
-            ## "Recommended Prerequisites:" section
+            ## "Recommended Prerequisites:" — always include the label so the reader knows these are advisory
             if rawRecommendedPrereqs:
-                prereqParts.append(f"Recommended Prerequisites: {rawRecommendedPrereqs}")
+                prereqParts.append(("Recommended Prerequisites", rawRecommendedPrereqs))
 
             ## ── Build combined Corequisites string (Rule 3) ──
             combinedCoreq = _combineTextFragments(
@@ -717,53 +718,23 @@ def formatCombinedCatalogForSimpleSyllabus(p1_combinedCatalogDf: pd.DataFrame, p
                 ("Concurrent Requisite", rawConcurrentRequisite)
             )
 
-            ## ── Rule 4: Move course codes duplicated between prereqs and coreqs into ──
-            ## the "Prerequisite or Corequisite:" section
-            prereqCodesAll = _extractCourseCodes(". ".join(prereqParts))
-            coreqCodesAll = _extractCourseCodes(combinedCoreq)
-            sharedCodes = prereqCodesAll & coreqCodesAll
-
-            if sharedCodes:
-                ## Remove the shared codes from wherever they currently appear
-                ## and add them to the "Prerequisite or Corequisite:" section
-                sharedCodesStr = ", ".join(sorted(sharedCodes))
-
-                ## Remove from prereq parts (rebuild without those codes)
-                cleanedPrereqParts = []
-                for part in prereqParts:
-                    cleanedPart = part
-                    for code in sharedCodes:
-                        cleanedPart = cleanedPart.replace(code, "")
-                    ## Clean up leftover commas/spaces
-                    cleanedPart = re.sub(r',\s*,+', ',', cleanedPart)
-                    cleanedPart = re.sub(r'\s+', ' ', cleanedPart).strip().strip(',').strip()
-                    if cleanedPart and not cleanedPart.startswith("Prerequisite or Corequisite:"):
-                        cleanedPrereqParts.append(cleanedPart)
-                    elif cleanedPart.startswith("Prerequisite or Corequisite:"):
-                        ## Append the shared codes to the existing section
-                        existingPoC = cleanedPart.replace("Prerequisite or Corequisite:", "").strip()
-                        if existingPoC:
-                            cleanedPrereqParts.append(f"Prerequisite or Corequisite: {existingPoC}, {sharedCodesStr}")
-                        else:
-                            cleanedPrereqParts.append(f"Prerequisite or Corequisite: {sharedCodesStr}")
-
-                ## If no "Prerequisite or Corequisite:" section was already present, add one
-                hasPoCSection = any(p.startswith("Prerequisite or Corequisite:") for p in cleanedPrereqParts)
-                if not hasPoCSection:
-                    cleanedPrereqParts.append(f"Prerequisite or Corequisite: {sharedCodesStr}")
-
-                prereqParts = cleanedPrereqParts
-
-                ## Remove from coreq string
-                for code in sharedCodes:
-                    combinedCoreq = combinedCoreq.replace(code, "")
-                combinedCoreq = re.sub(r',\s*,+', ',', combinedCoreq)
-                combinedCoreq = re.sub(r'\s+', ' ', combinedCoreq).strip().strip(',').strip()
-
             ## ── Final prerequisite and corequisite strings ──
-            finalPrerequisites = ". ".join(prereqParts)
-            finalPrerequisites = re.sub(r'\s+', ' ', finalPrerequisites).strip()
-            finalPrerequisites = re.sub(r'\.\s*\.', '.', finalPrerequisites)
+            ## First part: show bolded label only when it carries semantic meaning
+            ##             (e.g. "Recommended Prerequisites", "Prerequisite or Corequisite")
+            ## 2nd+ parts: <p><span class="block-node block-prefix" style="font-weight: 700;">Label:</span> content</p>
+            if prereqParts:
+                firstLabel, firstContent = prereqParts[0]
+                if firstLabel:
+                    finalPrerequisites = f'<span class="block-node block-prefix" style="font-weight: 700;">{firstLabel}:</span> {firstContent}'
+                else:
+                    finalPrerequisites = firstContent
+                for label, content in prereqParts[1:]:
+                    if label:
+                        finalPrerequisites += f'<p><span class="block-node block-prefix" style="font-weight: 700;">{label}:</span> {content}</p>'
+                    else:
+                        finalPrerequisites += f"<p>{content}</p>"
+            else:
+                finalPrerequisites = ""
 
             finalCorequisites = combinedCoreq
 
