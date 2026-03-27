@@ -520,33 +520,33 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
                         targetRow = auxiliaryDfDict["Active Outcome Courses DF"].loc[courseIndex]
                     
                         
-                    testCraft = craftAndSendRelevantEmail(p1_inputTerm
-                            , relevantEmail
-                            , targetRow
-                            , auxiliaryDfDict
-                            )
+                    # testCraft = craftAndSendRelevantEmail(p1_inputTerm
+                    #         , relevantEmail
+                    #         , targetRow
+                    #         , auxiliaryDfDict
+                    #         )
                     
-        #             ## Create a thread to send the relevant outcome email
-        #             communicationThread = threading.Thread(
-        #                 target=craftAndSendRelevantEmail
-        #                 , args=(p1_inputTerm
-        #                         , relevantEmail
-        #                         , targetRow
-        #                         , auxiliaryDfDict
-        #                         )
-        #                 )
+                    ## Create a thread to send the relevant outcome email
+                    communicationThread = threading.Thread(
+                        target=craftAndSendRelevantEmail
+                        , args=(p1_inputTerm
+                                , relevantEmail
+                                , targetRow
+                                , auxiliaryDfDict
+                                )
+                        )
                 
-        #             ## Start the thread
-        #             communicationThread.start()
+                    ## Start the thread
+                    communicationThread.start()
                 
-        #             ## Add the thread to the list of communication threads
-        #             actionThreads.append(communicationThread)
+                    ## Add the thread to the list of communication threads
+                    actionThreads.append(communicationThread)
 
-        # ## For each thread in the list of communication threads
-        # for thread in actionThreads:
+        ## For each thread in the list of communication threads
+        for thread in actionThreads:
             
-        #     ## Wait for the thread to finish
-        #     thread.join()
+            ## Wait for the thread to finish
+            thread.join()
 
     except Exception as Error:
         errorHandler.sendError(functionName, Error)
