@@ -462,7 +462,7 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
                         
                 ## Otherwise, if it is the Monday of the week before the course's midpoint (e.g. week 7 in a 16 week course)
                 elif (row['Course Week'] == (int(row["Course Final Week"] / 2) - 1)
-                      and localSetup.initialDateTime.weekday() == 4
+                      and localSetup.initialDateTime.weekday() == 0
                       ): ## Casting the result of courseLength / 2 to int rounds the number down        
             
                     ## If the course is an Outcome course
