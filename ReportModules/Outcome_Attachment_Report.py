@@ -445,26 +445,26 @@ def termOutcomeAttachmentReport (p1_inputTerm
         for index, row in termActiveOutcomeCoursesDF.iterrows():
 
                 ## Target a specific course for testing if needed
-                if row['Course_sis_id'] == "SP2026_EDUC3090_1L":
+                # if row['Course_sis_id'] == "SP2026_EDUC3090_1L":
                     
-                    outcomeAttachmentReport (row, rawOutcomesDF, outcomeCoursesMissingAttachments)
+                #     outcomeAttachmentReport (row, rawOutcomesDF, outcomeCoursesMissingAttachments)
             
-                ## If the row is not a nan
-                # if not pd.isna(row["Course_sis_id"]):
+                # If the row is not a nan
+                if not pd.isna(row["Course_sis_id"]):
                 
-                #     ## Create a thread to process the row
-                #     outcomeAttachmentReportThread = threading.Thread(target=outcomeAttachmentReport
-                #                                                      , args=(row
-                #                                                              , rawOutcomesDF
-                #                                                              , outcomeCoursesMissingAttachments
-                #                                                              )
-                #                                                      )
+                    ## Create a thread to process the row
+                    outcomeAttachmentReportThread = threading.Thread(target=outcomeAttachmentReport
+                                                                     , args=(row
+                                                                             , rawOutcomesDF
+                                                                             , outcomeCoursesMissingAttachments
+                                                                             )
+                                                                     )
                 
-                #     ## Start the thread
-                #     outcomeAttachmentReportThread.start()
+                    ## Start the thread
+                    outcomeAttachmentReportThread.start()
                 
-                #     ## Add the thread to the ongoing threads list
-                #     outcomeAttachmentReportThreads.append(outcomeAttachmentReportThread)
+                    ## Add the thread to the ongoing threads list
+                    outcomeAttachmentReportThreads.append(outcomeAttachmentReportThread)
                 
         ## For each thread in the ongoing threads list
         for thread in outcomeAttachmentReportThreads:
