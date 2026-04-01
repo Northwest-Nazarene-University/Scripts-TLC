@@ -285,7 +285,7 @@ def formatCombinedCatalogForSimpleSyllabus(p1_combinedCatalogDf: pd.DataFrame, p
 
         ## ══════════════════════════════════════════════════════════════════════
         ## STEP 4.5: Expand rows where Title contains multiple codes via "/"
-        ## ═════════════════════════════════════════════════���════════════════════
+        ## ══════════════════════════════════════════════════════════════════════
 
         expandedRows = []
         for _, row in p1_combinedCatalogDf.iterrows():
