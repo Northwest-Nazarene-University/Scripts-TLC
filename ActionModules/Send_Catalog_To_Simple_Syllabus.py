@@ -16,14 +16,14 @@ try: ## Irregular try clause, do not comment out in testing
     from Canvas_Report import CanvasReport
     from Error_Email import errorEmail
     from TLC_Common import isPresent, downloadFile, makeApiCall
-    from TLC_Action import readCsvWithEncoding, uploadToSimpleSyllabus
+    from TLC_Action import readCsvWithEncoding, uploadToSimpleSyllabus, hasChangedSinceLastUpload, writeSuccessTag, removeStaleSuccessTag
 except ImportError:
     # Fallback to relative imports if package layout differs
     from ResourceModules.Local_Setup import LocalSetup
     from ResourceModules.Canvas_Report import CanvasReport
     from ResourceModules.Error_Email import errorEmail
     from ResourceModules.TLC_Common import isPresent, downloadFile, makeApiCall
-    from ResourceModules.TLC_Action import readCsvWithEncoding, uploadToSimpleSyllabus
+    from ResourceModules.TLC_Action import readCsvWithEncoding, uploadToSimpleSyllabus, hasChangedSinceLastUpload, writeSuccessTag, removeStaleSuccessTag
 
 ## Get catalogToSimpleSyllabusConfig from configs
 from Common_Configs import (
@@ -564,40 +564,11 @@ def retrieveCatalogCourseReportsDfs():
         combinedCsvPath = os.path.join(catalogRootPath, "Combined Catalog Course Report.csv")
         successTagPath = os.path.join(catalogRootPath, "Combined Catalog Course Report_UPLOAD_SUCCESS.txt")
 
-        if os.path.exists(combinedCsvPath) and os.path.exists(successTagPath):
-            try:
-                previousCombinedDf = readCsvWithEncoding(combinedCsvPath)
-
-                newSorted = combinedCatalogCourseReportDf.sort_values(
-                    by=list(combinedCatalogCourseReportDf.columns)
-                ).reset_index(drop=True)
-                prevSorted = previousCombinedDf.sort_values(
-                    by=list(previousCombinedDf.columns)
-                ).reset_index(drop=True)
-
-                if newSorted.equals(prevSorted):
-                    localSetup.logger.info(
-                        f"{functionName}: No changes detected in the combined catalog since last successful upload. Skipping."
-                    )
-                    return combinedCatalogCourseReportDf, catalogSchoolYear, False
-                else:
-                    localSetup.logger.info(
-                        f"{functionName}: Changes detected in the combined catalog since last successful upload. Proceeding."
-                    )
-            except Exception as compareError:
-                localSetup.logger.warning(
-                    f"{functionName}: Could not compare with previous catalog ({compareError}). Proceeding with upload."
-                )
-        else:
-            localSetup.logger.info(
-                f"{functionName}: No previous successfully uploaded combined catalog found. Proceeding."
-            )
+        if not hasChangedSinceLastUpload(combinedCatalogCourseReportDf, combinedCsvPath, successTagPath, localSetup):
+            return combinedCatalogCourseReportDf, catalogSchoolYear, False
 
         combinedCatalogCourseReportDf.to_csv(combinedCsvPath, index=False, encoding='utf-8')
-
-        if os.path.exists(successTagPath):
-            os.remove(successTagPath)
-            localSetup.logger.info(f"{functionName}: Removed stale success tag at {successTagPath}")
+        removeStaleSuccessTag(successTagPath, localSetup)
 
         return combinedCatalogCourseReportDf, catalogSchoolYear, True
 

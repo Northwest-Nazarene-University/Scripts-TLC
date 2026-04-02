@@ -16,7 +16,7 @@ try: ## Irregular try clause, do not comment out in testing
     from Core_Microsoft_Api import sendOutlookEmail, CoreMicrosoftAPI
     from Error_Email import errorEmail
     from TLC_Common import isPresent
-    from Add_Outcomes_to_Active_Courses import (
+    from TLC_Action import (
         retrieveDataForRelevantCommunication,
         getUniqueOutcomesAndOutcomeCoursesDict,
         removeMissingOutcomes,
@@ -29,7 +29,7 @@ except ImportError:
     from ResourceModules.Core_Microsoft_Api import sendOutlookEmail
     from ResourceModules.Error_Email import errorEmail
     from ResourceModules.TLC_Common import isPresent
-    from ActionModules.Add_Outcomes_to_Active_Courses import (
+    from ResourceModules.TLC_Action import (
             retrieveDataForRelevantCommunication,
             getUniqueOutcomesAndOutcomeCoursesDict,
             removeMissingOutcomes,
@@ -369,7 +369,9 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
 
         ## Retrieve the data for determining and sending out relevant communication
         completeActiveCanvasCoursesDF, auxiliaryDfDict = retrieveDataForRelevantCommunication(
-            p2_inputTerm = p1_inputTerm
+            p1_localSetup = localSetup
+            , p1_errorHandler = errorHandler
+            , p2_inputTerm = p1_inputTerm
             , p3_targetDesignator = p1_targetDesignator
             )
                 
@@ -430,15 +432,17 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
                     
                         ## Make a list of the unique outcomes that are not blank 
                         ## and a diMct to hold the course id of the course named after each outcome
-                        uniqueOutcomes, outcomeCourseDict = getUniqueOutcomesAndOutcomeCoursesDict(p1_inputTerm, completeActiveCanvasCoursesDF, p1_targetDesignator)
+                        uniqueOutcomes, outcomeCourseDict = getUniqueOutcomesAndOutcomeCoursesDict(localSetup, errorHandler, p1_inputTerm, completeActiveCanvasCoursesDF, p1_targetDesignator)
 
                         ## Remove any outcomes that don't have corresponding courses
-                        auxiliaryDfDict["Active Outcome Courses DF"] = removeMissingOutcomes (auxiliaryDfDict["Active Outcome Courses DF"], uniqueOutcomes, outcomeCourseDict)
+                        auxiliaryDfDict["Active Outcome Courses DF"] = removeMissingOutcomes (localSetup, errorHandler, auxiliaryDfDict["Active Outcome Courses DF"], uniqueOutcomes, outcomeCourseDict)
                     
                         ## Start a thread to make sure the outcome has been added to the course
                         addOutcomeThread = threading.Thread(
                             target=addOutcomeToCourse
-                            , args=(row
+                            , args=(localSetup
+                                    , errorHandler
+                                    , row
                                     , auxiliaryDfDict
                                     )
                             )

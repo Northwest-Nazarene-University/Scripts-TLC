@@ -12,12 +12,12 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules")
 try: ## Irregular try clause, do not comment out in testing
     from Local_Setup import LocalSetup
     from Error_Email import errorEmail
-    from TLC_Action import readCsvWithEncoding, uploadToSimpleSyllabus
+    from TLC_Action import readCsvWithEncoding, uploadToSimpleSyllabus, removeStaleSuccessTag
 except ImportError:
     # Fallback to relative imports if package layout differs
     from ResourceModules.Local_Setup import LocalSetup
     from ResourceModules.Error_Email import errorEmail
-    from ResourceModules.TLC_Action import readCsvWithEncoding, uploadToSimpleSyllabus
+    from ResourceModules.TLC_Action import readCsvWithEncoding, uploadToSimpleSyllabus, removeStaleSuccessTag
 
 ## Import the catalog helper that determines the school year path
 try:
@@ -469,19 +469,12 @@ def processCourseEditorsAndUploadToSimpleSyllabus():
             )
 
         ## ── Remove stale success tag before uploading ──
-        if os.path.exists(successTagPath):
-            os.remove(successTagPath)
-            localSetup.logger.info(f"{functionName}: Removed stale success tag at {successTagPath}")
+        removeStaleSuccessTag(successTagPath, localSetup)
 
         ## ── Upload the Course Editor file to Simple Syllabus via SFTP ──
-        ## Success tag is written manually below to use the Course Editor-specific tag name
-        uploadToSimpleSyllabus(courseEditorOutputPath, localSetup, p1_errorHandler=errorHandler, p1_writeSuccessTag=False)
-
-        ## ── Write the success tag after a confirmed upload ──
-        with open(successTagPath, "w", encoding="utf-8") as tagFile:
-            tagFile.write(f"Upload successful at {datetime.now().isoformat()}\n")
-            tagFile.write(f"Uploaded file: {courseEditorOutputPath}\n")
-        localSetup.logger.info(f"{functionName}: Success tag written to {successTagPath}")
+        ## p1_writeSuccessTag=True — uploadToSimpleSyllabus now derives the tag name from the
+        ## filename, so "Course Editor.csv" automatically produces "Course Editor_UPLOAD_SUCCESS.txt"
+        uploadToSimpleSyllabus(courseEditorOutputPath, localSetup, p1_errorHandler=errorHandler, p1_writeSuccessTag=True)
 
         localSetup.logger.info(
             f"{functionName}: Successfully processed and uploaded Course Editor file to Simple Syllabus"
