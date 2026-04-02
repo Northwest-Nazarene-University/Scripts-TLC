@@ -335,7 +335,9 @@ def processCourseEditorsAndUploadToSimpleSyllabus():
         3. Normalizes all input files to a common format (handles minimal user_sis_id/course_code
            format as well as the full Simple Syllabus format).
         4. Cross-references the combined input against the Course Extract to build the output.
-        5. Uploads the resulting Course Editor file to Simple Syllabus via SFTP.
+        5. Skips the upload if the newly built output is identical to the last successfully
+           uploaded version (detected via a success tag file).
+        6. Uploads the resulting Course Editor file to Simple Syllabus via SFTP.
     """
 
     functionName = "processCourseEditorsAndUploadToSimpleSyllabus"
@@ -412,6 +414,17 @@ def processCourseEditorsAndUploadToSimpleSyllabus():
 
         ## ── Build the Course Editor output file ──
         courseEditorOutputPath = os.path.join(catalogPath, "Course Editor.csv")
+        successTagPath = os.path.join(catalogPath, "Course Editor_UPLOAD_SUCCESS.txt")
+
+        ## ── Read the previous output BEFORE overwriting, if a success tag exists ──
+        previousOutputDf = None
+        if os.path.exists(courseEditorOutputPath) and os.path.exists(successTagPath):
+            try:
+                previousOutputDf = readCsvWithEncoding(courseEditorOutputPath)
+            except Exception as readError:
+                localSetup.logger.warning(
+                    f"{functionName}: Could not read previous Course Editor output ({readError}). Proceeding."
+                )
 
         buildCourseEditorFile(
             p1_combinedEditorInputDf=combinedEditorInputDf,
@@ -427,9 +440,48 @@ def processCourseEditorsAndUploadToSimpleSyllabus():
             )
             return
 
+        ## ── Check whether the new output differs from the last successfully uploaded version ──
+        if previousOutputDf is not None:
+            try:
+                newSorted = outputDf.sort_values(
+                    by=list(outputDf.columns)
+                ).reset_index(drop=True)
+                prevSorted = previousOutputDf.sort_values(
+                    by=list(previousOutputDf.columns)
+                ).reset_index(drop=True)
+
+                if newSorted.equals(prevSorted):
+                    localSetup.logger.info(
+                        f"{functionName}: No changes detected in Course Editor output since last successful upload. Skipping."
+                    )
+                    return
+                else:
+                    localSetup.logger.info(
+                        f"{functionName}: Changes detected in Course Editor output since last successful upload. Proceeding."
+                    )
+            except Exception as compareError:
+                localSetup.logger.warning(
+                    f"{functionName}: Could not compare with previous Course Editor output ({compareError}). Proceeding with upload."
+                )
+        else:
+            localSetup.logger.info(
+                f"{functionName}: No previous successfully uploaded Course Editor output found. Proceeding."
+            )
+
+        ## ── Remove stale success tag before uploading ──
+        if os.path.exists(successTagPath):
+            os.remove(successTagPath)
+            localSetup.logger.info(f"{functionName}: Removed stale success tag at {successTagPath}")
+
         ## ── Upload the Course Editor file to Simple Syllabus via SFTP ──
-        ## No success tag needed for Course Editor files — that's catalog-specific
+        ## Success tag is written manually below to use the Course Editor-specific tag name
         uploadToSimpleSyllabus(courseEditorOutputPath, localSetup, p1_errorHandler=errorHandler, p1_writeSuccessTag=False)
+
+        ## ── Write the success tag after a confirmed upload ──
+        with open(successTagPath, "w", encoding="utf-8") as tagFile:
+            tagFile.write(f"Upload successful at {datetime.now().isoformat()}\n")
+            tagFile.write(f"Uploaded file: {courseEditorOutputPath}\n")
+        localSetup.logger.info(f"{functionName}: Success tag written to {successTagPath}")
 
         localSetup.logger.info(
             f"{functionName}: Successfully processed and uploaded Course Editor file to Simple Syllabus"
