@@ -12,7 +12,7 @@ try: ## If the module is run directly
     from Canvas_Report import CanvasReport
 except ImportError: ## Otherwise as a relative import if the module is imported
     from .Local_Setup import LocalSetup
-    from .TLC_Common import getEncryptionKey, makeApiCall, flattenApiObjectToJsonList
+    from .TLC_Common import getEncryptionKey, makeApiCall, flattenApiObjectToJsonList, isPresent
     from .Canvas_Report import CanvasReport
 
 ## Add the config path
@@ -440,6 +440,31 @@ def retrieveDataForRelevantCommunication (p1_localSetup
         termPrefix = p2_inputTerm[:2]
         termWord = p1_localSetup._determineTermName(termPrefix)
 
+        ## Get the term and target designator for which the data is being retrieved
+        automatedOutcomeToolVariablesDf = pd.read_excel(
+            os.path.join(
+                p1_localSetup.getExternalResourcePath("TLC"),
+                "Automated Outcome Tool Variables.xlsx"
+            )
+        )
+        designatorRow = automatedOutcomeToolVariablesDf[
+            automatedOutcomeToolVariablesDf["Target Designator"] == p3_targetDesignator
+        ]
+        courseLevel = designatorRow.iloc[0]["Course Level"] if not designatorRow.empty else "All"
+
+        targetAccountName = designatorRow.iloc[0]["Outcome Location Account Name"] if not designatorRow.empty else "NNU"
+
+        ## Determine the graduate term equivalent (e.g. FA25 → GF25)
+        gradTerm = CanvasReport.determineGradTerm(p2_inputTerm)
+
+        ## Build the list of terms to query based on the Course Level
+        if courseLevel == "Undergraduate":
+            relevantTerms = [p2_inputTerm]
+        elif courseLevel == "Graduate":
+            relevantTerms = [gradTerm]
+        else:  ## "All" — include both
+            relevantTerms = [p2_inputTerm, gradTerm] if gradTerm != p2_inputTerm else [p2_inputTerm]
+
         ## Retrieve the df of Active outcome courses which includes course code, required outcome/s, and the relevant instructor name/s, id/s, and email/s
         rawActiveOutcomeCourseDf = CanvasReport.getActiveOutcomeCoursesDf(p1_localSetup, p2_inputTerm, p3_targetDesignator)
 
@@ -451,7 +476,7 @@ def retrieveDataForRelevantCommunication (p1_localSetup
 
         ## Make a list of the unique outcomes that are not blank 
         ## and a dict to hold the course id of the course named after each outcome
-        auxillaryDFDict["Unique Outcomes"], auxillaryDFDict["Outcome Canvas Data Dict"] = getUniqueOutcomesAndOutcomeCoursesDict(p1_localSetup, p1_errorHandler, p2_inputTerm, rawActiveOutcomeCourseDf, p3_targetDesignator)
+        auxillaryDFDict["Unique Outcomes"], auxillaryDFDict["Outcome Canvas Data Dict"] = getUniqueOutcomesAndOutcomeCoursesDict(p1_localSetup, p1_errorHandler, p2_inputTerm, rawActiveOutcomeCourseDf, p3_targetDesignator, targetAccountName)
 
         ## If the retrieveDataForRelevantCommunication returned an empty list of unique outcomes or a dict with no keys for the outcome canvas data dict
         if not auxillaryDFDict["Unique Outcomes"] or not auxillaryDFDict["Outcome Canvas Data Dict"].keys():
@@ -475,14 +500,22 @@ def retrieveDataForRelevantCommunication (p1_localSetup
         rawTermSisCoursesDF = pd.read_csv(f"{p1_localSetup.getExternalResourcePath('SIS')}canvas_course.csv")
 
         ## Keep only the courses with a status of active and a term_id of the input term
-        activeSisCoursesDF = rawTermSisCoursesDF[(rawTermSisCoursesDF["status"] == "active") 
-                                                 & (rawTermSisCoursesDF["term_id"] == p2_inputTerm)]
+        activeSisCoursesDF = rawTermSisCoursesDF[
+            (rawTermSisCoursesDF["status"] == "active") 
+            & (rawTermSisCoursesDF["term_id"].isin(relevantTerms))
+        ]
 
         ## Remove all columns from the active Sis courses df except the course_id column, the start_date, and the end_date
         reducedActiveSisCoursesDF = activeSisCoursesDF[["course_id", "start_date", "end_date"]]
 
-        ## Get the raw term canvas courses df
-        rawTermCanvasCoursesDF = CanvasReport.getCoursesDf(p1_localSetup, p2_inputTerm)
+        ## Get the raw term canvas courses df for all relevant terms
+        allCanvasCoursesDfs = []
+        for relevantTerm in relevantTerms:
+            termDf = CanvasReport.getCoursesDf(p1_localSetup, relevantTerm)
+            if not termDf.empty:
+                allCanvasCoursesDfs.append(termDf)
+        
+        rawTermCanvasCoursesDF = pd.concat(allCanvasCoursesDfs, ignore_index=True) if allCanvasCoursesDfs else pd.DataFrame()
 
         ## Reset the index to ensure unique indices
         rawTermCanvasCoursesDF.reset_index(drop=True, inplace=True)
@@ -516,7 +549,7 @@ def retrieveDataForRelevantCommunication (p1_localSetup
             targetCourseSisId = None
 
             ## If there is a parent course id
-            if not pd.isna(row["Parent_Course_sis_id"]) and row["Parent_Course_sis_id"] not in ["", None]:
+            if isPresent(row["Parent_Course_sis_id"]):
 
                 ## Define the target course sis id as the parent course id
                 targetCourseSisId = row["Parent_Course_sis_id"]
@@ -528,7 +561,17 @@ def retrieveDataForRelevantCommunication (p1_localSetup
                 targetCourseSisId = row['Course_sis_id']
 
             ## Get the index of the rawCompleteActiveCanvasCoursesDF that matches the course id
-            index = rawCompleteActiveCanvasCoursesDF[rawCompleteActiveCanvasCoursesDF["course_id"] == targetCourseSisId].index[0]
+            matchingIndices = rawCompleteActiveCanvasCoursesDF[rawCompleteActiveCanvasCoursesDF["course_id"] == targetCourseSisId].index
+
+            if matchingIndices.empty:
+                p1_localSetup.logger.warning(
+                    f"{functionName}: targetCourseSisId '{targetCourseSisId}' from outcome course "
+                    f"'{row.get('Course_sis_id', 'unknown')}' not found in active Canvas courses DF. "
+                    f"This may indicate a term mismatch (e.g., a GF-prefix course listed under FA). Skipping."
+                )
+                continue
+
+            index = matchingIndices[0]
 
             ## Set the Parent_Course_sis_id value in the rawCompleteActiveCanvasCoursesDF to the Parent_Course_sis_id value in the auxillaryDFDict["Active Outcome Courses DF"]
             rawCompleteActiveCanvasCoursesDF.at[index, "Parent_Course_sis_id"] = row["Parent_Course_sis_id"]
@@ -571,11 +614,24 @@ def retrieveDataForRelevantCommunication (p1_localSetup
                 ## Set the end_date value from the parent course to the value for the row
                 row["end_date"] = rawCompleteActiveCanvasCoursesDF.at[parent_index, "end_date"]
 
+                ## Set the start_date value from the parent course to the value for the row
+                row["start_date"] = rawCompleteActiveCanvasCoursesDF.at[parent_index, "start_date"]
+
+                ## Set the end_date value from the parent course to the value for the row
+                row["end_date"] = rawCompleteActiveCanvasCoursesDF.at[parent_index, "end_date"]
+
             ## Retrieve the Term of the course
             courseTerm = rawCompleteActiveCanvasCoursesDF.at[index, "term_id"]
 
             ## Get the index of the term within the term_id column of the allCanvasTermsDf
-            term_index = allCanvasTermsDf[allCanvasTermsDf["term_id"] == courseTerm].index[0]
+            termMatchIndices = allCanvasTermsDf[allCanvasTermsDf["term_id"] == courseTerm].index
+            if termMatchIndices.empty:
+                p1_localSetup.logger.warning(
+                    f"{functionName}: Term '{courseTerm}' not found in Canvas terms DF. "
+                    f"Skipping date fallback for course '{row.get('course_id', 'unknown')}'."
+                )
+                continue
+            term_index = termMatchIndices[0]
 
             ## If the start date is nan or blank
             if not str(row["start_date"]) or str(row["start_date"]) == "nan":
@@ -850,7 +906,7 @@ def removeMissingOutcomes (p1_localSetup, p1_errorHandler, p1_activeOutcomeCours
         return p1_activeOutcomeCourseDf
 
 ## This function returns a dict with the course id of the course named after each outcome
-def getUniqueOutcomesAndOutcomeCoursesDict (p1_localSetup, p1_errorHandler, p3_inputTerm, p1_activeOutcomeCourseDf, p4_targetDesignator):
+def getUniqueOutcomesAndOutcomeCoursesDict (p1_localSetup, p1_errorHandler, p3_inputTerm, p1_activeOutcomeCourseDf, p4_targetDesignator, p1_targetAccountName):
     functionName = "Get Unique Outcomes And Outcome Courses Dict"
 
     try:
@@ -866,30 +922,16 @@ def getUniqueOutcomesAndOutcomeCoursesDict (p1_localSetup, p1_errorHandler, p3_i
                               )
                           ]
 
-        ## Retrieve the Automated Outcome Tool Variables excel file as a df    
-        automatedOutcomeToolVariablesDf = pd.read_excel(
-            os.path.join(
-                p1_localSetup.getExternalResourcePath("TLC"), 
-                "Automated Outcome Tool Variables.xlsx"
-                )
-        )
-
-        ## Get the account name associated with the target designator
-        targetAccountName = automatedOutcomeToolVariablesDf.loc[
-            automatedOutcomeToolVariablesDf["Target Designator"] == p4_targetDesignator, 
-            "Outcome Location Account Name"
-            ].values[0]
-
         ## Open the p4_targetDesignator relevant outcome df
-        targetDesignatorCanvasOutcomeDf = CanvasReport.getOutcomesDf(p1_localSetup, p3_inputTerm, targetAccountName, p4_targetDesignator)
+        targetDesignatorCanvasOutcomeDf = CanvasReport.getOutcomesDf(p1_localSetup, p3_inputTerm, p1_targetAccountName, p4_targetDesignator)
 
         ## Open the accounts df
         accountsDf = CanvasReport.getAccountsDf(p1_localSetup)
 
         ## Get the target account id from the accounts df using the target account name
         targetCanvasAccountId = (
-            1 if targetAccountName == "NNU"
-            else accountsDf.loc[accountsDf["name"] == targetAccountName, "canvas_account_id"].values[0]
+            1 if p1_targetAccountName == "NNU"
+            else accountsDf.loc[accountsDf["name"] == p1_targetAccountName, "canvas_account_id"].values[0]
             )
 
         ## Define a dict to hold tail of the api url to add the outcome to a course
@@ -960,7 +1002,7 @@ def getUniqueOutcomesAndOutcomeCoursesDict (p1_localSetup, p1_errorHandler, p3_i
                     or str(outcomeParentGuid).strip() in ("", "nan", "none", "NaN", "None")
                     ):
                     ## The outcome is in the root outcome group, so test if the title is equal to the target account name
-                    if outcomeGroup['title'] == targetAccountName:
+                    if outcomeGroup['title'] == p1_targetAccountName:
                         ## Set the outcome group canvas id to the id of the outcome group
                         outcomeGroupCanvasId = outcomeGroup['id']
                         break
@@ -1043,7 +1085,7 @@ def getUniqueOutcomesAndOutcomeCoursesDict (p1_localSetup, p1_errorHandler, p3_i
             ## Use the outcome group index to get the outcome group title 
             ## from the outcome group column in the targetDesignatorCanvasOutcomeDf
             outcomeGroupTitle = (
-                targetAccountName if str(outcomeParentGuid).strip() == "nan" 
+                p1_targetAccountName if str(outcomeParentGuid).strip() == "nan" 
                 else targetDesignatorCanvasOutcomeDf.loc[outcomeGroupIndexSearch[0], 'title']
                 )
 
@@ -1052,7 +1094,7 @@ def getUniqueOutcomesAndOutcomeCoursesDict (p1_localSetup, p1_errorHandler, p3_i
                 "Outcome Group Title": outcomeGroupTitle,
                 "Outcome Canvas Id": outcomeCanvasId,
                 "Outcome Group Id": outcomeGroupCanvasId,
-                "Outcome Group is Root Account" : True if outcomeGroupTitle == targetAccountName else False
+                "Outcome Group is Root Account" : True if outcomeGroupTitle == p1_targetAccountName else False
             }
 
 

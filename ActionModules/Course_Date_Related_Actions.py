@@ -430,12 +430,10 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
                     and isOutcomeCourse
                     ):                
                     
-                        ## Make a list of the unique outcomes that are not blank 
-                        ## and a diMct to hold the course id of the course named after each outcome
-                        uniqueOutcomes, outcomeCourseDict = getUniqueOutcomesAndOutcomeCoursesDict(localSetup, errorHandler, p1_inputTerm, completeActiveCanvasCoursesDF, p1_targetDesignator)
-
-                        ## Remove any outcomes that don't have corresponding courses
-                        auxiliaryDfDict["Active Outcome Courses DF"] = removeMissingOutcomes (localSetup, errorHandler, auxiliaryDfDict["Active Outcome Courses DF"], uniqueOutcomes, outcomeCourseDict)
+                        ## Use the pre-computed unique outcomes and outcome course dict
+                        ## from retrieveDataForRelevantCommunication (already called above)
+                        uniqueOutcomes = auxiliaryDfDict["Unique Outcomes"]
+                        outcomeCourseDict = auxiliaryDfDict["Outcome Canvas Data Dict"]
                     
                         ## Start a thread to make sure the outcome has been added to the course
                         addOutcomeThread = threading.Thread(

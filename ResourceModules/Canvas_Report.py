@@ -85,7 +85,7 @@ class CanvasReport:
             termPrefix = self.termCode[:2]
 
             # Determine term name (Fall, Spring, Summer)
-            termName = undgTermsCodesToWordsDict.get(termPrefix) or gradTermsCodesToWordsDict.get(termPrefix)
+            termName = undgTermsCodesToWordsDict.get(termPrefix, "") or gradTermsCodesToWordsDict.get(termPrefix, "")
 
             # Determine course level based on prefix
             courseLevel = "Graduate" if termPrefix in gradTermsCodesToWordsDict.keys() else "Undergraduate"
@@ -117,25 +117,11 @@ class CanvasReport:
     def getOrCreateReport(self, attempt=0, maxAttempts=3):
         ## Define the API endpoint, adjusting for account if needed
         apiUrl = f"{coreCanvasApiUrl}accounts/{self.accountCanvasID}/reports/{self.endpoint}" if self.accountCanvasID else self.apiUrl
-
-        ## Get the first page of the index of reports to check for an already running report
-        # indexResponse, _ = makeApiCall(self.localSetup, p1_header=self.header, p1_apiUrl=apiUrl, p1_apiCallType="get", firstPageOnly=True)
-        # indexData = indexResponse.json()
-        # activeReport = next((r for r in indexData if r.get('status') in ['running', 'pending']), None)
-
-        ## Define report ID and status URL variables
-        # reportID = None
-        # self.statusUrl = None
-
-        ## IF there is an active report
-        # if activeReport:
-        #     ## Set the report ID and status URL
-        #     reportID = activeReport['id']
-        #     self.statusUrl = f"{apiUrl}/{reportID}"
-        #     self.localSetup.logger.info(f"Found active report (ID: {reportID}). Monitoring progress...")
-        # else:
-            ## No active report, create a new one
-        response, _ = makeApiCall(self.localSetup, p1_header=self.header, p1_apiUrl=apiUrl, p1_payload=self.payload, p1_apiCallType="post")
+        apiResult = makeApiCall(self.localSetup, p1_header=self.header, p1_apiUrl=apiUrl, p1_payload=self.payload, p1_apiCallType="post")
+        if not apiResult:
+            self.localSetup.logger.error("Failed to create new report. No response from API.")
+            return None
+        response, _ = apiResult
         if response.status_code != 200:
             self.localSetup.logger.error(f"Failed to create new report. Status: {response.status_code}")
             return None
@@ -144,10 +130,14 @@ class CanvasReport:
 
         # Poll the report status until it's ready
         while True:
-            statusResponse, _ = makeApiCall(self.localSetup, p1_header=self.header, p1_apiUrl=self.statusUrl, p1_apiCallType="get")
+            statusResult = makeApiCall(self.localSetup, p1_header=self.header, p1_apiUrl=self.statusUrl, p1_apiCallType="get")
+            if not statusResult:
+                self.localSetup.logger.error("Failed to get report status. No response from API.")
+                return None
+            statusResponse, _ = statusResult
             statusData = json.loads(statusResponse.text)
-            #if statusResponse.status_code != 200:
-                #raise Exception(f"Failed to get report status. HTTP {statusResponse.status_code}")
+            if statusResponse.status_code != 200:
+                 Exception(f"Failed to get report status. HTTP {statusResponse.status_code}")
             if statusData.get("progress") == 100:
                 break
             time.sleep(10)
@@ -157,7 +147,6 @@ class CanvasReport:
             if attempt < maxAttempts:
                 time.sleep(5)
                 return self.getOrCreateReport(attempt + 1, maxAttempts)
-            #raise Exception("Canvas report failed after multiple attempts.")
 
         # Download the report file
         downloadUrl = statusData["attachment"]["url"]
@@ -167,70 +156,7 @@ class CanvasReport:
             if attempt < maxAttempts:
                 time.sleep(5)
                 return self.getOrCreateReport(attempt + 1, maxAttempts)
-            #raise Exception("Downloaded Canvas report file is empty after multiple attempts.")
         return self.filePath
-    
-    ## Get or create the report, monitoring its status until completion
-    # def getOrCreateReport(self, pollInterval=10):
-    #     """
-    #     Checks if a report of this type is already running or completed.
-    #     Monitors it until completion or creates a new one if none exist.
-    #     Downloads the file when ready and returns the file path.
-    #     """
-    #     # Build index URL for this report type
-    #     indexUrl = f"{coreCanvasApiUrl}accounts/{self.accountCanvasID}/reports/{self.endpoint}"
-    #     self.localSetup.logger.info(f"Checking for existing {self.endpoint} reports...")
-    #     response, _ = makeApiCall(self.localSetup, p1_header=self.header, p1_apiUrl=indexUrl, p1_apiCallType="get", firstPageOnly=True)
-
-    #     if response.status_code != 200:
-    #         self.localSetup.logger.warning(f"Failed to retrieve report index for {self.endpoint}. Status: {response.status_code}")
-    #         return None
-
-    #     reportInstances = response.json()
-    #     activeReport = next((r for r in reportInstances if r.get('status') in ['running', 'pending']), None)
-
-    #     # If active report exists, monitor it
-    #     if activeReport:
-    #         reportId = activeReport['id']
-    #         statusUrl = f"{indexUrl}/{reportId}"
-    #         self.localSetup.logger.info(f"Found active report (ID: {reportId}). Monitoring progress...")
-    #         while True:
-    #             statusResponse, _ = makeApiCall(self.localSetup, p1_header=self.header, p1_apiUrl=statusUrl, p1_apiCallType="get")
-    #             statusData = statusResponse.json()
-    #             progress = statusData.get('progress', 0)
-    #             self.localSetup.logger.info(f"Report progress: {progress}%")
-    #             if statusData.get('status') == 'complete':
-    #                 downloadUrl = statusData.get('file_url') or statusData.get('attachment', {}).get('url')
-    #                 if downloadUrl:
-    #                     downloadFile(self.localSetup, downloadUrl, self.filePath, "w")
-    #                     return self.filePath
-    #             time.sleep(pollInterval)
-
-    #     # No active report, create a new one
-    #     createUrl = indexUrl
-    #     self.localSetup.logger.info(f"No active report found. Creating new {self.endpoint} report...")
-    #     createResponse, _ = makeApiCall(self.localSetup, p1_header=self.header, p1_apiUrl=createUrl, p1_payload=self.payload, p1_apiCallType="post")
-
-    #     if createResponse.status_code != 200:
-    #         self.localSetup.logger.error(f"Failed to create new report. Status: {createResponse.status_code}")
-    #         return None
-
-    #     newReport = createResponse.json()
-    #     reportId = newReport['id']
-    #     statusUrl = f"{indexUrl}/{reportId}"
-    #     self.localSetup.logger.info(f"New report created (ID: {reportId}). Monitoring progress...")
-
-    #     while True:
-    #         statusResponse, _ = makeApiCall(self.localSetup, p1_header=self.header, p1_apiUrl=statusUrl, p1_apiCallType="get")
-    #         statusData = statusResponse.json()
-    #         progress = statusData.get('progress', 0)
-    #         self.localSetup.logger.info(f"Report progress: {progress}%")
-    #         if statusData.get('status') == 'complete':
-    #             downloadUrl = statusData.get('file_url') or statusData.get('attachment', {}).get('url')
-    #             if downloadUrl:
-    #                 downloadFile(self.localSetup, downloadUrl, self.filePath, "w")
-    #                 return self.filePath
-    #         time.sleep(pollInterval)
 
     ## Get the current report if it's fresh, otherwise request a new one
     def getCurrentReport(self, maxAgeHours=3.5):
@@ -250,7 +176,7 @@ class CanvasReport:
             except EmptyDataError:
                 time.sleep(3)
             attempt += 1
-        return targetDf
+        return targetDf if targetDf is not None else pd.DataFrame()
 
 
     
@@ -274,7 +200,8 @@ class CanvasReport:
             return df
         except Exception as Error:
             localSetup.logger.error(f"Error in {methodName}: {Error}")
-            #raise
+            
+            return pd.DataFrame()  # Return empty DataFrame on error
 
 
     @classmethod
@@ -297,7 +224,8 @@ class CanvasReport:
             return df
         except Exception as Error:
             localSetup.logger.error(f"Error in {methodName}: {Error}")
-            #raise
+            
+            return pd.DataFrame()  # Return empty DataFrame on error
 
 
     @classmethod
@@ -321,7 +249,8 @@ class CanvasReport:
             return df
         except Exception as Error:
             localSetup.logger.error(f"Error in {methodName}: {Error}")
-            #raise
+            return pd.DataFrame()  # Return empty DataFrame on error
+            
 
 
     @classmethod
@@ -346,7 +275,8 @@ class CanvasReport:
             return df
         except Exception as Error:
             localSetup.logger.error(f"Error in {methodName} for term={term}: {Error}")
-            #raise
+            return pd.DataFrame()  # Return empty DataFrame on error
+            
 
 
     @classmethod
@@ -370,7 +300,8 @@ class CanvasReport:
             return df
         except Exception as Error:
             localSetup.logger.error(f"Error in {methodName} for term={term}: {Error}")
-            #raise
+            return pd.DataFrame()  # Return empty DataFrame on error
+            
 
 
     @classmethod
@@ -394,7 +325,8 @@ class CanvasReport:
             return df
         except Exception as Error:
             localSetup.logger.error(f"Error in {methodName} for term={term}: {Error}")
-            #raise
+            
+            return pd.DataFrame()  # Return empty DataFrame on error
 
     @classmethod
     def getOutcomesDf(cls, localSetup, term, account, targetDesignator=""):
@@ -431,6 +363,9 @@ class CanvasReport:
 
             ## Download the file and get the path
             targetDestination = report.getCurrentReport()
+            if not targetDestination:
+                localSetup.logger.error(f"{methodName}: Failed to get report for term={term}, account={account}.")
+                return pd.DataFrame()
 
             # Wait until file has content
             downloadedFileLines = []
@@ -485,7 +420,8 @@ class CanvasReport:
 
         except Exception as Error:
             localSetup.logger.error(f"Error in {methodName} for term={term}, account={account}: {Error}")
-            #raise
+            
+            return pd.DataFrame()  # Return empty DataFrame on error
 
     @classmethod
     def getOutcomeResultsDf(cls, localSetup, term, account, targetDesignator=""):
@@ -527,8 +463,9 @@ class CanvasReport:
             return df
         except Exception as Error:
             localSetup.logger.error(f"Error in {methodName} for term={term}, account={account}: {Error}")
-            #raise
-    
+            
+            return pd.DataFrame()  # Return empty DataFrame on error
+
     @classmethod
     def getUnpublishedCoursesDf(cls, localSetup, term):
 
@@ -561,10 +498,11 @@ class CanvasReport:
             return df
         except Exception as Error:
             localSetup.logger.error(f"Error in {methodName} for term={term}: {Error}")
-            #raise
- 
+            
+            return pd.DataFrame()  # Return empty DataFrame on error
+
     @classmethod
-    def getCanvasUserLastAccessDf(cls, localSetup):  
+    def getCanvasUserLastAccessDf(cls, localSetup):
         """
     Retrieve the Canvas Last User Access report as a pandas DataFrame.
     
@@ -588,7 +526,8 @@ class CanvasReport:
             return df
         except Exception as Error:
             localSetup.logger.error(f"Error in {methodName}: {Error}")
-            #raise
+            
+            return pd.DataFrame()  # Return empty DataFrame on error
 
     @classmethod
     def getGpsStudentsDf(cls, localSetup, term):    
@@ -629,7 +568,8 @@ class CanvasReport:
             return gpsUsers
         except Exception as Error:
             localSetup.logger.error(f"Error in {methodName} for term={term}: {Error}")
-            #raise
+            
+            return pd.DataFrame()  # Return empty DataFrame on error
 
 
     @classmethod
@@ -672,7 +612,8 @@ class CanvasReport:
             return tugUsers
         except Exception as Error:
             localSetup.logger.error(f"Error in {methodName} for term={term}: {Error}")
-            #raise
+            
+            return pd.DataFrame()  # Return empty DataFrame on error
 
     @classmethod
     def getActiveOutcomeCoursesDf(cls, localSetup, term, targetDesignator):
@@ -862,7 +803,7 @@ class CanvasReport:
                         crosslistedSectionIndex = sectionsDf[sectionsDf["canvas_section_id"] == crosslistedCanvasSectionId].index[0]
 
                         ## Get the long name of the crosslistedCanvasCourseId
-                        crosslistedCourseName = sectionsDf.loc[crosslistedSectionIndex, "name"]
+                        crosslistedCourseName = str(sectionsDf.loc[crosslistedSectionIndex, "name"])
 
                         ## Define variables to hold the course code and sis id
                         crosslistedCourseCode = None
@@ -988,11 +929,11 @@ class CanvasReport:
                                 activeCourseDict[newInstructorNameKey].append("")
                                 activeCourseDict[newInstructorEmailKey].append("")
                                         
-                            ## Set the targetInstructorIDColumn to the newInstructorIDColumn
-                            targetInstructorIDColumn = newInstructorIDKey
+                            ## Set the targetInstructorIDKey to the newInstructorIDKey
+                            targetInstructorIDKey = newInstructorIDKey
 
-                        ## Set the instructor's id to the targetInstructorIDColumn at the courseIndex
-                        activeCourseDict[targetInstructorIDColumn][targetIndex] = row["user_id"]
+                        ## Set the instructor's id to the targetInstructorIDKey at the courseIndex
+                        activeCourseDict[targetInstructorIDKey][targetIndex] = row["user_id"]
 
             ## Keep only active courses with students
             indicesToRemove = [i for i, count in enumerate(activeCourseDict["Number_of_students"]) if count == 0]
@@ -1060,7 +1001,8 @@ class CanvasReport:
 
         except Exception as Error:
             localSetup.logger.error(f"Error in {methodName}: {Error}")
-            #raise
+            
+            return pd.DataFrame()  # Return empty DataFrame on error
 
     @classmethod
     def determineDepartmentSavePath(cls, localSetup, courseAccountId):
@@ -1099,14 +1041,27 @@ class CanvasReport:
             accountSavePath = f"{accountName}\\"
 
             # Traverse parent accounts until root
-            targetAccountParentID = departmentSavePathsDF["canvas_parent_id"][accountRow]
-            while pd.notna(targetAccountParentID) and targetAccountParentID != 1:
+            _rawParentId = departmentSavePathsDF["canvas_parent_id"][accountRow]
+            targetAccountParentID: int | None = None
+            if isinstance(_rawParentId, (int, float)):
+                try:
+                    targetAccountParentID = int(_rawParentId)
+                except (ValueError, TypeError, OverflowError):
+                    pass
+            while targetAccountParentID is not None and targetAccountParentID != 1:
                 parentAccountRow = departmentSavePathsDF.index.get_loc(
                     departmentSavePathsDF[departmentSavePathsDF["canvas_account_id"] == targetAccountParentID].index[0]
                 )
                 targetAccountName = departmentSavePathsDF["name"][parentAccountRow]
                 accountSavePath = f"{targetAccountName}\\{accountSavePath}"
-                targetAccountParentID = departmentSavePathsDF["canvas_parent_id"][parentAccountRow]
+                _rawParentId = departmentSavePathsDF["canvas_parent_id"][parentAccountRow]
+                if isinstance(_rawParentId, (int, float)):
+                    try:
+                        targetAccountParentID = int(_rawParentId)
+                    except (ValueError, TypeError, OverflowError):
+                        targetAccountParentID = None
+                else:
+                    targetAccountParentID = None
 
             # Clean up path formatting for department/college names
             if len(accountSavePath.rsplit("\\")) > 3:
@@ -1137,7 +1092,7 @@ class CanvasReport:
 
         except Exception as Error:
             localSetup.logger.error(f"Error in {methodName}: {Error}")
-            #raise
+            return ""  # Return empty string on error
 
 
 
@@ -1198,7 +1153,7 @@ class CanvasReport:
 
             if not rawOutputFilePath or not os.path.exists(rawOutputFilePath):
                 localSetup.logger.error(f"Outcome file not found: {rawOutputFilePath}")
-                return None
+                return pd.DataFrame()  # Return empty DataFrame on error
 
             # Choose engine based on extension
             fileExt = os.path.splitext(rawOutputFilePath)[1].lower()
@@ -1279,7 +1234,7 @@ class CanvasReport:
 
         except Exception as Error:
             localSetup.logger.error(f"Error in _getOutcomeAssociatedCourseCodesDf: {Error}")
-            return pd.dataframe()
+            return pd.DataFrame()  # Return empty DataFrame on error
 
 
 if __name__ == "__main__":
@@ -1346,7 +1301,7 @@ if __name__ == "__main__":
             elif choice == '6':
                 print(CanvasReport.getCoursesDf(localSetup, term))
             elif choice == '7':
-                print(CanvasReport.getSectionsDf(localSetup, term))
+                print(CanvasReport.getSectionsDf(localSetup, term or "All"))
             elif choice == '8':
                 print(CanvasReport.getOutcomesDf(localSetup, term, account))
             elif choice == '9':
@@ -1367,7 +1322,7 @@ if __name__ == "__main__":
                 print(CanvasReport.getCanvasUserLastAccessDf(localSetup))
                 print(CanvasReport.getEnrollmentsDf(localSetup, term))
                 print(CanvasReport.getCoursesDf(localSetup, term))
-                print(CanvasReport.getSectionsDf(localSetup, term))
+                print(CanvasReport.getSectionsDf(localSetup, term or "All"))
                 print(CanvasReport.getUnpublishedCoursesDf(localSetup, term))
                 print(CanvasReport.getGpsStudentsDf(localSetup, term))
                 print(CanvasReport.getTugStudentsDf(localSetup, term))

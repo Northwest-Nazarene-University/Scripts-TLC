@@ -27,6 +27,7 @@ from ActionModules.Enroll_GPS_Students_In_Grad_Hub import enrollGPSStudentsInGra
 from ActionModules.Course_Date_Related_Actions import termDetermineAndPerformRelevantActions
 from ActionModules.Change_Syllabus_Tab import updateCourseSyllabusTab
 from ActionModules.Send_Catalog_To_Simple_Syllabus import processCatalogCoursesAndUploadToSimpleSyllabus
+from ActionModules.Send_Course_Editors_To_Simple_Syllabus import processCourseEditorsAndUploadToSimpleSyllabus
 
 ## Define the script name, purpose, and external requirements for logging and error reporting purposes
 scriptName = os.path.basename(__file__).replace(".py", "")
@@ -470,7 +471,10 @@ def oneTimeDaily (p1_currentTerm, p1_relaventTerms):
 
         ## Ensure the current course catalog is processed and uploaded to Simple Syllabus for the current term
         processCatalogCoursesAndUploadToSimpleSyllabus()
-            
+
+        ## Process and upload Course Editor file to Simple Syllabus (depends on Course Extract from catalog above)
+        processCourseEditorsAndUploadToSimpleSyllabus()
+
         ## If the term is the summer term, change it to fall for the purpose of enrolling TUG students in SGA
         enrollTugStudentsInSgaThread = threading.Thread(target=enrollTugStudentsInSga, args=(p1_currentTerm.replace("SU","FA"),))
 
