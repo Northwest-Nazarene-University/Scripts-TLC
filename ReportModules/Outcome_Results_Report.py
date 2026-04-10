@@ -3,7 +3,8 @@
 
 
 from datetime import datetime
-import traceback, os, logging, sys, re, threading, shutil, ast, json
+import traceback, os, logging, sys, re, shutil, ast, json
+from concurrent.futures import ThreadPoolExecutor
 import pandas as pd, numpy as np, time
 
 ## Add Script repository to syspath
@@ -661,78 +662,67 @@ def targetDesignatorProcessOutcomeResults(
         ## Create a list of the unique student-course-outcome ids
         ##uniqueStudentCourseIds = p1_outcomeResultDF["student-course-outcome id"].unique()
 
-        ## Create a list to hold active threads
-        activeThreadsList = []
+        ## Process each course in a thread pool
+        MAX_WORKERS = 25
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
 
-        ## For each active Canvas Outcome Course
-        for index, courseDict in p1_activeCanvasOutcomeCoursesDf.iterrows():
+            ## For each active Canvas Outcome Course
+            for index, courseDict in p1_activeCanvasOutcomeCoursesDf.iterrows():
 
-            ## If the courseDict's course_sis_id has 3400 in it
-            ##if "COMM1210" in courseDict["Course_sis_id"]:
-            
-                ## Define a target course variables
-                targetCourseSisId = courseDict["Course_sis_id"]
-                targetCourseName = courseDict["Course_name"]
-                targetSectionId = courseDict["Section_id"]
+                ## If the courseDict's course_sis_id has 3400 in it
+                ##if "COMM1210" in courseDict["Course_sis_id"]:
 
-                ## If there is a non nan Parent_Course_sis_id
-                if not pd.isna(courseDict["Parent_Course_sis_id"]) and courseDict["Parent_Course_sis_id"] not in ["", None]:
+                    ## Define a target course variables
+                    targetCourseSisId = courseDict["Course_sis_id"]
+                    targetCourseName = courseDict["Course_name"]
+                    targetSectionId = courseDict["Section_id"]
 
-                    ## Set the target course sis id to the Parent_Course_sis_id
-                    targetCourseSisId = courseDict["Parent_Course_sis_id"]
+                    ## If there is a non nan Parent_Course_sis_id
+                    if not pd.isna(courseDict["Parent_Course_sis_id"]) and courseDict["Parent_Course_sis_id"] not in ["", None]:
 
-                    ## Find the index of the Parent_Course_sis_id in the activeCanvasOutcomeCoursesDf
-                    parentCourseIndex = p1_activeCanvasOutcomeCoursesDf[p1_activeCanvasOutcomeCoursesDf["Course_sis_id"] == targetCourseSisId].index[0]
+                        ## Set the target course sis id to the Parent_Course_sis_id
+                        targetCourseSisId = courseDict["Parent_Course_sis_id"]
 
-                    ## Set the target course name to the Parent_Course_sis_id's course name
-                    targetCourseName = p1_activeCanvasOutcomeCoursesDf.at[parentCourseIndex, "Course_name"]
-            
-                ## Make a filtered p1_termEnrollmentDf for the target course using the target course sis id and the canvas_section_id
-                targetTermEnrollmentDf = p1_termEnrollmentDf[
-                    (p1_termEnrollmentDf["course_id"] == targetCourseSisId)
-                    & (p1_termEnrollmentDf["canvas_section_id"] == targetSectionId)
-                    ]
+                        ## Find the index of the Parent_Course_sis_id in the activeCanvasOutcomeCoursesDf
+                        parentCourseIndex = p1_activeCanvasOutcomeCoursesDf[p1_activeCanvasOutcomeCoursesDf["Course_sis_id"] == targetCourseSisId].index[0]
 
-                ## Make a filtered p1_outcomeResultDF for the current course using the target course sis id amd section id
-                targetOutcomeResultsDf = p1_outcomeResultDF[
-                    (p1_outcomeResultDF["course sis id"] == targetCourseSisId)
-                    & (p1_outcomeResultDF["section id"] == targetSectionId)
-                    ]
-                
-                ## Make a filtered outcomeResultReportDF for the current course
-                targetOutcomeResultReportDf = outcomeResultReportDF[outcomeResultReportDF["Course_name"] == targetCourseName]
-                
-                ## test without threading
-                # termCompileCourseOutcomesScores(
-                #     courseDict
-                #     , targetTermEnrollmentDf
-                #     , targetOutcomeResultsDf
-                #     , targetOutcomeResultReportDf
-                #     , outcomeResultsDashboardDataDictList
-                #     , p1_uniqueOutcomeInfoDictOfDicts
-                # )
+                        ## Set the target course name to the Parent_Course_sis_id's course name
+                        targetCourseName = p1_activeCanvasOutcomeCoursesDf.at[parentCourseIndex, "Course_name"]
 
-                currentThread = threading.Thread(target=termCompileCourseOutcomesScores
-                                                    , args=(courseDict
-                                                            , targetTermEnrollmentDf
-                                                            , targetOutcomeResultsDf
-                                                            , targetOutcomeResultReportDf
-                                                            , outcomeResultsDashboardDataDictList
-                                                            , p1_uniqueOutcomeInfoDictOfDicts
-                                                            )
-                                                    )
-                
-                ## Start the thread
-                currentThread.start()
-                
-                ## Append the thread to the active threads list
-                activeThreadsList.append(currentThread)
-            
-        ## For each active thread
-        for thread in activeThreadsList:
+                    ## Make a filtered p1_termEnrollmentDf for the target course using the target course sis id and the canvas_section_id
+                    targetTermEnrollmentDf = p1_termEnrollmentDf[
+                        (p1_termEnrollmentDf["course_id"] == targetCourseSisId)
+                        & (p1_termEnrollmentDf["canvas_section_id"] == targetSectionId)
+                        ]
 
-            ## Join the thread
-            thread.join()
+                    ## Make a filtered p1_outcomeResultDF for the current course using the target course sis id amd section id
+                    targetOutcomeResultsDf = p1_outcomeResultDF[
+                        (p1_outcomeResultDF["course sis id"] == targetCourseSisId)
+                        & (p1_outcomeResultDF["section id"] == targetSectionId)
+                        ]
+
+                    ## Make a filtered outcomeResultReportDF for the current course
+                    targetOutcomeResultReportDf = outcomeResultReportDF[outcomeResultReportDF["Course_name"] == targetCourseName]
+
+                    ## test without threading
+                    # termCompileCourseOutcomesScores(
+                    #     courseDict
+                    #     , targetTermEnrollmentDf
+                    #     , targetOutcomeResultsDf
+                    #     , targetOutcomeResultReportDf
+                    #     , outcomeResultsDashboardDataDictList
+                    #     , p1_uniqueOutcomeInfoDictOfDicts
+                    # )
+
+                    ## Submit the task to the thread pool
+                    executor.submit(termCompileCourseOutcomesScores
+                                                        , courseDict
+                                                        , targetTermEnrollmentDf
+                                                        , targetOutcomeResultsDf
+                                                        , targetOutcomeResultReportDf
+                                                        , outcomeResultsDashboardDataDictList
+                                                        , p1_uniqueOutcomeInfoDictOfDicts
+                                                        )
             
 
         ## If there are any dashboard dicts in the outcomeResultsDashboardDataDictList

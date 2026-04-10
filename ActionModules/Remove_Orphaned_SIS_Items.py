@@ -2,7 +2,8 @@
 ## Last Updated by: Bryce Miller
 
 ## Import necessary modules
-import os, sys, threading, pandas as pd
+import os, sys, pandas as pd
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from dateutil import parser as dateutil_parser
 
@@ -113,7 +114,7 @@ def buildTermDateLookup():
 def resolveCourseDates(courseRow, termDateDict):
     """
     Return (startDatetime, endDatetime) for a course row.
-    Prefers course‑level dates; falls back to Canvas term dates.
+    Prefers course-level dates; falls back to Canvas term dates.
     """
     functionName = "resolveCourseDates"
     try:
@@ -179,10 +180,10 @@ def processOrphanedCourse(courseRow, activeEnrollmentsDf, summary):
     """
     For one orphaned course:
       1. Check for gradebook scores.
-      2. If grades exist → email + skip.
-      3. If no grades and has enrollments → delete enrollments, delete course, email.
-      4. If no grades and no enrollments → delete course silently.
-    *summary* is a dict with thread‑safe lists for aggregating counts.
+      2. If grades exist -> email + skip.
+      3. If no grades and has enrollments -> delete enrollments, delete course, email.
+      4. If no grades and no enrollments -> delete course silently.
+    *summary* is a dict with thread-safe lists for aggregating counts.
     """
     functionName = "processOrphanedCourse"
     try:
@@ -198,13 +199,13 @@ def processOrphanedCourse(courseRow, activeEnrollmentsDf, summary):
         if hasGrades:
             localSetup.logger.warning(
                 f"Orphaned course {courseId} (canvas_course_id={canvasCourseId}) has "
-                f"{scoredCount} scored submission(s) — skipping deletion, sending email"
+                f"{scoredCount} scored submission(s) -- skipping deletion, sending email"
             )
 
-            emailSubject = f"Orphaned SIS Course Has Grades — Manual Review Required: {courseId}"
+            emailSubject = f"Orphaned SIS Course Has Grades -- Manual Review Required: {courseId}"
             emailBody = (
                 f"<!DOCTYPE html><html><body>"
-                f"<p>The following SIS‑created Canvas course is no longer in the SIS feed but contains "
+                f"<p>The following SIS-created Canvas course is no longer in the SIS feed but contains "
                 f"graded student submissions and was <b>not</b> deleted.</p>"
                 f"<ul>"
                 f"<li><b>Course SIS ID:</b> {courseId}</li>"
@@ -283,7 +284,7 @@ def processOrphanedCourse(courseRow, activeEnrollmentsDf, summary):
             emailSubject = f"Orphaned SIS Course With Enrollments Deleted: {courseId}"
             emailBody = (
                 f"<!DOCTYPE html><html><body>"
-                f"<p>The following SIS‑created Canvas course was no longer in the SIS feed, "
+                f"<p>The following SIS-created Canvas course was no longer in the SIS feed, "
                 f"contained no graded submissions, and has been <b>deleted</b>.</p>"
                 f"<ul>"
                 f"<li><b>Course SIS ID:</b> {courseId}</li>"
@@ -318,7 +319,7 @@ def processOrphanedCourse(courseRow, activeEnrollmentsDf, summary):
 
             if response and response.status_code == 200:
                 localSetup.logger.info(
-                    f"Silently deleted orphaned course {courseId} (canvas_course_id={canvasCourseId}) — "
+                    f"Silently deleted orphaned course {courseId} (canvas_course_id={canvasCourseId}) -- "
                     f"no enrollments, no grades"
                 )
             else:
@@ -458,7 +459,7 @@ def removeOrphanedSisItems():
         canvasEnrollDf  = pd.concat(allEnrollmentsDfs, ignore_index=True) if allEnrollmentsDfs else pd.DataFrame()
 
         if canvasCoursesDf.empty:
-            localSetup.logger.info("No Canvas courses found across relevant terms — nothing to do")
+            localSetup.logger.info("No Canvas courses found across relevant terms -- nothing to do")
             return
         if canvasEnrollDf.empty:
             localSetup.logger.info("No Canvas enrollments found across relevant terms")
@@ -471,7 +472,7 @@ def removeOrphanedSisItems():
             canvasEnrollDf = canvasEnrollDf[canvasEnrollDf["status"].astype(str).str.lower() == "active"].copy()
 
         localSetup.logger.info(
-            f"After active‑status filter: {len(canvasCoursesDf)} active courses, "
+            f"After active-status filter: {len(canvasCoursesDf)} active courses, "
             f"{len(canvasEnrollDf)} active enrollments"
         )
 
@@ -490,14 +491,15 @@ def removeOrphanedSisItems():
 
         canvasCoursesDf = canvasCoursesDf[inWindowMask].copy()
         localSetup.logger.info(
-            f"After SIS date‑window filter: {len(canvasCoursesDf)} active courses within window"
+            f"After SIS date-window filter: {len(canvasCoursesDf)} active courses within window"
         )
 
         ## ══════════════════════════════════════════════════════════════════════
         ## Step 2: Identify orphaned courses
         ## ══════════════════════════════════════════════════════════════════════
         orphanedCoursesDf = canvasCoursesDf[
-            (canvasCoursesDf["created_by_sis"] == True)
+            (canvasCoursesDf["created_by_sis"].astype(str).str.lower() == "true")
+            & (canvasCoursesDf["status"].astype(str).str.lower() == "active")
             & (~canvasCoursesDf["course_id"].isin(activeSisCourseIds))
         ].copy()
 
@@ -512,8 +514,11 @@ def removeOrphanedSisItems():
         orphanedEnrollRows = []
         if not canvasEnrollDf.empty:
             for _, eRow in canvasEnrollDf.iterrows():
-                ## Must be SIS‑created
-                if eRow.get("created_by_sis") != True:
+                ## Skip any that are not SIS‑created and active
+                if (
+                    str(eRow.get("created_by_sis", "")).lower() != "true"
+                    or str(eRow.get("status", "")).lower() != "active"
+                ):
                     continue
                 ## Parent course must NOT be in the orphaned‑courses set
                 if eRow["canvas_course_id"] in orphanedCanvasCourseIds:
@@ -528,11 +533,11 @@ def removeOrphanedSisItems():
                     orphanedEnrollRows.append(eRow)
 
         localSetup.logger.info(
-            f"Identified {len(orphanedEnrollRows)} orphaned enrollment(s) in still‑active courses"
+            f"Identified {len(orphanedEnrollRows)} orphaned enrollment(s) in still-active courses"
         )
 
-        ## ══════════════════════════════════════════════════════════════════════
-        ## Step 4 & 5: Process orphaned courses and enrollments in threads
+        ## ═══════════════════════════════════════════════���══════════════════════
+        ## Step 4 & 5: Process orphaned courses and enrollments in batches
         ## ══════════════════════════════════════════════════════════════════════
         ## Thread‑safe summary (lists are append‑safe in CPython)
         summary = {
@@ -542,36 +547,36 @@ def removeOrphanedSisItems():
             "orphaned_enrollments_deleted": [],
         }
 
-        allThreads = []
+        MAX_WORKERS = 25  ## Max concurrent threads in the pool
 
         ## ── Orphaned courses ─────────────────────────────────────────────────
-        for _, courseRow in orphanedCoursesDf.iterrows():
-            t = threading.Thread(
-                target=processOrphanedCourse,
-                args=(courseRow, canvasEnrollDf, summary),
-            )
-            allThreads.append(t)
-            t.start()
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            futures = [
+                executor.submit(processOrphanedCourse, courseRow, canvasEnrollDf, summary)
+                for _, courseRow in orphanedCoursesDf.iterrows()
+            ]
+            for i, future in enumerate(as_completed(futures), 1):
+                if i % MAX_WORKERS == 0:
+                    localSetup.logger.info(f"Orphaned courses: {i} threads completed")
+            localSetup.logger.info(f"Orphaned courses: all {len(futures)} threads completed")
 
         ## ── Orphaned enrollments ─────────────────────────────────────────────
-        for enrollRow in orphanedEnrollRows:
-            t = threading.Thread(
-                target=processOrphanedEnrollment,
-                args=(enrollRow, summary),
-            )
-            allThreads.append(t)
-            t.start()
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            futures = [
+                executor.submit(processOrphanedEnrollment, enrollRow, summary)
+                for enrollRow in orphanedEnrollRows
+            ]
+            for i, future in enumerate(as_completed(futures), 1):
+                if i % MAX_WORKERS == 0:
+                    localSetup.logger.info(f"Orphaned enrollments: {i} threads completed")
+            localSetup.logger.info(f"Orphaned enrollments: all {len(futures)} threads completed")
 
-        ## ── Wait for all threads to complete ─────────────────────────────────
-        for t in allThreads:
-            t.join()
-
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ════════════════════════════════════════════════════════════════��═════
         ## Step 7: Final summary log
         ## ══════════════════════════════════════════════════════════════════════
-        localSetup.logger.info("═══════════════════════════════════════════════")
-        localSetup.logger.info("        Remove Orphaned SIS Items — Summary")
-        localSetup.logger.info("═══════════════════════════════════════════════")
+        localSetup.logger.info("===============================================")
+        localSetup.logger.info("        Remove Orphaned SIS Items -- Summary")
+        localSetup.logger.info("===============================================")
         localSetup.logger.info(
             f"  Courses deleted silently (no enrollments, no grades): "
             f"{len(summary['deleted_silently'])}"
@@ -581,14 +586,14 @@ def removeOrphanedSisItems():
             f"{len(summary['deleted_with_enrollments'])}"
         )
         localSetup.logger.info(
-            f"  Courses skipped — grades found (email sent): "
+            f"  Courses skipped -- grades found (email sent): "
             f"{len(summary['skipped_grades'])}"
         )
         localSetup.logger.info(
-            f"  Orphaned enrollments deleted (in still‑active courses): "
+            f"  Orphaned enrollments deleted (in still-active courses): "
             f"{len(summary['orphaned_enrollments_deleted'])}"
         )
-        localSetup.logger.info("═══════════════════════════════════════════════")
+        localSetup.logger.info("===============================================")
 
     except Exception as Error:
         errorHandler.sendError(functionName, Error)

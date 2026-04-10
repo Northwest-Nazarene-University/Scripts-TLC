@@ -47,8 +47,7 @@ sys.path.append(f"{absolutePath}Scripts TLC\\ResourceModules")
 sys.path.append(f"{absolutePath}Scripts TLC\\ActionModules")
 
 ## Import local modules
-from Error_Email_API import errorEmailApi  ## Import errorEmailApi
-from Make_Api_Call import makeApiCall  ## Import makeApiCall
+from TLC_Common import makeApiCall  ## Import makeApiCall
 
 ## Canvas Instance Url
 coreCanvasApiUrl = None
@@ -68,6 +67,13 @@ logger = logging.getLogger(__name__)
 rootFormat = ("%(asctime)s %(levelname)s %(message)s")
 FORMAT = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
 logging.basicConfig(format=rootFormat, filemode="a", level=logging.INFO)
+
+## Local setup shim for compatibility with shared modules
+class _LoggerShim:
+    def __init__(self, p_logger):
+        self.logger = p_logger
+localSetup = _LoggerShim(logger)
+setOfFunctionsWithErrors = set()
 
 ## Info Log Handler
 infoLogFile = f"{baseLogPath}\\Info Log.txt"
@@ -90,24 +96,17 @@ logError.setLevel(logging.ERROR)
 logError.setFormatter(FORMAT)
 localSetup.logger.addHandler(logError)
 
-## Setup the error handler
-## an error email the first time the function triggers an error
-errorHandler = errorEmailApi(scriptName, scriptPurpose, externalRequirements, localSetup)
-
 ## This function handles function errors
-def errorHandler (p1_ErrorLocation, p1_errorInfo, sendOnce=True):
-    functionName = "## errorHandler.sendError"
+def errorHandler(p1_ErrorLocation, p1_errorInfo, sendOnce=True):
+    functionName = "errorHandler"
     localSetup.logger.error(f"\nA script error occurred while running {p1_ErrorLocation}. Error: {str(p1_errorInfo)}")
 
-    ## If the function with the error has not already been processed send an email alert
+    ## Only log once per function
     if p1_ErrorLocation not in setOfFunctionsWithErrors:
-        errorEmailApi.sendEmailError(p2_ScriptName=scriptName, p2_ScriptPurpose=scriptPurpose,
-                                     p2_ExternalRequirements=externalRequirements,
-                                     p2_ErrorLocation=p1_ErrorLocation, p2_ErrorInfo=p1_errorInfo)
         setOfFunctionsWithErrors.add(p1_ErrorLocation)
-        localSetup.logger.error(f"\nError Email Sent")
+        localSetup.logger.error(f"\nError logged for {p1_ErrorLocation}")
     else:
-        localSetup.logger.error(f"\nError email already sent")
+        localSetup.logger.error(f"\nError already logged for {p1_ErrorLocation}")
 
 ## This function sets the long name for a course given its Canvas course ID and long name
 def setCourseLongName(p1_header, p1_courseId, p1_longName):
@@ -123,7 +122,7 @@ def setCourseLongName(p1_header, p1_courseId, p1_longName):
             localSetup.logger.warning(f"Failed to set long name for course with ID: {p1_courseId}. Status code: {response.status_code}")
 
     except Exception as Error:
-        except(functionName, Error)
+        errorHandler(functionName, Error)
 
 ## This function reads the CSV file and sets the long name for the listed courses
 def setListedCoursesLongName():
@@ -167,7 +166,7 @@ def setListedCoursesLongName():
             thread.join()
 
     except Exception as Error:
-        except(functionName, Error)
+        errorHandler(functionName, Error)
 
 if __name__ == "__main__":
     ## Set working directory

@@ -2,7 +2,8 @@
 # Last Updated by: Bryce Miller
 
 ## Import Generic Moduels
-import os, sys, threading       
+import os, sys
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 import pandas as pd
 
@@ -48,9 +49,6 @@ def termOutcomeExporter(p1_inputTerm, p1_targetDesignator):
 
     try:    
 
-        ## Make a list to hold the active add outcome threads
-        activeThreads = []
-
         ## Retrieve the data for determining and sending out relevant communication
         completeActiveCanvasCoursesDF, auxillaryDFDict = (
             retrieveDataForRelevantCommunication(
@@ -70,31 +68,13 @@ def termOutcomeExporter(p1_inputTerm, p1_targetDesignator):
             ## Return
             return
 
-        ## For each row in the active outcome course df
-        for index, row in completeActiveCanvasCoursesDF.iterrows():
+        ## Process each course in a thread pool
+        MAX_WORKERS = 25
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            for index, row in completeActiveCanvasCoursesDF.iterrows():
 
-            ## If the course is in the auxillaryDFDict active
-
-            ## Create an add outcome to course thread
-            addOutcomeThread = threading.Thread(target=addOutcomeToCourse
-                                                , args=(localSetup
-                                                        , errorHandler
-                                                        , row
-                                                        , auxillaryDFDict
-                                                        )
-                                                )
-
-            ## Start the thread
-            addOutcomeThread.start()
-
-            ## Add the thread to the active threads list
-            activeThreads.append(addOutcomeThread)
-
-        ## For each active thread
-        for thread in activeThreads:
-
-            ## Wait for the thread to finish
-            thread.join()    
+                ## Submit the add outcome task to the thread pool
+                executor.submit(addOutcomeToCourse, localSetup, errorHandler, row, auxillaryDFDict)
 
     except Exception as Error:
         errorHandler.sendError (functionName, Error)

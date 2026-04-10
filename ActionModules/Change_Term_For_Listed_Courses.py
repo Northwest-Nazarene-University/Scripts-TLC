@@ -1,7 +1,8 @@
 ## Author: Bryce Miller - brycezmiller@nnu.edu
 ## Last Updated by: Bryce Miller
 
-import traceback, os, sys, logging, requests, threading, time, pandas as pd
+import traceback, os, sys, logging, requests, pandas as pd
+from concurrent.futures import ThreadPoolExecutor
 import pandas as pd
 from datetime import datetime
 
@@ -48,8 +49,7 @@ sys.path.append(f"{absolutePath}Scripts TLC\\ResourceModules")
 sys.path.append(f"{absolutePath}Scripts TLC\\ActionModules")
 
 ## Import local modules
-from Error_Email_API import errorEmailApi  ## Import errorEmailApi
-from Make_Api_Call import makeApiCall  ## Import makeApiCall
+from TLC_Common import makeApiCall  ## Import makeApiCall
 
 ## Canvas Instance Url
 coreCanvasApiUrl = None
@@ -69,6 +69,13 @@ logger = logging.getLogger(__name__)
 rootFormat = ("%(asctime)s %(levelname)s %(message)s")
 FORMAT = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
 logging.basicConfig(format=rootFormat, filemode="a", level=logging.INFO)
+
+## Local setup shim for compatibility with shared modules
+class _LoggerShim:
+    def __init__(self, p_logger):
+        self.logger = p_logger
+localSetup = _LoggerShim(logger)
+setOfFunctionsWithErrors = set()
 
 ## Info Log Handler
 infoLogFile = f"{baseLogPath}\\Info Log.txt"
@@ -91,24 +98,17 @@ logError.setLevel(logging.ERROR)
 logError.setFormatter(FORMAT)
 localSetup.logger.addHandler(logError)
 
-## Setup the error handler
-## an error email the first time the function triggers an error
-errorHandler = errorEmailApi(scriptName, scriptPurpose, externalRequirements, localSetup)
-
 ## This function handles function errors
 def errorHandler(p1_ErrorLocation, p1_errorInfo, sendOnce=True):
-    functionName = "## errorHandler.sendError"
+    functionName = "errorHandler"
     localSetup.logger.error(f"\nA script error occurred while running {p1_ErrorLocation}. Error: {str(p1_errorInfo)}")
 
-    ## If the function with the error has not already been processed send an email alert
+    ## Only log once per function
     if p1_ErrorLocation not in setOfFunctionsWithErrors:
-        errorEmailApi.sendEmailError(p2_ScriptName=scriptName, p2_ScriptPurpose=scriptPurpose,
-                                     p2_ExternalRequirements=externalRequirements,
-                                     p2_ErrorLocation=p1_ErrorLocation, p2_ErrorInfo=p1_errorInfo)
         setOfFunctionsWithErrors.add(p1_ErrorLocation)
-        localSetup.logger.error(f"\nError Email Sent")
+        localSetup.logger.error(f"\nError logged for {p1_ErrorLocation}")
     else:
-        localSetup.logger.error(f"\nError email already sent")
+        localSetup.logger.error(f"\nError already logged for {p1_ErrorLocation}")
 
 ## This function sets the term for a course given its Canvas course ID and term ID
 def setCourseTerm(p1_header, p1_courseId, p1_termId):
@@ -124,7 +124,7 @@ def setCourseTerm(p1_header, p1_courseId, p1_termId):
             localSetup.logger.warning(f"Failed to set term for course with ID: {p1_courseId}. Status code: {response.status_code}")
 
     except Exception as Error:
-        except(functionName, Error)
+        errorHandler(functionName, Error)
 
 ## This function reads the CSV file and sets the term for the listed courses
 def setListedCoursesTerm():
@@ -133,42 +133,28 @@ def setListedCoursesTerm():
         targetCoursesCsvFilePath = f"{baseLocalInputPath}Target_Canvas_Course_Ids.csv"
         header = {'Authorization': f"Bearer {canvasAccessToken}"}
         
-        ## Define the necessary thread list
-        ongoingSetTermThreads = []
-
         ## Read the CSV file using pandas
         rawTargetCoursesDf = pd.read_csv(targetCoursesCsvFilePath)
 
         ## Retain only rows that have a value in canvas_course_id
         targetCoursesDf = rawTargetCoursesDf[rawTargetCoursesDf["canvas_course_id"].notna()]
 
-        ## Iterate over each row in the DataFrame
-        for index, row in targetCoursesDf.iterrows():
+        ## Process each course in a thread pool
+        MAX_WORKERS = 25
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            for index, row in targetCoursesDf.iterrows():
 
-            ## Get the course id from the row
-            courseId = str(row["canvas_course_id"]).replace('.0', '')
+                ## Get the course id from the row
+                courseId = str(row["canvas_course_id"]).replace('.0', '')
 
-            ## Get the term id from the row
-            termId = str(row["canvas_term_id"]).replace('.0', '')
+                ## Get the term id from the row
+                termId = str(row["canvas_term_id"]).replace('.0', '')
 
-            ## Create a thread to set the term for the course
-            setTermThread = threading.Thread(target=setCourseTerm, args=(header, courseId, termId))
-
-            ## Start the thread
-            setTermThread.start()
-
-            ## Add the thread to the ongoing set term threads list
-            ongoingSetTermThreads.append(setTermThread)
-
-            ## Sleep for a short time to avoid overloading the server
-            time.sleep(0.1)
-
-        ## Check if all ongoing set term threads have completed
-        for thread in ongoingSetTermThreads:
-            thread.join()
+                ## Submit the task to the thread pool
+                executor.submit(setCourseTerm, header, courseId, termId)
 
     except Exception as Error:
-        except(functionName, Error)
+        errorHandler(functionName, Error)
 
 if __name__ == "__main__":
     ## Set working directory

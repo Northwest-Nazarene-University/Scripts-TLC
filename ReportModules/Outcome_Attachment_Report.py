@@ -2,7 +2,8 @@
 ## Last Updated by: Bryce Miller
 
 ## External libraries
-import os, sys, csv, json, os.path, shutil, threading
+import os, sys, csv, json, os.path, shutil
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 import pandas as pd
 
@@ -438,39 +439,23 @@ def termOutcomeAttachmentReport (p1_inputTerm
             , "Instructor Email": []
             }
         
-        ## Create a list to hold the ongoing outcome attachment report threads
-        outcomeAttachmentReportThreads = []
-        
-        ## For each row in the termActiveOutcomeCoursesDF
-        for index, row in termActiveOutcomeCoursesDF.iterrows():
+        ## Process each course in a thread pool
+        MAX_WORKERS = 25
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
 
-                ## Target a specific course for testing if needed
-                # if row['Course_sis_id'] == "SP2026_EDUC3090_1L":
-                    
-                #     outcomeAttachmentReport (row, rawOutcomesDF, outcomeCoursesMissingAttachments)
-            
-                # If the row is not a nan
-                if not pd.isna(row["Course_sis_id"]):
-                
-                    ## Create a thread to process the row
-                    outcomeAttachmentReportThread = threading.Thread(target=outcomeAttachmentReport
-                                                                     , args=(row
-                                                                             , rawOutcomesDF
-                                                                             , outcomeCoursesMissingAttachments
-                                                                             )
-                                                                     )
-                
-                    ## Start the thread
-                    outcomeAttachmentReportThread.start()
-                
-                    ## Add the thread to the ongoing threads list
-                    outcomeAttachmentReportThreads.append(outcomeAttachmentReportThread)
-                
-        ## For each thread in the ongoing threads list
-        for thread in outcomeAttachmentReportThreads:
-            
-            ## Wait for the thread to finish
-            thread.join()
+            ## For each row in the termActiveOutcomeCoursesDF
+            for index, row in termActiveOutcomeCoursesDF.iterrows():
+
+                    ## Target a specific course for testing if needed
+                    # if row['Course_sis_id'] == "SP2026_EDUC3090_1L":
+
+                    #     outcomeAttachmentReport (row, rawOutcomesDF, outcomeCoursesMissingAttachments)
+
+                    # If the row is not a nan
+                    if not isPresent(row["Course_sis_id"]):
+
+                        ## Submit the task to the thread pool
+                        executor.submit(outcomeAttachmentReport, row, rawOutcomesDF, outcomeCoursesMissingAttachments)
             
         # If any of the lists in the outcomeCoursesMissingAttachments dict are not empty
         if any([len(outcomeCoursesMissingAttachments[key]) > 0 for key in outcomeCoursesMissingAttachments.keys()]):

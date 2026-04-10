@@ -58,9 +58,9 @@ sys.path.append(f"{absolutePath}Scripts TLC\\ActionModules")
 ## Add ActionModules to sys path
 
 ## Import local modules
-from Error_Email_API import errorEmailApi
-## Import errorEmailApi
-from Make_Api_Call import makeApiCall
+from Error_Email import errorEmail
+## Import errorEmail
+from TLC_Common import makeApiCall
 ## Import makeApiCall
 
 ## Canvas Instance Url
@@ -83,6 +83,12 @@ rootFormat = ("%(asctime)s %(levelname)s %(message)s")
 FORMAT = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
 logging.basicConfig(format=rootFormat, filemode="a", level=logging.INFO)
 
+## Local setup shim for compatibility with shared modules
+class _LoggerShim:
+    def __init__(self, p_logger):
+        self.logger = p_logger
+localSetup = _LoggerShim(logger)
+
 ## Info Log Handler
 infoLogFile = f"{baseLogPath}\\Info Log.txt"
 logInfo = logging.FileHandler(infoLogFile, mode='a')
@@ -104,24 +110,8 @@ logError.setLevel(logging.ERROR)
 logError.setFormatter(FORMAT)
 localSetup.logger.addHandler(logError)
 
-## The variable below holds a set of the functions that have had errors. This enables the ## errorHandler.sendError function to only send
-## an error email the first time the function triggers an error
-errorHandler = errorEmailApi(scriptName, scriptPurpose, externalRequirements, localSetup)
-
-## This function handles function errors
-def errorHandler.sendError(p1_errorLocation, p1_errorInfo, sendOnce=True):
-    functionName = "## errorHandler.sendError"
-    localSetup.logger.error(f"\nA script error occurred while running {p1_errorLocation}. Error: {str(p1_errorInfo)}")
-
-    ## If the function with the error has not already been processed send an email alert
-    if p1_errorLocation not in setOfFunctionsWithErrors:
-        errorEmailApi.sendEmailError(p1_scriptName=scriptName, p2_scriptPurpose=scriptPurpose,
-                                     p2_externalRequirements=externalRequirements,
-                                     p2_errorLocation=p1_errorLocation, p2_ErrorInfo=p1_errorInfo)
-        setOfFunctionsWithErrors.add(p1_errorLocation)
-        localSetup.logger.error(f"\nError Email Sent")
-    else:
-        localSetup.logger.error(f"\nError email already sent")
+## Setup the error handler
+errorHandler = errorEmail(scriptName, scriptPurpose, externalRequirements, localSetup)
 
 ## This function deletes an enrollment given its Canvas enrollment ID
 def deleteEnrollment(p1_header, p3_courseId, p1_enrollmentId):

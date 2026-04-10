@@ -63,11 +63,7 @@ internalOutputPath = f"{absolutePath}Canvas Resources\\"
 sys.path.append(f"{absolutePath}Scripts TLC\\ResourceModules")
 
 ## Import local modules
-from Error_Email_API import errorEmailApi
-from Download_File import downloadFile
-
-from Create_Sub_Account_Save_Path import determineDepartmentSavePath
-from Download_File import downloadFile
+from Error_Email import errorEmail
 
 ## Local Path Variables
 baseLogPath = f"{absolutePath}Logs\\{scriptName}\\"
@@ -83,6 +79,7 @@ baseExternalOutputPath = None ## Where the syllabus repository will be created a
 with open (f"{configPath}External_Resource_Paths.json", "r") as file:
     fileJson = json.load(file)
     baseExternalOutputPath = fileJson["UniversitySyllabusResourcePath"]
+    SISResourcePath = fileJson["SISResourcePath"]
 
 ## Canvas Instance Url
 coreCanvasApiUrl = None
@@ -122,6 +119,12 @@ rootFormat = ("%(asctime)s %(levelname)s %(message)s")
 FORMAT = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
 logging.basicConfig(format=rootFormat, filemode = "a", level=logging.INFO)
 
+## Local setup shim for compatibility with shared modules
+class _LoggerShim:
+    def __init__(self, p_logger):
+        self.logger = p_logger
+localSetup = _LoggerShim(logger)
+
 ## Info Log Handler
 infoLogFile = f"{baseLogPath}\\Info Log.txt"
 logInfo = logging.FileHandler(infoLogFile, mode = 'a')
@@ -143,36 +146,10 @@ logError.setLevel(logging.ERROR)
 logError.setFormatter(FORMAT)
 localSetup.logger.addHandler(logError)
 
-## This variable enables the except function to only send
+## Setup the error handler
+errorHandler = errorEmail(scriptName, scriptPurpose, externalRequirements, localSetup)
 
-## by tracking what functions have already been recorded as having errors
-errorHandler = errorEmailApi(scriptName, scriptPurpose, externalRequirements, localSetup)
-
-## This function handles function errors
-def errorHandler.sendError (p1_ErrorLocation, p1_errorInfo, sendOnce = True):
-    functionName = "errorHandler.sendError"
-
-    ## Log the error
-    localSetup.logger.error (f"     \nA script error occured while running {p1_ErrorLocation}. " +
-                     f"Error: {str(p1_errorInfo)}")
-
-    ## If the function with the error has not already been processed send an email alert
-    if (p1_ErrorLocation not in setOfFunctionsWithErrors):
-        errorEmailApi.sendEmailError(p2_ScriptName = scriptName, p2_ScriptPurpose = scriptPurpose, 
-                                     p2_ExternalRequirements = externalRequirements, 
-                                     p2_ErrorLocation = p1_ErrorLocation, p2_ErrorInfo = f"{p1_errorInfo}: \n\n {traceback.format_exc()}")
-        
-        ## Add the function name to the set of functions with errors
-        setOfFunctionsWithErrors.add(p1_ErrorLocation)
-        
-        ## Note that an error email was sent
-        localSetup.logger.error (f"     \nError Email Sent")
-    
-    ## Otherwise log the fact that an error email as already been sent
-    else:
-        localSetup.logger.error (f"     \nError email already sent")
-
-## This function takes in a term and returns the instructor information for non-official instructors 
+## This function takes in a term and returns the instructor information for non-official instructors
 def termNonOfficialInstructorsReport(p1_inputTerm = ""):
     functionName = "termNonOfficialInstructorsReport"
 

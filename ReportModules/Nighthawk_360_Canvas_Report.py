@@ -2,7 +2,8 @@
 ## Last Updated by: Bryce Miller
 
 ## External libraries
-import os, sys, json, pandas as pd, shutil, time, threading
+import os, sys, json, pandas as pd, shutil, time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -572,16 +573,13 @@ def getStuCurrentCoursesData(
             and loopCounter < 10
         ):
             loopCounter += 1
-            ongoingThreads = []
-
-            ## For each SIS-enrolled course
-            for targetCourseId in sisCourseIdsDf:
-                if (targetCourseId in p1_stuCoursesDataDict.keys() 
-                    and "Published" not in p1_stuCoursesDataDict[targetCourseId].keys()):
-                    ## Create and start thread to fetch course data
-                    courseDataThread = threading.Thread(
-                        target=getStuCourseData,
-                        args=(
+            ## Fetch course data concurrently
+            with ThreadPoolExecutor(max_workers=25) as executor:
+                for targetCourseId in sisCourseIdsDf:
+                    if (targetCourseId in p1_stuCoursesDataDict.keys() 
+                        and "Published" not in p1_stuCoursesDataDict[targetCourseId].keys()):
+                        executor.submit(
+                            getStuCourseData,
                             p1_stuId,
                             sisCourseIdsDf,
                             p1_stuCoursesDataDict,
@@ -589,14 +587,7 @@ def getStuCurrentCoursesData(
                             p1_stuCoursesDataDict["stuCanvasId"],
                             targetCourseId,
                             p1_unpublishedCoursesList,
-                        ),
-                    )
-                    courseDataThread.start()
-                    ongoingThreads.append(courseDataThread)
-
-            ## Wait for all threads to complete
-            for thread in ongoingThreads:
-                thread.join()
+                        )
 
             ## Remove any entries that are not dicts or missing "Published"
             p1_stuCoursesDataDict = {
@@ -831,7 +822,7 @@ def getNighthawk360Data(p1_oldEnrollmentDataDf):
 
         ## Threaded course data collection
         loopCounter = 0
-        ongoingThreads = []
+        MAX_WORKERS = 100
 
         while (
             not all(
@@ -843,44 +834,35 @@ def getNighthawk360Data(p1_oldEnrollmentDataDf):
             and loopCounter < 100
         ):
             loopCounter += 1
-            ongoingThreads.clear()
-            threadCounter = 0
-            batchCounter = 0
 
-            for stuId, coursesData in studentDataDict.items():
-                if not all(
-                    "Published" in courseData
-                    for courseData in coursesData.values()
-                    if isinstance(courseData, dict)
-                ):
-                    if "Published" not in coursesData or not coursesData["Published"]:
-                        thread = threading.Thread(
-                            target=getStuCurrentCoursesData,
-                            args=(
-                                stuId,
-                                coursesData,
-                                filteredCanvasEnrollmentsDf,
-                                unpublishedCoursesList,
-                                filteredSisEnrollmentsDf,
-                                deletedSisCourseIds,
-                            ),
-                        )
-                        thread.start()
-                        ongoingThreads.append(thread)
-                        threadCounter += 1
+            with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+                futures = []
+                for stuId, coursesData in studentDataDict.items():
+                    if not all(
+                        "Published" in courseData
+                        for courseData in coursesData.values()
+                        if isinstance(courseData, dict)
+                    ):
+                        if "Published" not in coursesData or not coursesData["Published"]:
+                            futures.append(
+                                executor.submit(
+                                    getStuCurrentCoursesData,
+                                    stuId,
+                                    coursesData,
+                                    filteredCanvasEnrollmentsDf,
+                                    unpublishedCoursesList,
+                                    filteredSisEnrollmentsDf,
+                                    deletedSisCourseIds,
+                                )
+                            )
 
-                        if threadCounter >= 100:
-                            for t in ongoingThreads:
-                                t.join()
-                            ongoingThreads.clear()
-                            batchCounter += 1
-                            localSetup.logger.info(f"{batchCounter * 10}0 threads have been completed")
-                            threadCounter = 0
+                completedCount = 0
+                for future in as_completed(futures):
+                    completedCount += 1
+                    if completedCount % MAX_WORKERS == 0:
+                        localSetup.logger.info(f"{completedCount} threads have been completed")
 
-            for t in ongoingThreads:
-                t.join()
-
-            localSetup.logger.info(f"{batchCounter * 10 + threadCounter} threads have been completed")
+            localSetup.logger.info(f"{completedCount} threads have been completed")
 
         ## Merge into complete dict
         if not completeStudentEnrollmentDataDict:
