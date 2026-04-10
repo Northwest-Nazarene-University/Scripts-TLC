@@ -38,10 +38,58 @@ RATE_LIMIT_WAIT_SECONDS = 60.0
 RATE_LIMIT_PAUSE_THRESHOLD = 10.0
 
 ## Module-level Canvas rate-limit state, shared across all threads.
-## Protected by _rateLimitLock; updated after every API response that carries the header.
-## Starts at None (unknown) so no pre-emptive pause is triggered until the first real value arrives.
+## Both threading.Thread and concurrent.futures.ThreadPoolExecutor workers share this state
+## because ThreadPoolExecutor uses OS threads internally, so threading.Lock synchronises them
+## correctly regardless of which concurrency primitive created the thread.
+##
+## _rateLimitRemaining   – last observed X-Rate-Limit-Remaining value; None until first response.
+## _rateLimitActiveWaiters – number of threads currently sleeping in a rate-limit wait.
+##   Used to stagger retries: the N-th concurrent waiter sleeps RATE_LIMIT_WAIT_SECONDS + N
+##   seconds so threads do not all hammer the API at the same moment.
+## _rateLimitLock        – guards both variables above.
 _rateLimitRemaining: float | None = None
+_rateLimitActiveWaiters: int = 0
 _rateLimitLock = threading.Lock()
+
+
+def _queuedRateLimitWait(localSetup: "LocalSetup", reason: str) -> None:
+    """
+    Staggered rate-limit back-off that is safe for both ``threading.Thread`` and
+    ``concurrent.futures.ThreadPoolExecutor`` workers.
+
+    Each caller is assigned a queue position (1, 2, 3 …) equal to the number of
+    threads already sleeping plus one.  It then sleeps for
+    ``RATE_LIMIT_WAIT_SECONDS + position`` seconds, so concurrent waiters naturally
+    stagger their retries by one second per extra waiter:
+
+    * 1st waiter  → RATE_LIMIT_WAIT_SECONDS + 1 s
+    * 2nd waiter  → RATE_LIMIT_WAIT_SECONDS + 2 s  (arrives before 1st finishes)
+    * 3rd waiter  → RATE_LIMIT_WAIT_SECONDS + 3 s
+    * …
+
+    The ``_rateLimitActiveWaiters`` counter is decremented when the sleep ends, so a
+    thread that arrives *after* an earlier waiter has already finished resumes from
+    position 1 rather than inheriting the old queue depth.
+    """
+    global _rateLimitActiveWaiters
+
+    ## Atomically claim a queue position and increment the active-waiter count.
+    with _rateLimitLock:
+        _rateLimitActiveWaiters += 1
+        position = _rateLimitActiveWaiters
+
+    waitSeconds = RATE_LIMIT_WAIT_SECONDS + position
+    localSetup.logger.warning(
+        f"Rate-limit wait (queue position {position}): sleeping {waitSeconds:.0f}s "
+        f"({RATE_LIMIT_WAIT_SECONDS:.0f}s base + {position}s stagger). Reason: {reason}"
+    )
+
+    try:
+        time.sleep(waitSeconds)
+    finally:
+        ## Decrement even if the thread is interrupted so the counter stays accurate.
+        with _rateLimitLock:
+            _rateLimitActiveWaiters -= 1
 
 def retry(
     max_attempts: int = 5,
@@ -215,12 +263,11 @@ def makeApiCall(
         currentRemaining = _rateLimitRemaining
 
     if currentRemaining is not None and currentRemaining <= RATE_LIMIT_PAUSE_THRESHOLD:
-        localSetup.logger.warning(
+        _queuedRateLimitWait(
+            localSetup,
             f"X-Rate-Limit-Remaining={currentRemaining:.1f} is at or below threshold "
-            f"({RATE_LIMIT_PAUSE_THRESHOLD}). Pre-emptively waiting {RATE_LIMIT_WAIT_SECONDS:.0f}s "
-            f"before calling {p1_apiUrl}..."
+            f"({RATE_LIMIT_PAUSE_THRESHOLD}) before calling {p1_apiUrl}",
         )
-        time.sleep(RATE_LIMIT_WAIT_SECONDS)
 
     ## Dispatch the HTTP request; retry transparently on HTTP 429 (rate limit exceeded).
     ## Canvas returns 429 when the request quota is exhausted; X-Rate-Limit-Remaining and
@@ -276,13 +323,16 @@ def makeApiCall(
             localSetup.logger.warning(
                 f"Rate limited (HTTP 429) for {p1_apiUrl}. "
                 f"X-Rate-Limit-Remaining={remaining}, X-Request-Cost={cost}. "
-                f"Waiting {RATE_LIMIT_WAIT_SECONDS:.0f}s (rate-limit attempt {rl_attempt + 1}/3)..."
+                f"(rate-limit attempt {rl_attempt + 1}/3)"
             )
             try:
                 p1_apiObject.close()
             except Exception as close_error:
                 localSetup.logger.warning(f"Failed to close API response before rate-limit wait: {close_error}")
-            time.sleep(RATE_LIMIT_WAIT_SECONDS)
+            _queuedRateLimitWait(
+                localSetup,
+                f"HTTP 429 received for {p1_apiUrl} (attempt {rl_attempt + 1}/3)",
+            )
             continue
 
         break  ## Success or non-rate-limit status code — proceed to validation
