@@ -1,11 +1,10 @@
 ## Author: Bryce Miller - brycezmiller@nnu.edu
 ## Last Updated by: Bryce Miller
 
-## Import Generic Modules
-import os, sys, requests, time, functools, zipfile, pandas as pd
+import os, sys, time, functools, zipfile, threading, random, requests, pandas as pd
 from datetime import datetime
 from dotenv import load_dotenv
-from typing import Callable, Tuple, Type
+from typing import Callable, Tuple, Type, Optional
 
 try: ## If the module is run directly
     from Local_Setup import LocalSetup
@@ -29,39 +28,201 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "..", "Configs"))
 
 from Common_Configs import canvasAccessToken
 
+## -------------------------
+## Rate-Limit Configuration
+## -------------------------
+
+## Default seconds to wait when Canvas returns HTTP 429 and no Retry-After header exists
+BaseRateLimitWaitSeconds: float = 5.0
+
+## Maximum jitter added to rate-limit waits (Uniform(0, Max))
+## Average jitter = Max / 2
+RateLimitJitterMaxSeconds: float = 2.0
+
+## Backoff applied ONLY to repeated 429 waits when Retry-After is missing
+RateLimitBackoffMultiplier: float = 1.5
+MaxThrottleRetries: int = 10
+
+## Pre-emptive pause when remaining quota is low
+RateLimitPauseThreshold: float = 10.0
+BasePreemptivePauseSeconds: float = 0.5
+PreemptivePauseJitterMaxSeconds: float = 0.25
+
+## Hard timeout for requests to prevent hanging forever
+RequestTimeoutSeconds: float = 600.0
+
+## Shared rate-limit state across threads in this process
+_RateLimitRemaining: Optional[float] = None
+_RateLimitLock = threading.Lock()
+
+
+## -------------------------
+## Custom Exceptions
+## -------------------------
+
+class RateLimitExceeded(Exception):
+    """Raised when the Canvas API returns HTTP 429 (rate limit exceeded)."""
+    def __init__(self, RetryAfter: Optional[float] = None, Message: str = "Rate limit exceeded"):
+        self.RetryAfter = RetryAfter
+        super().__init__(Message)
+
+
+## -------------------------
+## Email Helper (Best Effort)
+## -------------------------
+
+def _SendTimeoutEmail(localSetup, ApiUrl: str, TimeoutSeconds: float, Error: Exception) -> None:
+    """
+    Best-effort timeout notification.
+    Tries common LocalSetup email methods; falls back to logging.
+    """
+    Subject = f"Canvas API Timeout ({TimeoutSeconds:.0f}s)"
+    Body = (
+        f"A Canvas API request timed out.\n\n"
+        f"URL: {ApiUrl}\n"
+        f"TimeoutSeconds: {TimeoutSeconds:.0f}\n"
+        f"Error: {Error}\n"
+        f"Timestamp: {datetime.now().isoformat()}\n"
+    )
+
+    ## Try likely method names without assuming your LocalSetup implementation
+    for MethodName in ["SendErrorEmail", "sendErrorEmail", "SendEmail", "sendEmail"]:
+        SendMethod = getattr(localSetup, MethodName, None)
+        if callable(SendMethod):
+            try:
+                ## Support both (subject, body) and keyword forms
+                try:
+                    SendMethod(Subject, Body)
+                except TypeError:
+                    SendMethod(Subject=Subject, Body=Body)
+                return
+            except Exception as EmailError:
+                if getattr(localSetup, "logger", None):
+                    localSetup.logger.error(f"Failed sending timeout email via {MethodName}: {EmailError}")
+
+    if getattr(localSetup, "logger", None):
+        localSetup.logger.error(f"No email method found on LocalSetup. Timeout email not sent.\n{Subject}\n{Body}")
+
+
+## -------------------------
+## Rate-Limit Header Helpers
+## -------------------------
+
+def _UpdateRateLimitRemainingFromResponse(ResponseObject) -> None:
+    global _RateLimitRemaining
+
+    RawRemaining = ResponseObject.headers.get("X-Rate-Limit-Remaining")
+    if RawRemaining is None:
+        return
+
+    try:
+        RemainingValue = float(RawRemaining)
+    except (ValueError, TypeError):
+        return
+
+    with _RateLimitLock:
+        _RateLimitRemaining = RemainingValue
+
+
+def _PreemptiveRateLimitPauseIfNeeded(localSetup, ApiUrl: str) -> None:
+    with _RateLimitLock:
+        CurrentRemaining = _RateLimitRemaining
+
+    if CurrentRemaining is None:
+        return
+
+    if CurrentRemaining <= RateLimitPauseThreshold:
+        JitterSeconds = random.uniform(0.0, PreemptivePauseJitterMaxSeconds)
+        PauseSeconds = BasePreemptivePauseSeconds + JitterSeconds
+
+        if getattr(localSetup, "logger", None):
+            localSetup.logger.info(
+                f"Rate-limit remaining low ({CurrentRemaining:.1f} <= {RateLimitPauseThreshold:.1f}). "
+                f"Preemptive pause {PauseSeconds:.2f}s before {ApiUrl}."
+            )
+
+        time.sleep(PauseSeconds)
+
+
+## -------------------------
+## Retry Decorator (Separate 429 Lane)
+## -------------------------
+
 def retry(
     max_attempts: int = 5,
     delay: float = 5.0,
     backoff: float = 1.5,
-    exceptions: Tuple[Type[Exception], ...] = (Exception,)
+    exceptions: Tuple[Type[Exception], ...] = (Exception,),
+    max_throttle_retries: int = MaxThrottleRetries,
 ):
     """
-    Retry decorator that uses the localSetup.logger from a LocalSetup instance passed as the first argument.
-    Assumes the decorated function's first argument is a LocalSetup object.
+    Retry decorator using LocalSetup.logger.
+    Assumes first arg is a LocalSetup object.
+
+    Rate-limit retries (RateLimitExceeded) are handled separately and do not count
+    against max_attempts.
     """
     def decorator(func: Callable):
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            localSetup = args[0]  ## Assumes LocalSetup is the first argument
+            localSetup = args[0]
 
-            attempts = 0
-            current_delay = delay
+            Attempts = 0
+            ThrottleRetries = 0
 
-            while attempts < max_attempts:
+            CurrentDelaySeconds = delay
+            CurrentRateLimitWaitSeconds = BaseRateLimitWaitSeconds
+
+            while Attempts < max_attempts:
                 try:
                     return func(*args, **kwargs)
-                except Exception as e:
-                    attempts += 1
-                    if localSetup.logger:
+
+                except RateLimitExceeded as RateLimitError:
+                    ThrottleRetries += 1
+
+                    ## Use Retry-After if provided, else base wait + jitter
+                    if RateLimitError.RetryAfter is not None:
+                        WaitSeconds = float(RateLimitError.RetryAfter)
+                    else:
+                        JitterSeconds = random.uniform(0.0, RateLimitJitterMaxSeconds)
+                        WaitSeconds = CurrentRateLimitWaitSeconds + JitterSeconds
+
+                        ## Increase rate-limit wait for repeated 429s (still doesn't consume Attempts)
+                        CurrentRateLimitWaitSeconds *= RateLimitBackoffMultiplier
+
+                    if getattr(localSetup, "logger", None):
                         localSetup.logger.warning(
-                            f"Attempt {attempts} failed for {func.__name__}: {e}. Retrying in {current_delay:.1f} seconds..."
+                            f"Rate limit hit for {func.__name__} "
+                            f"(throttle retry {ThrottleRetries}/{max_throttle_retries}). "
+                            f"Waiting {WaitSeconds:.2f}s before retrying..."
                         )
-                    if attempts == max_attempts:
-                        if localSetup.logger:
-                            localSetup.logger.error(f"{func.__name__} failed after {attempts} attempts.")
+
+                    if ThrottleRetries >= max_throttle_retries:
+                        if getattr(localSetup, "logger", None):
+                            localSetup.logger.error(
+                                f"{func.__name__} exceeded max throttle retries ({max_throttle_retries})."
+                            )
                         raise
-                    time.sleep(current_delay)
-                    current_delay *= backoff
+
+                    time.sleep(WaitSeconds)
+
+                except exceptions as Error:
+                    Attempts += 1
+
+                    if getattr(localSetup, "logger", None):
+                        localSetup.logger.warning(
+                            f"Attempt {Attempts} failed for {func.__name__}: {Error}. "
+                            f"Retrying in {CurrentDelaySeconds:.1f} seconds..."
+                        )
+
+                    if Attempts == max_attempts:
+                        if getattr(localSetup, "logger", None):
+                            localSetup.logger.error(f"{func.__name__} failed after {Attempts} attempts.")
+                        raise
+
+                    time.sleep(CurrentDelaySeconds)
+                    CurrentDelaySeconds *= backoff
+
         return wrapper
     return decorator
 
@@ -159,10 +320,14 @@ def flattenApiObjectToJsonList(localSetup, apiObjectList, apiUrl):
         )
         raise
 
-## This function takes a api header and url and returns the json object of the api call, recursively calling itself in a seperate instance up to 5 times if the call fails
+
+## -------------------------
+## makeApiCall (Session + Timeout + 429 -> RateLimitExceeded)
+## -------------------------
+
 @retry(max_attempts=5, delay=5, backoff=2.0)
 def makeApiCall(
-    localSetup: LocalSetup, 
+    localSetup,
     p1_apiUrl,
     p1_header=None,
     p1_payload=None,
@@ -171,120 +336,237 @@ def makeApiCall(
     firstPageOnly=False,
 ):
     """
-    Makes an API call with retry logic.
-    Supports GET, POST, PUT, DELETE methods.
-    Automatically retries on failure using the retry decorator.
+    Makes a Canvas API call using localSetup.canvasSession and a 600s timeout.
+    - Preemptive pause when remaining quota is low (X-Rate-Limit-Remaining)
+    - HTTP 429 raises RateLimitExceeded (handled separately by retry decorator)
+    - Status validation:
+        * Any 2xx is success
+        * 400 is allowed (unchanged behavior)
+        * others raise, with delete special-case preserved
     """
-    ## Set the default header, payload, and files if not provided
+
+    ## Defaults
     if p1_header is None:
-        p1_header = {'Authorization': f'Bearer {canvasAccessToken}'}
+        p1_header = {"Authorization": f"Bearer {canvasAccessToken}"}
     if p1_payload is None:
         p1_payload = {}
     if p1_files is None:
         p1_files = {}
 
-    ## Initialize variables for the API response and list of responses (for pagination)
-    p1_apiObject = None
-    p1_apiObjectList = []
-    ## Perform the API call based on type
-    if p1_apiCallType.lower() == "get":
-        p1_payload.setdefault("per_page", 100)
-        p1_apiObject = requests.get(url=p1_apiUrl, headers=p1_header, params=p1_payload)
+    ## Ensure session exists
+    CanvasSession = localSetup.canvasSession
 
-    elif p1_apiCallType.lower() == "post":
-        if p1_payload and p1_files:
-            p1_apiObject = requests.post(url=p1_apiUrl, headers=p1_header, json=p1_payload, files=p1_files)
-        elif p1_payload:
-            p1_apiObject = requests.post(url=p1_apiUrl, headers=p1_header, params=p1_payload)
+    ## Preemptive rate-limit pause
+    _PreemptiveRateLimitPauseIfNeeded(localSetup, p1_apiUrl)
+
+    ## Dispatch
+    try:
+        if p1_apiCallType.lower() == "get":
+            p1_payload.setdefault("per_page", 100)
+            ResponseObject = CanvasSession.get(
+                url=p1_apiUrl,
+                headers=p1_header,
+                params=p1_payload,
+                timeout=RequestTimeoutSeconds,
+            )
+
+        elif p1_apiCallType.lower() == "post":
+            if p1_payload and p1_files:
+                ResponseObject = CanvasSession.post(
+                    url=p1_apiUrl,
+                    headers=p1_header,
+                    json=p1_payload,
+                    files=p1_files,
+                    timeout=RequestTimeoutSeconds,
+                )
+            elif p1_payload:
+                ResponseObject = CanvasSession.post(
+                    url=p1_apiUrl,
+                    headers=p1_header,
+                    params=p1_payload,
+                    timeout=RequestTimeoutSeconds,
+                )
+            else:
+                ResponseObject = CanvasSession.post(
+                    url=p1_apiUrl,
+                    headers=p1_header,
+                    timeout=RequestTimeoutSeconds,
+                )
+
+        elif p1_apiCallType.lower() == "put":
+            if p1_payload:
+                ResponseObject = CanvasSession.put(
+                    url=p1_apiUrl,
+                    headers=p1_header,
+                    json=p1_payload,
+                    timeout=RequestTimeoutSeconds,
+                )
+            else:
+                ResponseObject = CanvasSession.put(
+                    url=p1_apiUrl,
+                    headers=p1_header,
+                    timeout=RequestTimeoutSeconds,
+                )
+
+        elif p1_apiCallType.lower() == "delete":
+            if p1_payload:
+                ResponseObject = CanvasSession.delete(
+                    url=p1_apiUrl,
+                    headers=p1_header,
+                    params=p1_payload,
+                    timeout=RequestTimeoutSeconds,
+                )
+            else:
+                ResponseObject = CanvasSession.delete(
+                    url=p1_apiUrl,
+                    headers=p1_header,
+                    timeout=RequestTimeoutSeconds,
+                )
+
         else:
-            p1_apiObject = requests.post(url=p1_apiUrl, headers=p1_header)
+            raise ValueError(f"Unsupported API call type: {p1_apiCallType}")
 
-    elif p1_apiCallType.lower() == "put":
-        if p1_payload:
-            p1_apiObject = requests.put(url=p1_apiUrl, headers=p1_header, json=p1_payload)
-        else:
-            p1_apiObject = requests.put(url=p1_apiUrl, headers=p1_header)
+    except requests.exceptions.Timeout as TimeoutError:
+        ## Send error email then raise so @retry can retry
+        if getattr(localSetup, "logger", None):
+            localSetup.logger.error(f"Timeout after {RequestTimeoutSeconds:.0f}s calling {p1_apiUrl}: {TimeoutError}")
+        _SendTimeoutEmail(localSetup, p1_apiUrl, RequestTimeoutSeconds, TimeoutError)
+        raise
 
-    elif p1_apiCallType.lower() == "delete":
-        if p1_payload:
-            p1_apiObject = requests.delete(url=p1_apiUrl, headers=p1_header, params=p1_payload)
-        else:
-            p1_apiObject = requests.delete(url=p1_apiUrl, headers=p1_header)
+    ## Update shared remaining tracker from headers (success or failure)
+    _UpdateRateLimitRemainingFromResponse(ResponseObject)
 
-    else:
-        raise ValueError(f"Unsupported API call type: {p1_apiCallType}")    
-    ## Validate response
-    ## log the response status code
-    if not p1_apiObject.status_code or p1_apiObject.status_code not in [200, 400]:
-        if p1_apiObject.status_code:
-            ## --- SPECIAL CASE: 409 Conflict for PUT/PATCH ---
-            if p1_apiObject.status_code == 409 and p1_apiCallType.lower() in ["put", "patch", "post"]:
-                localSetup.logger.warning(f"Received 409 Conflict for {p1_apiCallType.upper()} {p1_apiUrl}. Checking for active existing item...")
+    ## Handle 429 -> RateLimitExceeded (separate retry lane)
+    if ResponseObject.status_code == 429:
+        RetryAfterSeconds: Optional[float] = None
 
-                ## Make the GET call to retrieve current index
-                indexResponse, _ = makeApiCall(
+        RawRetryAfter = ResponseObject.headers.get("Retry-After")
+        if RawRetryAfter:
+            try:
+                RetryAfterSeconds = float(RawRetryAfter)
+            except (ValueError, TypeError):
+                RetryAfterSeconds = None
+
+        try:
+            ResponseObject.close()
+        except Exception:
+            pass
+
+        raise RateLimitExceeded(
+            RetryAfter=RetryAfterSeconds,
+            Message=f"Canvas API rate limit exceeded for {p1_apiUrl}.",
+        )
+
+    ## -------------------------
+    ## Validate response codes
+    ## -------------------------
+
+    StatusCode = ResponseObject.status_code
+
+    ## Keep historical behavior: 400 is allowed
+    IsAllowed400 = (StatusCode == 400)
+
+    ## Standard success is any 2xx
+    IsSuccess2xx = (StatusCode >= 200 and StatusCode < 300)
+
+    if not StatusCode or (not IsSuccess2xx and not IsAllowed400):
+        if StatusCode:
+            ## SPECIAL CASE: 409 Conflict for PUT/PATCH/POST
+            if StatusCode == 409 and p1_apiCallType.lower() in ["put", "patch", "post"]:
+                if getattr(localSetup, "logger", None):
+                    localSetup.logger.warning(
+                        f"Received 409 Conflict for {p1_apiCallType.upper()} {p1_apiUrl}. "
+                        f"Checking for active existing item..."
+                    )
+
+                ## Retrieve current index
+                IndexResponse, _ = makeApiCall(
                     localSetup,
                     p1_apiUrl=p1_apiUrl,
                     p1_header=p1_header,
                     p1_apiCallType="get",
                     firstPageOnly=True,
                 )
-                indexData = indexResponse.json() if hasattr(indexResponse, "json") else []
 
-                requestedParams = {
-                        key[len("parameters["):-1]: value
-                        for key, value in p1_payload.items()
-                        if key.startswith("parameters[")
-                    }
-          
-                ## Find any active report with matching parameters
-                matchingReport = next(
-                    (r for r in indexData
-                     if r.get("status") in ["running", "pending", "created"]
-                     and r.get("parameters", {}) == requestedParams),
-                    None
-                )                                 
-                if matchingReport:
-                    localSetup.logger.info("Found active report with matching parameters. Returning its status response instead of retrying.")
-                    reportId = matchingReport["id"]
-                    statusUrl = f"{p1_apiUrl}/{reportId}"
-                    statusResponse, _ = makeApiCall(
+                IndexData = IndexResponse.json() if hasattr(IndexResponse, "json") else []
+
+                RequestedParams = {
+                    Key[len("parameters["):-1]: Value
+                    for Key, Value in p1_payload.items()
+                    if Key.startswith("parameters[")
+                }
+
+                MatchingReport = next(
+                    (
+                        r for r in IndexData
+                        if r.get("status") in ["running", "pending", "created"]
+                        and r.get("parameters", {}) == RequestedParams
+                    ),
+                    None,
+                )
+
+                if MatchingReport:
+                    if getattr(localSetup, "logger", None):
+                        localSetup.logger.info(
+                            "Found active report with matching parameters. Returning its status response."
+                        )
+
+                    ReportId = MatchingReport["id"]
+                    StatusUrl = f"{p1_apiUrl}/{ReportId}"
+
+                    StatusResponse, _ = makeApiCall(
                         localSetup,
-                        p1_apiUrl=statusUrl,
-                        p1_header=p1_header
+                        p1_apiUrl=StatusUrl,
+                        p1_header=p1_header,
                     )
-                    return statusResponse, []
+                    return StatusResponse, []
+
                 else:
-                    localSetup.logger.info(f"409 received but no matching active report with paramters: {requestedParams}, found - retrying normally.")
+                    if getattr(localSetup, "logger", None):
+                        localSetup.logger.info(
+                            f"409 received but no matching active report with parameters: {RequestedParams}. "
+                            f"Retrying normally."
+                        )
+
             try:
-                p1_apiObject.close()
-            except Exception as close_error:
-                localSetup.logger.warning(f"Failed to close API response before retry: {close_error}")
-            if p1_apiCallType != "delete":
-                raise Exception(f"Failed API call to {p1_apiUrl}: HTTP {p1_apiObject.status_code}")  
+                ResponseObject.close()
+            except Exception as CloseError:
+                if getattr(localSetup, "logger", None):
+                    localSetup.logger.warning(f"Failed to close API response before retry: {CloseError}")
+
+            if p1_apiCallType.lower() != "delete":
+                raise Exception(f"Failed API call to {p1_apiUrl}: HTTP {StatusCode}")
             else:
-                localSetup.logger.warning(f"Failed to delete resource at {p1_apiUrl}: HTTP {p1_apiObject.status_code}")
-                ## Break out of the retry loop for delete calls
+                if getattr(localSetup, "logger", None):
+                    localSetup.logger.warning(f"Failed to delete resource at {p1_apiUrl}: HTTP {StatusCode}")
                 return None, None
-    ## Handle pagination if applicable
-    if hasattr(p1_apiObject, 'links') and 'next' in getattr(p1_apiObject, 'links', {}) and not firstPageOnly:
-        p1_apiObjectList.append(p1_apiObject)
-        next_url = p1_apiObject.links["next"]["url"]
-        next_page, next_pageList = makeApiCall(
+
+    ## -------------------------
+    ## Pagination (unchanged behavior)
+    ## -------------------------
+
+    ResponseObjectList = []
+
+    if hasattr(ResponseObject, "links") and "next" in getattr(ResponseObject, "links", {}) and not firstPageOnly:
+        ResponseObjectList.append(ResponseObject)
+
+        NextUrl = ResponseObject.links["next"]["url"]
+        NextPage, NextPageList = makeApiCall(
             localSetup,
-            p1_apiUrl=next_url,
+            p1_apiUrl=NextUrl,
             p1_header=p1_header,
             p1_payload=None,
             p1_files=p1_files,
             p1_apiCallType=p1_apiCallType,
-            firstPageOnly=firstPageOnly
+            firstPageOnly=firstPageOnly,
         )
-        if next_pageList:
-            p1_apiObjectList.extend(next_pageList)
-        elif next_page:
-            p1_apiObjectList.append(next_page)
 
-    return p1_apiObject, p1_apiObjectList
+        if NextPageList:
+            ResponseObjectList.extend(NextPageList)
+        elif NextPage:
+            ResponseObjectList.append(NextPage)
+
+    return ResponseObject, ResponseObjectList
 
 ## Check if a file exists and was modified within the last X hours
 def isFileRecent(localSetup: LocalSetup, filePath, maxAgeHours=3.5):
