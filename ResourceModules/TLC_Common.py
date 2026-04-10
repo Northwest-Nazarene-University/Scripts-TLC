@@ -2,7 +2,7 @@
 ## Last Updated by: Bryce Miller
 
 ## Import Generic Modules
-import os, sys, requests, time, functools, zipfile, pandas as pd
+import os, sys, requests, time, functools, zipfile, threading, pandas as pd
 from datetime import datetime
 from dotenv import load_dotenv
 from typing import Callable, Tuple, Type
@@ -32,6 +32,16 @@ from Common_Configs import canvasAccessToken
 ## Seconds to wait after receiving an HTTP 429 (rate limit exceeded) before retrying.
 ## Canvas does not provide a Retry-After header, so this fixed value is used.
 RATE_LIMIT_WAIT_SECONDS = 60.0
+
+## When X-Rate-Limit-Remaining drops to or below this threshold, makeApiCall will
+## pre-emptively pause before the next request rather than waiting for a 429.
+RATE_LIMIT_PAUSE_THRESHOLD = 10.0
+
+## Module-level Canvas rate-limit state, shared across all threads.
+## Protected by _rateLimitLock; updated after every API response that carries the header.
+## Starts at None (unknown) so no pre-emptive pause is triggered until the first real value arrives.
+_rateLimitRemaining: float | None = None
+_rateLimitLock = threading.Lock()
 
 def retry(
     max_attempts: int = 5,
@@ -199,6 +209,19 @@ def makeApiCall(
     p1_apiObject = None
     p1_apiObjectList = []
 
+    ## Pre-emptive rate-limit check: if the last recorded X-Rate-Limit-Remaining is at or
+    ## below the threshold, pause before issuing this request to avoid an almost-certain 429.
+    with _rateLimitLock:
+        currentRemaining = _rateLimitRemaining
+
+    if currentRemaining is not None and currentRemaining <= RATE_LIMIT_PAUSE_THRESHOLD:
+        localSetup.logger.warning(
+            f"X-Rate-Limit-Remaining={currentRemaining:.1f} is at or below threshold "
+            f"({RATE_LIMIT_PAUSE_THRESHOLD}). Pre-emptively waiting {RATE_LIMIT_WAIT_SECONDS:.0f}s "
+            f"before calling {p1_apiUrl}..."
+        )
+        time.sleep(RATE_LIMIT_WAIT_SECONDS)
+
     ## Dispatch the HTTP request; retry transparently on HTTP 429 (rate limit exceeded).
     ## Canvas returns 429 when the request quota is exhausted; X-Rate-Limit-Remaining and
     ## X-Request-Cost headers indicate the current quota state.
@@ -232,6 +255,17 @@ def makeApiCall(
 
         else:
             raise ValueError(f"Unsupported API call type: {p1_apiCallType}")
+
+        ## Update the shared rate-limit tracker from the response headers.
+        ## Both successful and 429 responses carry these headers, so update before acting on status.
+        rawRemaining = p1_apiObject.headers.get("X-Rate-Limit-Remaining")
+        if rawRemaining is not None:
+            try:
+                with _rateLimitLock:
+                    global _rateLimitRemaining
+                    _rateLimitRemaining = float(rawRemaining)
+            except (ValueError, TypeError):
+                pass  ## Ignore malformed header values
 
         ## Check for HTTP 429 (Canvas rate limit exceeded) and wait before retrying.
         ## Canvas does not supply a Retry-After header; wait RATE_LIMIT_WAIT_SECONDS to allow
