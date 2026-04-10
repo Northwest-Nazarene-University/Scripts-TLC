@@ -159,7 +159,8 @@ def flattenApiObjectToJsonList(localSetup, apiObjectList, apiUrl):
         )
         raise
 
-## This function takes a api header and url and returns the json object of the api call, recursively calling itself in a seperate instance up to 5 times if the call fails
+## This function takes an api header and url and returns the json object of the api call, retrying
+## up to 5 times on transient errors and transparently waiting on HTTP 429 (rate limit exceeded).
 @retry(max_attempts=5, delay=5, backoff=2.0)
 def makeApiCall(
     localSetup: LocalSetup, 
@@ -171,9 +172,13 @@ def makeApiCall(
     firstPageOnly=False,
 ):
     """
-    Makes an API call with retry logic.
+    Makes an API call with retry and rate-limit handling.
     Supports GET, POST, PUT, DELETE methods.
-    Automatically retries on failure using the retry decorator.
+    Per the Canvas API documentation, a HTTP 429 response means the request quota has been
+    exceeded. This function handles it transparently by reading the X-Rate-Limit-Remaining
+    and X-Request-Cost response headers, waiting 60 seconds, and re-issuing the request
+    (up to 3 times) before allowing the outer @retry decorator to take over.
+    Other failures are retried automatically by the @retry decorator.
     """
     ## Set the default header, payload, and files if not provided
     if p1_header is None:
@@ -186,33 +191,61 @@ def makeApiCall(
     ## Initialize variables for the API response and list of responses (for pagination)
     p1_apiObject = None
     p1_apiObjectList = []
-    ## Perform the API call based on type
-    if p1_apiCallType.lower() == "get":
-        p1_payload.setdefault("per_page", 100)
-        p1_apiObject = requests.get(url=p1_apiUrl, headers=p1_header, params=p1_payload)
 
-    elif p1_apiCallType.lower() == "post":
-        if p1_payload and p1_files:
-            p1_apiObject = requests.post(url=p1_apiUrl, headers=p1_header, json=p1_payload, files=p1_files)
-        elif p1_payload:
-            p1_apiObject = requests.post(url=p1_apiUrl, headers=p1_header, params=p1_payload)
+    ## Dispatch the HTTP request; retry transparently on HTTP 429 (rate limit exceeded).
+    ## Canvas returns 429 when the request quota is exhausted; X-Rate-Limit-Remaining and
+    ## X-Request-Cost headers indicate the current quota state.
+    ## 4 total dispatch attempts: the original plus up to 3 rate-limit waits (_rl_attempt 0-2).
+    ## On _rl_attempt 3 the rate-limit check is skipped and execution falls through to validation.
+    for _rl_attempt in range(4):
+        ## Perform the API call based on type
+        if p1_apiCallType.lower() == "get":
+            p1_payload.setdefault("per_page", 100)
+            p1_apiObject = requests.get(url=p1_apiUrl, headers=p1_header, params=p1_payload)
+
+        elif p1_apiCallType.lower() == "post":
+            if p1_payload and p1_files:
+                p1_apiObject = requests.post(url=p1_apiUrl, headers=p1_header, json=p1_payload, files=p1_files)
+            elif p1_payload:
+                p1_apiObject = requests.post(url=p1_apiUrl, headers=p1_header, params=p1_payload)
+            else:
+                p1_apiObject = requests.post(url=p1_apiUrl, headers=p1_header)
+
+        elif p1_apiCallType.lower() == "put":
+            if p1_payload:
+                p1_apiObject = requests.put(url=p1_apiUrl, headers=p1_header, json=p1_payload)
+            else:
+                p1_apiObject = requests.put(url=p1_apiUrl, headers=p1_header)
+
+        elif p1_apiCallType.lower() == "delete":
+            if p1_payload:
+                p1_apiObject = requests.delete(url=p1_apiUrl, headers=p1_header, params=p1_payload)
+            else:
+                p1_apiObject = requests.delete(url=p1_apiUrl, headers=p1_header)
+
         else:
-            p1_apiObject = requests.post(url=p1_apiUrl, headers=p1_header)
+            raise ValueError(f"Unsupported API call type: {p1_apiCallType}")
 
-    elif p1_apiCallType.lower() == "put":
-        if p1_payload:
-            p1_apiObject = requests.put(url=p1_apiUrl, headers=p1_header, json=p1_payload)
-        else:
-            p1_apiObject = requests.put(url=p1_apiUrl, headers=p1_header)
+        ## Check for HTTP 429 (Canvas rate limit exceeded) and wait before retrying.
+        ## Canvas does not supply a Retry-After header; wait a fixed 60 seconds to allow
+        ## the quota to replenish, then re-issue the request.
+        if p1_apiObject.status_code == 429 and _rl_attempt < 3:
+            remaining = p1_apiObject.headers.get("X-Rate-Limit-Remaining")
+            cost      = p1_apiObject.headers.get("X-Request-Cost")
+            localSetup.logger.warning(
+                f"Rate limited (HTTP 429) for {p1_apiUrl}. "
+                f"X-Rate-Limit-Remaining={remaining}, X-Request-Cost={cost}. "
+                f"Waiting 60s (rate-limit attempt {_rl_attempt + 1}/3)..."
+            )
+            try:
+                p1_apiObject.close()
+            except Exception as close_error:
+                localSetup.logger.warning(f"Failed to close API response before rate-limit wait: {close_error}")
+            time.sleep(60.0)
+            continue
 
-    elif p1_apiCallType.lower() == "delete":
-        if p1_payload:
-            p1_apiObject = requests.delete(url=p1_apiUrl, headers=p1_header, params=p1_payload)
-        else:
-            p1_apiObject = requests.delete(url=p1_apiUrl, headers=p1_header)
+        break  ## Success or non-rate-limit status code — proceed to validation
 
-    else:
-        raise ValueError(f"Unsupported API call type: {p1_apiCallType}")    
     ## Validate response
     ## log the response status code
     if not p1_apiObject.status_code or p1_apiObject.status_code not in [200, 400]:
