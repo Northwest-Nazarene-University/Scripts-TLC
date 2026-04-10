@@ -29,6 +29,10 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "..", "Configs"))
 
 from Common_Configs import canvasAccessToken
 
+## Seconds to wait after receiving an HTTP 429 (rate limit exceeded) before retrying.
+## Canvas does not provide a Retry-After header, so this fixed value is used.
+RATE_LIMIT_WAIT_SECONDS = 60.0
+
 def retry(
     max_attempts: int = 5,
     delay: float = 5.0,
@@ -159,8 +163,10 @@ def flattenApiObjectToJsonList(localSetup, apiObjectList, apiUrl):
         )
         raise
 
-## This function takes an api header and url and returns the json object of the api call, retrying
-## up to 5 times on transient errors and transparently waiting on HTTP 429 (rate limit exceeded).
+## This function takes an api header and url and returns the json object of the api call.
+## Rate limiting (HTTP 429) is handled with up to 3 transparent waits of RATE_LIMIT_WAIT_SECONDS.
+## After exhausting rate-limit retries, the @retry decorator provides up to 5 additional attempts
+## with exponential backoff (5s initial delay, ×2.0 multiplier) for any remaining failures.
 @retry(max_attempts=5, delay=5, backoff=2.0)
 def makeApiCall(
     localSetup: LocalSetup, 
@@ -172,13 +178,14 @@ def makeApiCall(
     firstPageOnly=False,
 ):
     """
-    Makes an API call with retry and rate-limit handling.
+    Makes an API call with two-tier retry and rate-limit handling.
     Supports GET, POST, PUT, DELETE methods.
-    Per the Canvas API documentation, a HTTP 429 response means the request quota has been
-    exceeded. This function handles it transparently by reading the X-Rate-Limit-Remaining
-    and X-Request-Cost response headers, waiting 60 seconds, and re-issuing the request
-    (up to 3 times) before allowing the outer @retry decorator to take over.
-    Other failures are retried automatically by the @retry decorator.
+    Tier 1 — Rate limiting: per Canvas API documentation, HTTP 429 means the request quota
+    has been exceeded. This function handles it transparently by reading X-Rate-Limit-Remaining
+    and X-Request-Cost, waiting RATE_LIMIT_WAIT_SECONDS (60s), and re-issuing the request
+    up to 3 times.
+    Tier 2 — Transient errors: after rate-limit retries are exhausted the outer @retry decorator
+    provides up to 5 additional attempts with exponential backoff.
     """
     ## Set the default header, payload, and files if not provided
     if p1_header is None:
@@ -195,9 +202,9 @@ def makeApiCall(
     ## Dispatch the HTTP request; retry transparently on HTTP 429 (rate limit exceeded).
     ## Canvas returns 429 when the request quota is exhausted; X-Rate-Limit-Remaining and
     ## X-Request-Cost headers indicate the current quota state.
-    ## 4 total dispatch attempts: the original plus up to 3 rate-limit waits (_rl_attempt 0-2).
-    ## On _rl_attempt 3 the rate-limit check is skipped and execution falls through to validation.
-    for _rl_attempt in range(4):
+    ## 4 total dispatch attempts: the original plus up to 3 rate-limit waits (rl_attempt 0-2).
+    ## On rl_attempt 3 the rate-limit check is skipped and execution falls through to validation.
+    for rl_attempt in range(4):
         ## Perform the API call based on type
         if p1_apiCallType.lower() == "get":
             p1_payload.setdefault("per_page", 100)
@@ -227,21 +234,21 @@ def makeApiCall(
             raise ValueError(f"Unsupported API call type: {p1_apiCallType}")
 
         ## Check for HTTP 429 (Canvas rate limit exceeded) and wait before retrying.
-        ## Canvas does not supply a Retry-After header; wait a fixed 60 seconds to allow
+        ## Canvas does not supply a Retry-After header; wait RATE_LIMIT_WAIT_SECONDS to allow
         ## the quota to replenish, then re-issue the request.
-        if p1_apiObject.status_code == 429 and _rl_attempt < 3:
+        if p1_apiObject.status_code == 429 and rl_attempt < 3:
             remaining = p1_apiObject.headers.get("X-Rate-Limit-Remaining")
             cost      = p1_apiObject.headers.get("X-Request-Cost")
             localSetup.logger.warning(
                 f"Rate limited (HTTP 429) for {p1_apiUrl}. "
                 f"X-Rate-Limit-Remaining={remaining}, X-Request-Cost={cost}. "
-                f"Waiting 60s (rate-limit attempt {_rl_attempt + 1}/3)..."
+                f"Waiting {RATE_LIMIT_WAIT_SECONDS:.0f}s (rate-limit attempt {rl_attempt + 1}/3)..."
             )
             try:
                 p1_apiObject.close()
             except Exception as close_error:
                 localSetup.logger.warning(f"Failed to close API response before rate-limit wait: {close_error}")
-            time.sleep(60.0)
+            time.sleep(RATE_LIMIT_WAIT_SECONDS)
             continue
 
         break  ## Success or non-rate-limit status code — proceed to validation
