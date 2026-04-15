@@ -1,17 +1,16 @@
 ## Author: Bryce Miller - brycezmiller@nnu.edu
 ## Last Updated by: Bryce Miller
 
-## Import Generic Modules
-import os, sys, requests, time, functools, zipfile, pandas as pd
-import os, sys, requests, time, functools, zipfile, threading, pandas as pd
+import os, sys, zipfile, requests, pandas as pd
 from datetime import datetime
 from dotenv import load_dotenv
-from typing import Callable, Tuple, Type
 
 try: ## If the module is run directly
     from Local_Setup import LocalSetup
+    from Api_Caller import retry, RateLimitExceeded, makeApiCall
 except ImportError: ## Otherwise as a relative import if the module is imported
     from .Local_Setup import LocalSetup
+    from .Api_Caller import retry, RateLimitExceeded, makeApiCall
 
 ## Define the script name, purpose, and external requirements for logging and error reporting purposes
 __scriptName = os.path.basename(__file__).replace(".py", "")
@@ -28,26 +27,16 @@ Both folders should be under a main project folder, often named for the departme
 ## Add the config path
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "Configs"))
 
-from Common_Configs import canvasAccessToken
-
-## Custom exception for Canvas API rate limiting (HTTP 429)
-class RateLimitExceeded(Exception):
-    """Raised when the Canvas API returns HTTP 429 (rate limit exceeded)."""
-    def __init__(self, retry_after=None, message="Rate limit exceeded"):
-        self.retry_after = retry_after
-        super().__init__(message)
 
 def retry(
     max_attempts: int = 5,
     delay: float = 5.0,
     backoff: float = 1.5,
-    exceptions: Tuple[Type[Exception], ...] = (Exception,),
-    max_throttle_retries: int = 10
+    exceptions: Tuple[Type[Exception], ...] = (Exception,)
 ):
     """
     Retry decorator that uses the localSetup.logger from a LocalSetup instance passed as the first argument.
     Assumes the decorated function's first argument is a LocalSetup object.
-    Rate-limited retries (HTTP 429) are handled separately and do not count against max_attempts.
     """
     def decorator(func: Callable):
         @functools.wraps(func)
@@ -55,26 +44,11 @@ def retry(
             localSetup = args[0]  ## Assumes LocalSetup is the first argument
 
             attempts = 0
-            throttle_retries = 0
             current_delay = delay
 
             while attempts < max_attempts:
                 try:
                     return func(*args, **kwargs)
-                except RateLimitExceeded as e:
-                    ## Rate-limit retries do not count against max_attempts
-                    throttle_retries += 1
-                    wait_time = e.retry_after if e.retry_after else current_delay
-                    if localSetup.logger:
-                        localSetup.logger.warning(
-                            f"Rate limit hit for {func.__name__} (throttle retry {throttle_retries}/{max_throttle_retries}). "
-                            f"Waiting {wait_time:.1f}s before retrying..."
-                        )
-                    if throttle_retries >= max_throttle_retries:
-                        if localSetup.logger:
-                            localSetup.logger.error(f"{func.__name__} exceeded max throttle retries ({max_throttle_retries}).")
-                        raise
-                    time.sleep(wait_time)
                 except Exception as e:
                     attempts += 1
                     if localSetup.logger:
@@ -177,34 +151,12 @@ def flattenApiObjectToJsonList(localSetup, apiObjectList, apiUrl):
 
         return flattenedJsonList
 
-    except Exception as Error:
+    except Exception as error:
         ## Log the error here; the calling function can decide whether to send an error email
         localSetup.logger.error(
-            f"{functionName}: Error while flattening API responses for URL {apiUrl}: {Error}"
+            f"{functionName}: Error while flattening API responses for URL {apiUrl}: {error}"
         )
         raise
-
-## Proactive rate-limit throttling based on Canvas API response headers
-_RATE_LIMIT_THRESHOLD = 50   ## Remaining quota below which we start throttling proactively
-_RATE_LIMIT_SLEEP = 0.5      ## Seconds to sleep when quota is low
-
-def _checkRateLimitHeaders(localSetup, response):
-    """
-    Inspects Canvas API response headers for rate-limit information.
-    Proactively sleeps when remaining quota is low to avoid hitting a 429.
-    """
-    remaining = response.headers.get("X-Rate-Limit-Remaining")
-    if remaining is not None:
-        try:
-            remaining = float(remaining)
-            if remaining < _RATE_LIMIT_THRESHOLD:
-                if localSetup.logger:
-                    localSetup.logger.info(
-                        f"Rate-limit quota low ({remaining:.1f} remaining). Throttling for {_RATE_LIMIT_SLEEP}s..."
-                    )
-                time.sleep(_RATE_LIMIT_SLEEP)
-        except (ValueError, TypeError):
-            pass  ## Ignore malformed header values
 
 ## This function takes a api header and url and returns the json object of the api call, recursively calling itself in a seperate instance up to 5 times if the call fails
 @retry(max_attempts=5, delay=5, backoff=2.0)
@@ -260,25 +212,6 @@ def makeApiCall(
 
     else:
         raise ValueError(f"Unsupported API call type: {p1_apiCallType}")    
-    ## --- Handle Canvas API rate limiting (HTTP 429) ---
-    if p1_apiObject.status_code == 429:
-        retry_after = None
-        retry_header = p1_apiObject.headers.get("Retry-After")
-        if retry_header:
-            try:
-                retry_after = float(retry_header)
-            except (ValueError, TypeError):
-                pass
-        if retry_after is None:
-            retry_after = 10.0
-        try:
-            p1_apiObject.close()
-        except Exception:
-            pass
-        raise RateLimitExceeded(
-            retry_after=retry_after,
-            message=f"Canvas API rate limit exceeded for {p1_apiUrl}. Retry after {retry_after:.1f}s."
-        )
     ## Validate response
     ## log the response status code
     if not p1_apiObject.status_code or p1_apiObject.status_code not in [200, 400]:
@@ -332,8 +265,6 @@ def makeApiCall(
                 localSetup.logger.warning(f"Failed to delete resource at {p1_apiUrl}: HTTP {p1_apiObject.status_code}")
                 ## Break out of the retry loop for delete calls
                 return None, None
-    ## Proactively throttle if rate-limit quota is running low
-    _checkRateLimitHeaders(localSetup, p1_apiObject)
     ## Handle pagination if applicable
     if hasattr(p1_apiObject, 'links') and 'next' in getattr(p1_apiObject, 'links', {}) and not firstPageOnly:
         p1_apiObjectList.append(p1_apiObject)
@@ -378,10 +309,10 @@ def isFileRecent(localSetup: LocalSetup, filePath, maxAgeHours=3.5):
             if localSetup.logger:
                 localSetup.logger.info(f"\n{filePath} is outdated ({fileAgeHours:.2f} hours old).")
             return False
-    except Exception as Error:
+    except Exception as error:
         ## Log any unexpected errors
         if localSetup.logger:
-            localSetup.logger.error(f"Couldn't determine file age. Error: {Error}")
+            localSetup.logger.error(f"Couldn't determine file age. Error: {error}")
         return False
 
 ## Load Excel File with Multiple Strategies

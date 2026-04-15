@@ -2,7 +2,7 @@
 ## Last Updated by: Bryce Miller
 
 ## Import Generic Modules
-import os, json, sys, logging, calendar, re
+import os, json, sys, logging, calendar, re, requests
 from datetime import datetime
 ## Add the config path
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "Configs"))
@@ -70,6 +70,9 @@ class LocalSetup:
         self.externalResourcePaths = externalResourcePathsDict
         self.termPaths = {}
         self.internalDepartmentOutputPaths = {}
+
+        ## Canvas API Session (persistent connection pool for all makeApiCall usage)
+        self.canvasSession = requests.Session()
 
     ## Internal Methods
 
