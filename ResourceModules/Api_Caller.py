@@ -40,7 +40,7 @@ canvasUrlMarker = ".instructure.com"
 ## -------------------------
 
 ## Default seconds to wait when Canvas returns HTTP 429 and no Retry-After header exists
-baseRateLimitWaitSeconds: float = 5.0
+baseRateLimitWaitSeconds: float = 2.0
 
 ## Maximum jitter added to rate-limit waits (Uniform(0, Max))
 ## Average jitter = Max / 2
@@ -122,7 +122,7 @@ def retry(
                         jitterSeconds = random.uniform(0.0, rateLimitJitterMaxSeconds)
                         waitSeconds = currentRateLimitWaitSeconds + jitterSeconds
 
-                        ## Increase rate-limit wait for repeated 429s (still doesn't consume attempts)
+                        ## Increase rate-limit wait for repeated 429s (doesn't consume general retry attempts)
                         currentRateLimitWaitSeconds *= rateLimitBackoffMultiplier
 
                     if getattr(localSetup, "logger", None):
