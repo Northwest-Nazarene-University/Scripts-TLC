@@ -966,7 +966,7 @@ def Nighthawk360CanvasReport():
         localSetup.logger.info("\nActivity and Data CSVs saved to internal and external paths")
 
     except Exception as Error:
-         ErrorHandler.sendError("functionName", Error)
+         ErrorHandler.sendError(f"{functionName}", Error)
 
 if __name__ == "__main__":
 

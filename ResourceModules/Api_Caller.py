@@ -3,7 +3,7 @@
 
 import os, sys, time, functools, threading, random, requests
 from datetime import datetime
-from typing import Callable, Tuple, Type, Optional
+from typing import Callable, Tuple, Type, Optional, Dict, Any, List
 
 try: ## If the module is run directly
     from Local_Setup import LocalSetup
@@ -174,6 +174,7 @@ def _sendTimeoutEmail(localSetup, apiUrl: str, timeoutSeconds: float, error: Exc
     subject = f"API Timeout ({timeoutSeconds:.0f}s)"
     body = (
         f"An API request timed out.\n\n"
+        f"Script Context: {localSetup.__scriptName}\n"
         f"URL: {apiUrl}\n"
         f"Timeout: {timeoutSeconds:.0f}s\n"
         f"Error: {error}\n"
@@ -273,7 +274,7 @@ class ApiCaller:
         p1_files=None,
         p1_apiCallType="get",
         firstPageOnly=False,
-    ):
+    ) -> Tuple[requests.Response, List[requests.Response]]:
         """
         Makes an API call using localSetup.canvasSession and a 600s timeout.
 
@@ -498,7 +499,7 @@ class ApiCaller:
                         self.localSetup.logger.warning(
                             f"Failed to delete resource at {p1_apiUrl}: HTTP {statusCode}"
                         )
-                    return None, None
+                    return responseObject, []
 
         ## -------------------------
         ## Pagination (follows RFC 5988 link headers)
