@@ -4,6 +4,7 @@
 ## Import Generic Modules
 import os, json, sys, logging, calendar, re, requests
 from datetime import datetime
+from requests.adapters import HTTPAdapter
 ## Add the config path
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "Configs"))
 
@@ -73,6 +74,13 @@ class LocalSetup:
 
         ## Canvas API Session (persistent connection pool for all makeApiCall usage)
         self.canvasSession = requests.Session()
+        adapter = HTTPAdapter(
+            pool_connections=10,   ## Match _canvasMaxConcurrentRequests
+            pool_maxsize=10,       ## Match _canvasMaxConcurrentRequests
+            max_retries=0,         ## We handle retries ourselves in Api_Caller
+        )
+        self.canvasSession.mount("https://", adapter)
+        self.canvasSession.mount("http://", adapter)
 
     ## Internal Methods
 

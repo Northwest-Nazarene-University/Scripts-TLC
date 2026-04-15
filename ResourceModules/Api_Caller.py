@@ -51,7 +51,7 @@ rateLimitBackoffMultiplier: float = 1.5
 maxThrottleRetries: int = 10
 
 ## Pre-emptive pause when remaining quota is low
-rateLimitPauseThreshold: float = 10.0
+rateLimitPauseThreshold: float = 50.0
 basePreemptivePauseSeconds: float = 0.5
 preemptivePauseJitterMaxSeconds: float = 0.25
 
@@ -61,6 +61,34 @@ requestTimeoutSeconds: float = 600.0
 ## Shared rate-limit state across threads in this process
 _rateLimitRemaining: Optional[float] = None
 _rateLimitLock = threading.Lock()
+
+## -------------------------
+## Global Concurrency Gate (Canvas-only)
+## -------------------------
+## Canvas uses a token-bucket rate limiter shared across ALL requests for the same
+## API token.  When dozens of threads fire simultaneously, each one independently
+## hits 429 and independently backs off — creating a thundering-herd effect that
+## wastes time and generates massive log spam.
+##
+## Solution:
+##   1. _canvasApiSemaphore — limits how many threads can be inside the HTTP dispatch
+##      at the same time.  This prevents overwhelming the bucket in the first place.
+##   2. _canvasApiGate — a threading.Event that is normally "set" (open).  When ANY
+##      thread receives a 429, it "clears" the gate (blocking) for the cooldown
+##      duration.  ALL other threads block on gate.wait() before they can dispatch,
+##      so only ONE coordinated pause happens instead of N independent ones.
+
+## Maximum concurrent Canvas API requests.  Canvas refills ~10 tokens/second for
+## most institutions.  Keeping this at the refill rate prevents steady-state 429s.
+_canvasMaxConcurrentRequests: int = 10
+_canvasApiSemaphore = threading.Semaphore(_canvasMaxConcurrentRequests)
+
+## Global cooldown gate — cleared (blocking) during a 429 cooldown, set (open) normally
+_canvasApiGate = threading.Event()
+_canvasApiGate.set()  ## Start open
+
+_gateLock = threading.Lock()
+_gateReopenTime: float = 0.0  ## time.monotonic() when the gate should reopen
 
 
 ## -------------------------
@@ -94,6 +122,11 @@ def retry(
 
     Rate-limit retries (RateLimitExceeded) are handled separately and do not count
     against max_attempts.
+
+    CHANGED from original: The per-thread sleep on 429 is removed.  Instead,
+    _triggerGlobalCooldown() blocks ALL threads.  The retry loop here just
+    catches the exception and loops back to the top of makeApiCall, where the
+    gate.wait() will block until the global cooldown expires.
     """
     def decorator(func: Callable):
         @functools.wraps(func)
@@ -106,7 +139,6 @@ def retry(
             throttleRetries = 0
 
             currentDelaySeconds = delay
-            currentRateLimitWaitSeconds = baseRateLimitWaitSeconds
 
             while attempts < max_attempts:
                 try:
@@ -115,21 +147,11 @@ def retry(
                 except RateLimitExceeded as rateLimitError:
                     throttleRetries += 1
 
-                    ## Use Retry-After if provided, else base wait + jitter
-                    if rateLimitError.retryAfter is not None:
-                        waitSeconds = float(rateLimitError.retryAfter)
-                    else:
-                        jitterSeconds = random.uniform(0.0, rateLimitJitterMaxSeconds)
-                        waitSeconds = currentRateLimitWaitSeconds + jitterSeconds
-
-                        ## Increase rate-limit wait for repeated 429s (doesn't consume general retry attempts)
-                        currentRateLimitWaitSeconds *= rateLimitBackoffMultiplier
-
                     if getattr(localSetup, "logger", None):
                         localSetup.logger.warning(
                             f"Rate limit hit for {func.__name__} "
                             f"(throttle retry {throttleRetries}/{max_throttle_retries}). "
-                            f"Waiting {waitSeconds:.2f}s before retrying..."
+                            f"Global cooldown triggered — waiting for gate to reopen..."
                         )
 
                     if throttleRetries >= max_throttle_retries:
@@ -139,7 +161,10 @@ def retry(
                             )
                         raise
 
-                    time.sleep(waitSeconds)
+                    ## No per-thread sleep here.  The global cooldown (_triggerGlobalCooldown)
+                    ## was already initiated by makeApiCall before raising RateLimitExceeded.
+                    ## When we loop back, makeApiCall will gate.wait() before dispatching,
+                    ## which blocks until the coordinated cooldown expires.
 
                 except exceptions as error:
                     attempts += 1
@@ -157,7 +182,6 @@ def retry(
 
                     time.sleep(currentDelaySeconds)
                     currentDelaySeconds *= backoff
-
         return wrapper
     return decorator
 
@@ -221,6 +245,11 @@ def _updateRateLimitRemainingFromResponse(responseObject) -> None:
 
 
 def _preemptiveRateLimitPauseIfNeeded(localSetup, apiUrl: str) -> None:
+    """
+    If the most recently observed X-Rate-Limit-Remaining is below the threshold,
+    pause briefly before making the next request.  This is a best-effort hint;
+    the global gate is the real enforcer.
+    """
     with _rateLimitLock:
         currentRemaining = _rateLimitRemaining
 
@@ -241,6 +270,47 @@ def _preemptiveRateLimitPauseIfNeeded(localSetup, apiUrl: str) -> None:
 
 
 ## -------------------------
+## Global Cooldown Functions
+## -------------------------
+
+def _triggerGlobalCooldown(waitSeconds: float, localSetup=None) -> None:
+    """
+    Called when ANY thread receives a 429.  Closes the gate so ALL threads
+    wait until the cooldown expires, then reopens it.
+
+    Only the first thread to trigger the cooldown actually sleeps and reopens
+    the gate.  Subsequent threads that call this while the gate is already
+    closed will see that _gateReopenTime is already far enough in the future
+    and return immediately (they will block on _canvasApiGate.wait() instead).
+    """
+    global _gateReopenTime
+
+    reopenAt = time.monotonic() + waitSeconds
+
+    with _gateLock:
+        ## Only extend the cooldown — never shorten it
+        if reopenAt <= _gateReopenTime:
+            return  ## Another thread already set a longer (or equal) cooldown
+        _gateReopenTime = reopenAt
+        _canvasApiGate.clear()  ## Block all threads
+
+    if localSetup and getattr(localSetup, "logger", None):
+        localSetup.logger.warning(
+            f"Global rate-limit cooldown: blocking all Canvas API threads for {waitSeconds:.1f}s"
+        )
+
+    ## This thread is responsible for reopening the gate
+    time.sleep(waitSeconds)
+
+    with _gateLock:
+        ## Only reopen if no other thread extended the cooldown further
+        if time.monotonic() >= _gateReopenTime:
+            _canvasApiGate.set()
+            if localSetup and getattr(localSetup, "logger", None):
+                localSetup.logger.info("Global rate-limit cooldown expired. Resuming API calls.")
+
+
+## -------------------------
 ## ApiCaller Class
 ## -------------------------
 
@@ -251,6 +321,8 @@ class ApiCaller:
     Canvas calls are detected by the presence of 'instructure.com' in the URL and receive:
     - A default Authorization header using canvasAccessToken
     - X-Rate-Limit-Remaining tracking and preemptive pauses
+    - Global concurrency semaphore limiting concurrent Canvas requests
+    - Global cooldown gate — when ANY thread gets 429, ALL threads pause together
     - HTTP 429 -> RateLimitExceeded (separate retry lane, does not consume max_attempts)
     - Canvas-specific 409 Conflict handling for report generation
 
@@ -280,6 +352,8 @@ class ApiCaller:
 
         Canvas calls (URLs containing 'instructure.com'):
         - Default Authorization header using canvasAccessToken
+        - Global concurrency gate (semaphore) limiting simultaneous requests
+        - Global cooldown gate that blocks ALL threads when any thread gets 429
         - Preemptive pause when remaining quota is low (X-Rate-Limit-Remaining)
         - HTTP 429 raises RateLimitExceeded (handled separately by retry decorator)
         - Canvas-specific 409 Conflict handling
@@ -306,9 +380,16 @@ class ApiCaller:
 
         session = self.localSetup.canvasSession
 
-        ## Canvas-only: preemptive rate-limit pause
+        ## Canvas-only: wait for global cooldown gate + preemptive pause + acquire semaphore
         if isCanvas:
+            ## Block if a global cooldown is active (another thread got 429)
+            _canvasApiGate.wait()
+
+            ## Best-effort preemptive pause based on X-Rate-Limit-Remaining header
             _preemptiveRateLimitPauseIfNeeded(self.localSetup, p1_apiUrl)
+
+            ## Limit concurrent Canvas requests to prevent overwhelming the bucket
+            _canvasApiSemaphore.acquire()
 
         ## Dispatch
         try:
@@ -388,11 +469,18 @@ class ApiCaller:
             _sendTimeoutEmail(self.localSetup, p1_apiUrl, requestTimeoutSeconds, timeoutError)
             raise
 
+        finally:
+            ## Always release the semaphore so other threads can proceed
+            if isCanvas:
+                _canvasApiSemaphore.release()
+
         ## Canvas-only: update shared rate-limit remaining tracker from response headers
         if isCanvas:
             _updateRateLimitRemainingFromResponse(responseObject)
 
-        ## Handle 429 -> RateLimitExceeded (separate retry lane for both Canvas and non-Canvas)
+        ## -------------------------
+        ## Handle 429 -> trigger global cooldown, then raise for retry
+        ## -------------------------
         if responseObject.status_code == 429:
             retryAfterSeconds: Optional[float] = None
 
@@ -403,10 +491,16 @@ class ApiCaller:
                 except (ValueError, TypeError):
                     retryAfterSeconds = None
 
+            ## Determine how long to block ALL threads
+            cooldownSeconds = retryAfterSeconds if retryAfterSeconds else baseRateLimitWaitSeconds
+
             try:
                 responseObject.close()
             except Exception:
                 pass
+
+            ## Block ALL threads, not just this one
+            _triggerGlobalCooldown(cooldownSeconds, self.localSetup)
 
             raise RateLimitExceeded(
                 retryAfter=retryAfterSeconds,

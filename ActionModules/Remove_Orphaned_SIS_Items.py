@@ -404,13 +404,15 @@ def removeOrphanedSisItems():
         localSetup.logger.info(f"SIS feed: {len(activeSisCourseIds)} active course IDs")
 
         ## Build the set of active SIS enrollment keys (course_id, user_id, role)
-        sisEnrollDf["_role_lower"] = sisEnrollDf["role"].str.lower()
-        sisEnrollDf["_status_lower"] = sisEnrollDf["status"].str.lower()
+        activeSisEnroll = sisEnrollDf[
+            sisEnrollDf["status"].str.lower().str.strip() == "active"
+        ].copy()
+
         activeEnrollKeys = set(
             zip(
-                sisEnrollDf.loc[sisEnrollDf["_status_lower"] == "active", "course_id"],
-                sisEnrollDf.loc[sisEnrollDf["_status_lower"] == "active", "user_id"],
-                sisEnrollDf.loc[sisEnrollDf["_status_lower"] == "active", "_role_lower"],
+                activeSisEnroll["course_id"].str.lower().str.strip(),
+                activeSisEnroll["user_id"].str.strip(),
+                activeSisEnroll["role"].str.lower().str.strip(),
             )
         )
         localSetup.logger.info(f"SIS feed: {len(activeEnrollKeys)} active enrollment keys")
@@ -525,9 +527,9 @@ def removeOrphanedSisItems():
                     continue
                 ## Check if the enrollment key exists in the SIS feed
                 enrollKey = (
-                    str(eRow.get("course_id", "")),
-                    str(eRow.get("user_id", "")),
-                    str(eRow.get("role", "")).lower(),
+                    str(eRow.get("course_id", "")).lower().strip(),
+                    str(eRow.get("user_id", "")).strip(),
+                    str(eRow.get("role", "")).lower().strip(),
                 )
                 if enrollKey not in activeEnrollKeys:
                     orphanedEnrollRows.append(eRow)
@@ -535,6 +537,11 @@ def removeOrphanedSisItems():
         localSetup.logger.info(
             f"Identified {len(orphanedEnrollRows)} orphaned enrollment(s) in still-active courses"
         )
+        ## save the orpahned enroll rows to a csv file for reference
+        outputResourcePath = localSetup.getInternalResourcePaths("Canvas")
+        orphanEnrollmentsOutputPath = os.path.join(outputResourcePath, "orphaned_enrollments.csv")
+        pd.DataFrame(orphanedEnrollRows).to_csv(orphanEnrollmentsOutputPath, index=False)
+
 
         ## ═══════════════════════════════════════════════���══════════════════════
         ## Step 4 & 5: Process orphaned courses and enrollments in batches
