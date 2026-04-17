@@ -641,7 +641,7 @@ def targetDesignatorProcessOutcomeResults(
                 )
 
             ## If a df returned from termCreateOutcomeComplianceReport
-            if isPresent(outcomeResultReportDF):
+            if outcomeResultReportDF is not None and isPresent(outcomeResultReportDF):
             
                 ## Save the DF into an excel file
                 outcomeResultReportDF.to_excel(p1_destinationFilePathDict["Internal Output Report File Path and Name"], sheet_name = "General", index=False)
