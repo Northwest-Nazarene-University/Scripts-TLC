@@ -2344,7 +2344,7 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
                 relevantAuxillaryDfDict = {}
             
                 ## If the course is in the list of courses who do not have their outcome attached to a published assignment
-                if isPresent(auxiliaryDfDict.get("Outcome Courses Without Attachments DF")):
+                if isPresent(auxiliaryDfDict.get("Outcome Courses Without Attachments DF", pd.DataFrame())):
                     
                     ## Isolate the course's data in p1_outcomeCoursesWithoutAttachmentDF
                     relevantAuxillaryDfDict["Relevant Course Outcome Without Attachment Df"] = (
@@ -2360,7 +2360,7 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
                     relevantAuxillaryDfDict["Relevant Course Outcome Without Attachment Df"] = pd.DataFrame()
 
                 ## If the course is in the list of courses who have no outcome results
-                if isPresent(auxiliaryDfDict.get("Unassessed Outcome Courses DF")):
+                if isPresent(auxiliaryDfDict.get("Unassessed Outcome Courses DF", pd.DataFrame())):
                     
                     ## Isolate the course's data in p1_outcomeCoursesWithoutOutcomeData
                     relevantAuxillaryDfDict["Relevant Course Outcome Without Data Df"] = (
@@ -2424,7 +2424,7 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
                     if isOutcomeCourse:
 
                         ## If the course is an outcome course that does not have all of its outcomes attached to published assignments
-                        if isPresent(relevantAuxillaryDfDict.get("Relevant Course Outcome Without Attachment Df")):    
+                        if isPresent(relevantAuxillaryDfDict.get("Relevant Course Outcome Without Attachment Df", pd.DataFrame())):    
                 
                             ## Send the courses's instructors the Midterm Reminder email
                             relevantEmailList.append("Associated Course Outcomes: Midterm Reminder")
@@ -2438,7 +2438,7 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
                     if isOutcomeCourse:
 
                         ## If the course is an outcome course that does not have all of its outcomes attached to published assignments
-                        if isPresent(relevantAuxillaryDfDict.get("Relevant Course Outcome Without Attachment Df")): 
+                        if isPresent(relevantAuxillaryDfDict.get("Relevant Course Outcome Without Attachment Df", pd.DataFrame())): 
                 
                             ## Send the courses's instructors the Finals Reminder email
                             relevantEmailList.append("Associated Course Outcomes: Finals Reminder")
@@ -2452,7 +2452,7 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
                     if isOutcomeCourse:
 
                         ## If the course is in the list of courses who do not have all of their outcome data
-                        if isPresent(relevantAuxillaryDfDict.get("Relevant Course Outcome Without Data Df")):    
+                        if isPresent(relevantAuxillaryDfDict.get("Relevant Course Outcome Without Data Df", pd.DataFrame())):    
             
                             ## Send the courses's instructors the Missing Data email as the course's outcome data is past due
                             relevantEmailList.append("Associated Course Outcomes: Missing Required Data")
