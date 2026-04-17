@@ -8,11 +8,11 @@ from dateutil import parser
 
 try: ## If the module is run directly
     from Local_Setup import LocalSetup
-    from TLC_Common import getEncryptionKey, makeApiCall, flattenApiObjectToJsonList
+    from TLC_Common import getEncryptionKey, makeApiCall, flattenApiObjectToJsonList, isPresent, isMissing, isFileRecent
     from Canvas_Report import CanvasReport
 except ImportError: ## Otherwise as a relative import if the module is imported
     from .Local_Setup import LocalSetup
-    from .TLC_Common import getEncryptionKey, makeApiCall, flattenApiObjectToJsonList, isPresent
+    from .TLC_Common import getEncryptionKey, makeApiCall, flattenApiObjectToJsonList, isPresent, isMissing, isFileRecent
     from .Canvas_Report import CanvasReport
 
 ## Add the config path
@@ -450,9 +450,9 @@ def retrieveDataForRelevantCommunication (p1_localSetup
         designatorRow = automatedOutcomeToolVariablesDf[
             automatedOutcomeToolVariablesDf["Target Designator"] == p3_targetDesignator
         ]
-        courseLevel = designatorRow.iloc[0]["Course Level"] if not designatorRow.empty else "All"
+        courseLevel = designatorRow.iloc[0]["Course Level"] if isPresent(designatorRow) else "All"
 
-        targetAccountName = designatorRow.iloc[0]["Outcome Location Account Name"] if not designatorRow.empty else "NNU"
+        targetAccountName = designatorRow.iloc[0]["Outcome Location Account Name"] if isPresent(designatorRow) else "NNU"
 
         ## Determine the graduate term equivalent (e.g. FA25 → GF25)
         gradTerm = CanvasReport.determineGradTerm(p2_inputTerm)
@@ -469,7 +469,7 @@ def retrieveDataForRelevantCommunication (p1_localSetup
         rawActiveOutcomeCourseDf = CanvasReport.getActiveOutcomeCoursesDf(p1_localSetup, p2_inputTerm, p3_targetDesignator)
 
         ## If the raw active outcome course df is empty
-        if rawActiveOutcomeCourseDf.empty:
+        if isMissing(rawActiveOutcomeCourseDf):
 
             ## Return an empty dataframe for the active outcome courses df and the auxillary df dict
             return rawActiveOutcomeCourseDf, auxillaryDFDict
@@ -512,7 +512,7 @@ def retrieveDataForRelevantCommunication (p1_localSetup
         allCanvasCoursesDfs = []
         for relevantTerm in relevantTerms:
             termDf = CanvasReport.getCoursesDf(p1_localSetup, relevantTerm)
-            if not termDf.empty:
+            if isPresent(termDf):
                 allCanvasCoursesDfs.append(termDf)
         
         rawTermCanvasCoursesDF = pd.concat(allCanvasCoursesDfs, ignore_index=True) if allCanvasCoursesDfs else pd.DataFrame()
@@ -563,7 +563,7 @@ def retrieveDataForRelevantCommunication (p1_localSetup
             ## Get the index of the rawCompleteActiveCanvasCoursesDF that matches the course id
             matchingIndices = rawCompleteActiveCanvasCoursesDF[rawCompleteActiveCanvasCoursesDF["course_id"] == targetCourseSisId].index
 
-            if matchingIndices.empty:
+            if isMissing(matchingIndices):
                 p1_localSetup.logger.warning(
                     f"{functionName}: targetCourseSisId '{targetCourseSisId}' from outcome course "
                     f"'{row.get('Course_sis_id', 'unknown')}' not found in active Canvas courses DF. "
@@ -625,7 +625,7 @@ def retrieveDataForRelevantCommunication (p1_localSetup
 
             ## Get the index of the term within the term_id column of the allCanvasTermsDf
             termMatchIndices = allCanvasTermsDf[allCanvasTermsDf["term_id"] == courseTerm].index
-            if termMatchIndices.empty:
+            if isMissing(termMatchIndices):
                 p1_localSetup.logger.warning(
                     f"{functionName}: Term '{courseTerm}' not found in Canvas terms DF. "
                     f"Skipping date fallback for course '{row.get('course_id', 'unknown')}'."
@@ -658,18 +658,26 @@ def retrieveDataForRelevantCommunication (p1_localSetup
             completeActiveCanvasCoursesDF.at[index, "end_date"] = end_date
 
         ## If the complete active canvas courses df is empty
-        if completeActiveCanvasCoursesDF.empty:
+        if isMissing(completeActiveCanvasCoursesDF):
 
             ## Return an empty dataframe for the active outcome courses df and the auxillary df dict
             return completeActiveCanvasCoursesDF, auxillaryDFDict
 
         ## Define the term related path to the outcome attachment report
         termOutcomeAttachmentReportPath = termOutcomeAttachmentReport(p2_inputTerm, p3_targetDesignator)
-        auxillaryDFDict["Outcome Courses Without Attachments DF"] = pd.read_csv(termOutcomeAttachmentReportPath)
+        if isFileRecent(termOutcomeAttachmentReportPath):
+            auxillaryDFDict["Outcome Courses Without Attachments DF"] = pd.read_csv(termOutcomeAttachmentReportPath)
+        else:
+            p1_localSetup.logger.warning(f"Outcome attachment report not found or stale: {termOutcomeAttachmentReportPath}")
+            auxillaryDFDict["Outcome Courses Without Attachments DF"] = pd.DataFrame()
 
         ## Define the term related path to the outcome results report
         termProcessOutcomeResultsPath = termProcessOutcomeResults(p2_inputTerm, p3_targetDesignator)[0]
-        outcomeCoursesDataDF = pd.read_excel(termProcessOutcomeResultsPath)
+        if isFileRecent(termProcessOutcomeResultsPath):
+            outcomeCoursesDataDF = pd.read_excel(termProcessOutcomeResultsPath)
+        else:
+            p1_localSetup.logger.warning(f"Outcome results report not found or stale: {termProcessOutcomeResultsPath}")
+            outcomeCoursesDataDF = pd.DataFrame(columns=["Assessment_Status"])
 
         ## Create a df of outcome courses that have not been assessed
         auxillaryDFDict["Unassessed Outcome Courses DF"] = outcomeCoursesDataDF[outcomeCoursesDataDF["Assessment_Status"] != "Assessed"]
@@ -944,7 +952,7 @@ def getUniqueOutcomesAndOutcomeCoursesDict (p1_localSetup, p1_errorHandler, p3_i
             outcomeIndexSearch = targetDesignatorCanvasOutcomeDf[targetDesignatorCanvasOutcomeDf['title'] == outcome].index
 
             ## If the outcomeIndexs is empty
-            if outcomeIndexSearch.empty:
+            if isMissing(outcomeIndexSearch):
 
                 ## Log the fact that the outcome was not found
                 p1_localSetup.logger.error(f"\nOutcome not found: {outcome}")

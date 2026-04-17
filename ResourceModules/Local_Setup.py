@@ -443,17 +443,15 @@ class LocalSetup:
         ## e.g. {"FA2024", "GF2024", "SP2025", "GS2025", "SU2025", "SG2025"}
         """    
         currentTerm = self._determineCurrentTerm(self.dateDict["month"])
-        previousTerm = self._determinePreviousTerm(currentTerm)
         currentYear = self.dateDict["year"]
 
-        ## Determine correct year for previous term
-        previousTermYear = currentYear - 1 if termSchoolYearLogic[previousTerm] == 'current-next' else currentYear
-
-        startYear, endYear = self._getSchoolYearRange(previousTerm, previousTermYear)
+        ## Get the current school year range first, then subtract 1 from both years
+        startYear, endYear = self._getSchoolYearRange(currentTerm, currentYear)
+        prevStartYear, prevEndYear = startYear - 1, endYear - 1
 
         terms = set()
         for term, logic in termSchoolYearLogic.items():
-            yearForTerm = startYear if logic == "current-next" else endYear
+            yearForTerm = prevStartYear if logic == "current-next" else prevEndYear
             startMonth = termMonthRanges[term][0]
             terms.update(self.getTerms(startMonth, yearForTerm))
         return terms
@@ -465,17 +463,16 @@ class LocalSetup:
         ## e.g. {"FA24", "GF24", "SP25", "GS25", "SU25", "SG25"}
         """
         currentTerm = self._determineCurrentTerm(self.dateDict["month"])
-        previousTerm = self._determinePreviousTerm(currentTerm)
         currentYear = self.dateDict["year"]
 
-        previousTermYear = currentYear - 1 if termSchoolYearLogic[previousTerm] == 'current-next' else currentYear
-
-        startYear, endYear = self._getSchoolYearRange(previousTerm, previousTermYear)
-        startDecade, endDecade = startYear % 100, endYear % 100
+        ## Get the current school year range first, then subtract 1 from both years
+        startYear, endYear = self._getSchoolYearRange(currentTerm, currentYear)
+        prevStartYear, prevEndYear = startYear - 1, endYear - 1
+        prevStartDecade, prevEndDecade = prevStartYear % 100, prevEndYear % 100
 
         termCodes = set()
         for term, logic in termSchoolYearLogic.items():
-            decadeForTerm = startDecade if logic == "current-next" else endDecade
+            decadeForTerm = prevStartDecade if logic == "current-next" else prevEndDecade
             startMonth = termMonthRanges[term][0]
             termCodes.update(self.getTermCodes(startMonth, decadeForTerm))
         return termCodes

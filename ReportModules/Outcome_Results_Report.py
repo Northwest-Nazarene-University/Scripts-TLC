@@ -148,6 +148,11 @@ def termCreateOutcomeComplianceReport(
                         ## Split the path by \\ to seperate the college, department, and sub department where applicable
                         courseDepartmentPathSeperated = courseDepartmentPath.split("\\")
 
+                        ## Skip this account if the department path could not be resolved
+                        if len(courseDepartmentPathSeperated) < 2 or courseDepartmentPathSeperated[0] == "":
+                            localSetup.logger.warning(f"Could not resolve department path for account {courseInfoDict['Canvas_Account_id']} -- skipping")
+                            continue
+
                         ## The course college (## e.g. College of Business) is always the 0th element of the section 
                         courseInfoDict["College"] = courseDepartmentPathSeperated[0].replace("College of ", "")
 
@@ -636,7 +641,7 @@ def targetDesignatorProcessOutcomeResults(
                 )
 
             ## If a df returned from termCreateOutcomeComplianceReport
-            if not outcomeResultReportDF.empty:
+            if outcomeResultReportDF is not None and not outcomeResultReportDF.empty:
             
                 ## Save the DF into an excel file
                 outcomeResultReportDF.to_excel(p1_destinationFilePathDict["Internal Output Report File Path and Name"], sheet_name = "General", index=False)

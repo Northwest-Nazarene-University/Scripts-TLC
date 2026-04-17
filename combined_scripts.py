@@ -1469,200 +1469,168 @@ if __name__ == "__main__":
 
 
 ## ===========================================================================
-## FILE: ActionModules\Combine_Scripts.py
+## FILE: ActionModules\Collect_Logs.py
 ## ===========================================================================
 
 ## Author: Bryce Miller - brycezmiller@nnu.edu
 ## Last Updated by: Bryce Miller
 
-## Import Generic Modules
-import os, sys
-from datetime import datetime
+## Import necessary modules
+import os, sys, argparse
+from datetime import datetime, timedelta
 
-## Set working directory
-os.chdir(os.path.dirname(__file__))
-
-## Add the resource modules path
+## Add Script repository to syspath
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules"))
 
-try: ## Irregular try clause, do not comment out in testing
+## Import local modules
+try:
     from Local_Setup import LocalSetup
-    from Error_Email import errorEmail
 except ImportError:
     from ResourceModules.Local_Setup import LocalSetup
-    from ResourceModules.Error_Email import errorEmail
 
-## Define the script name, purpose, and external requirements for logging and error reporting purposes
-scriptName = "Combine_Scripts"
-
-scriptPurpose = r"""
-This script combines all .py files within the Scripts_TLC directory and its subfolders into a single
-.py file that can be uploaded as part of a Claude project for context. The Scripts_TLC\Configs
-directory and this script itself are excluded from the output.
-"""
-
-externalRequirements = r"""
-To function properly this script requires no external dependencies beyond the Python standard library.
-It must be located within Scripts_TLC\ActionModules to correctly resolve the Scripts_TLC root directory.
-"""
-
-## Initialize LocalSetup and error handler
+## Create the localsetup variable
 localSetup = LocalSetup(datetime.now(), __file__)
-errorHandler = errorEmail(scriptName, scriptPurpose, externalRequirements, localSetup)
 
-## Define the root Scripts_TLC directory relative to this file's location in ActionModules
-scriptsTlcRootPath = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+## ─────────────────────────────────────────────────────────────────────────────
+## Core: Collect and merge log lines from all script log directories
+## ─────────────────────────────────────────────────────────────────────────────
+def collectLogs(startDate, endDate):
+    """
+    Walk every subdirectory under the Logs root, read all .txt log files,
+    filter lines to the given date range, and return them sorted by timestamp.
+    """
+    logsRoot = os.path.dirname(localSetup.baseLogPath)  ## e.g. .../Logs
 
-## Define the directories to ignore during the file walk
-ignoredDirectoryPaths = {os.path.join(scriptsTlcRootPath, "Configs")}
+    allLines = []
 
-## Define the output file path at the Scripts_TLC root level
-outputFilePath = os.path.join(scriptsTlcRootPath, "combined_scripts.py")
+    for scriptDir in os.listdir(logsRoot):
+        scriptLogPath = os.path.join(logsRoot, scriptDir)
+        if not os.path.isdir(scriptLogPath):
+            continue
+
+        for logFile in os.listdir(scriptLogPath):
+            if not logFile.endswith(".txt"):
+                continue
+
+            logFilePath = os.path.join(scriptLogPath, logFile)
+            logType = logFile.replace(".txt", "").strip()  ## e.g. "Info Log"
+
+            try:
+                with open(logFilePath, "r", encoding="utf-8", errors="replace") as f:
+                    for line in f:
+                        line = line.rstrip("\n")
+                        if not line.strip():
+                            continue
+
+                        ## Try to parse the timestamp from the start of the line
+                        lineDatetime = _parseLineTimestamp(line)
+                        if lineDatetime is None:
+                            continue
+
+                        ## Check if the line falls within the date range
+                        if startDate <= lineDatetime.date() <= endDate:
+                            allLines.append((lineDatetime, scriptDir, logType, line))
+            except Exception:
+                continue
+
+    ## Sort all collected lines by timestamp
+    allLines.sort(key=lambda x: x[0])
+    return allLines
 
 
-## This function returns True if the given path lives inside an ignored directory
-def isIgnoredPath (p1_path: str) -> bool:
-    functionName = "isIgnoredPath"
-
-    ## Get the absolute path of the given path
-    absolutePath = os.path.abspath(p1_path)
-
-    ## For each ignored directory path
-    for ignoredDirectoryPath in ignoredDirectoryPaths:
-
-        ## If the absolute path starts with the ignored directory path
-        if absolutePath.startswith(ignoredDirectoryPath + os.sep) or absolutePath == ignoredDirectoryPath:
-
-            ## Return True
-            return True
-
-    ## Return False if no ignored directory path matched
-    return False
-
-
-## This function walks the Scripts_TLC root and returns a sorted list of .py file paths
-## excluding ignored directories, the output file, and this script itself
-def collectPyFiles (p1_rootPath: str) -> list:
-    functionName = "collectPyFiles"
-
+def _parseLineTimestamp(line):
+    """
+    Attempt to parse a datetime from the beginning of a log line.
+    Expected format: 2025-06-13 15:44:40,609 - LEVEL - message
+    Returns a datetime or None.
+    """
     try:
-
-        ## Define a list to hold the collected .py file paths
-        collectedPyFiles = []
-
-        ## Walk the root path
-        for dirPath, dirNames, fileNames in os.walk(p1_rootPath):
-
-            ## Prune ignored directories so os.walk won't descend into them
-            dirNames[:] = [
-                dirName for dirName in dirNames
-                if not isIgnoredPath(os.path.join(dirPath, dirName))
-            ]
-
-            ## For each file name in sorted order
-            for fileName in sorted(fileNames):
-
-                ## If the file is not a .py file, skip it
-                if not fileName.endswith(".py"):
-                    continue
-
-                ## Get the absolute path of the file
-                absoluteFilePath = os.path.abspath(os.path.join(dirPath, fileName))
-
-                ## If the file is this script or the output file, skip it
-                if absoluteFilePath in (os.path.abspath(__file__), os.path.abspath(outputFilePath)):
-                    continue
-
-                ## Add the file path to the collected .py files list
-                collectedPyFiles.append(absoluteFilePath)
-
-        ## Return the sorted list of collected .py file paths
-        return sorted(collectedPyFiles)
-
-    except Exception as Error:
-        errorHandler.sendError(functionName, Error)
+        ## Take the first 23 characters: "2025-06-13 15:44:40,609"
+        rawTs = line[:23]
+        return datetime.strptime(rawTs, "%Y-%m-%d %H:%M:%S,%f")
+    except (ValueError, IndexError):
+        return None
 
 
-## This function writes all collected .py files into a single combined output file
-def combineFiles (p1_pyFiles: list, p1_outputPath: str) -> None:
-    functionName = "combineFiles"
-
-    try:
-
-        ## Open the output file for writing
-        with open(p1_outputPath, "w", encoding="utf-8") as outputFile:
-
-            ## Write the output file header
-            outputFile.write("## =============================================================================\n")
-            outputFile.write("## COMBINED SCRIPTS - auto-generated by combine_scripts.py\n")
-            outputFile.write(f"## Files included: {len(p1_pyFiles)}\n")
-            outputFile.write("## =============================================================================\n\n")
-
-            ## For each collected .py file path
-            for pyFilePath in p1_pyFiles:
-
-                ## Get the relative path of the file from the Scripts_TLC root
-                relativeFilePath = os.path.relpath(pyFilePath, scriptsTlcRootPath)
-
-                ## Write the file separator and relative path header
-                outputFile.write("\n\n")
-                outputFile.write("## " + "=" * 75 + "\n")
-                outputFile.write(f"## FILE: {relativeFilePath}\n")
-                outputFile.write("## " + "=" * 75 + "\n\n")
-
-                ## Open the file and write its contents to the output file
-                with open(pyFilePath, "r", encoding="utf-8") as inputFile:
-                    outputFile.write(inputFile.read())
-
-        ## Log the result
-        localSetup.logger.info(f"Combined {len(p1_pyFiles)} file(s) into {p1_outputPath}")
-        print(f"Combined {len(p1_pyFiles)} file(s) into {p1_outputPath}")
-
-    except Exception as Error:
-        errorHandler.sendError(functionName, Error)
+## ─────────────────────────────────────────────────────────────────────────────
+## Write collected lines to a single output file
+## ─────────────────────────────────────────────────────────────────────────────
+def writeCombinedLog(lines, outputPath):
+    """Write the sorted log lines to a combined output file."""
+    with open(outputPath, "w", encoding="utf-8") as f:
+        currentScript = None
+        for lineDatetime, scriptDir, logType, rawLine in lines:
+            ## Add a visual separator when the source script changes
+            if scriptDir != currentScript:
+                if currentScript is not None:
+                    f.write("\n")
+                f.write(f"## ── {scriptDir} ({logType}) ──\n")
+                currentScript = scriptDir
+            f.write(rawLine + "\n")
 
 
-## This function collects all relevant .py files and combines them into the output file
-def combinePyFilesInScriptsTlc () -> None:
-    functionName = "combinePyFilesInScriptsTlc"
+## ─────────────────────────────────────────────────────────────────────────────
+## Main
+## ─────────────────────────────────────────────────────────────────────────────
+def main():
+    parser = argparse.ArgumentParser(
+        description="Collect all TLC script logs into a single file, filtered by date."
+    )
+    parser.add_argument(
+        "--start",
+        type=str,
+        default=None,
+        help="Start date (YYYY-MM-DD). Defaults to today.",
+    )
+    parser.add_argument(
+        "--end",
+        type=str,
+        default=None,
+        help="End date (YYYY-MM-DD). Defaults to the start date.",
+    )
+    args = parser.parse_args()
 
-    try:
+    ## Resolve dates
+    if args.start:
+        startDate = datetime.strptime(args.start, "%Y-%m-%d").date()
+    else:
+        startDate = datetime.now().date()
 
-        ## Collect all relevant .py files from the Scripts_TLC root
-        pyFiles = collectPyFiles(scriptsTlcRootPath)
+    if args.end:
+        endDate = datetime.strptime(args.end, "%Y-%m-%d").date()
+    else:
+        endDate = startDate
 
-        ## If no .py files were found
-        if not pyFiles:
+    if endDate < startDate:
+        print("Error: end date cannot be before start date.")
+        return
 
-            ## Log the result and return
-            localSetup.logger.warning("No .py files found - nothing to combine.")
-            print("No .py files found - nothing to combine.")
-            return
+    print(f"Collecting logs from {startDate} to {endDate}...")
 
-        ## Log the files that will be combined
-        localSetup.logger.info(f"\nFound {len(pyFiles)} file(s):")
-        print(f"Found {len(pyFiles)} file(s):")
-        for pyFilePath in pyFiles:
-            relPath = os.path.relpath(pyFilePath, scriptsTlcRootPath)
-            localSetup.logger.info(f"  {relPath}")
-            print(f"  {relPath}")
+    ## Collect and sort
+    lines = collectLogs(startDate, endDate)
 
-        ## Combine the collected .py files into the output file
-        combineFiles(pyFiles, outputFilePath)
+    if not lines:
+        print("No log entries found for the specified date range.")
+        return
 
-    except Exception as Error:
-        errorHandler.sendError(functionName, Error)
+    ## Write output
+    logsRoot = os.path.dirname(localSetup.baseLogPath)
+    if startDate == endDate:
+        outputFileName = f"Combined_Logs_{startDate.strftime('%Y-%m-%d')}.txt"
+    else:
+        outputFileName = f"Combined_Logs_{startDate.strftime('%Y-%m-%d')}_to_{endDate.strftime('%Y-%m-%d')}.txt"
+
+    outputPath = os.path.join(logsRoot, outputFileName)
+    writeCombinedLog(lines, outputPath)
+
+    print(f"Wrote {len(lines)} log entries to:\n  {outputPath}")
 
 
 if __name__ == "__main__":
-
-    ## Set working directory
     os.chdir(os.path.dirname(__file__))
+    main()
 
-    ## Combine all .py files in Scripts_TLC into a single output file
-    combinePyFilesInScriptsTlc()
-
-    input("Press enter to exit")
 
 ## ===========================================================================
 ## FILE: ActionModules\Comment Out Error Handling.py
@@ -3248,7 +3216,7 @@ four character format (FA20, SU20, SP20): "))
 ## Import necessary modules
 import os, sys, pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from dateutil import parser as dateutil_parser
 
 ## Import necessary functions from local modules
@@ -3258,13 +3226,13 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules")
 ## New resource modules
 try:
     from Local_Setup import LocalSetup
-    from TLC_Common import makeApiCall, flattenApiObjectToJsonList
+    from TLC_Common import makeApiCall, flattenApiObjectToJsonList, isPresent
     from Canvas_Report import CanvasReport
     from Error_Email import errorEmail
     from Core_Microsoft_Api import sendOutlookEmail
 except ImportError:
     from ResourceModules.Local_Setup import LocalSetup
-    from ResourceModules.TLC_Common import makeApiCall, flattenApiObjectToJsonList
+    from ResourceModules.TLC_Common import makeApiCall, flattenApiObjectToJsonList, isPresent
     from ResourceModules.Canvas_Report import CanvasReport
     from ResourceModules.Error_Email import errorEmail
     from ResourceModules.Core_Microsoft_Api import sendOutlookEmail
@@ -3273,7 +3241,7 @@ except ImportError:
 localSetup = LocalSetup(datetime.now(), __file__)  ## sets cwd, paths, logs, date parts
 
 ## Import configs
-from Common_Configs import coreCanvasApiUrl, canvasAccessToken, scriptLibrary, serviceEmailAccount
+from Common_Configs import coreCanvasApiUrl, scriptLibrary, serviceEmailAccount
 
 ## Define the script name, purpose, and external requirements for logging and error reporting purposes
 scriptName = os.path.basename(__file__).replace(".py", "")
@@ -3286,7 +3254,7 @@ flagged for manual review via email rather than being deleted.
 """
 externalRequirements = r"""
 To function properly, this script requires:
-1. Access to NNU's SIS feed files (canvas_course.csv and canvas_enroll.csv) via the SIS external resource path.
+1. Access to NNU's SIS feed files (canvas_course.csv, canvas_enroll.csv, and canvas_term.csv) via the SIS external resource path.
 2. A valid Canvas API access token.
 3. Access to the Canvas provisioning reports for courses, enrollments, and terms.
 4. The ability to send notification emails via the Microsoft Outlook API.
@@ -3294,13 +3262,6 @@ To function properly, this script requires:
 
 ## Setup the error handler
 errorHandler = errorEmail(scriptName, scriptPurpose, externalRequirements, localSetup)
-
-## ─────────────────────────────────────────────────────────────────────────────
-## Constants
-## ─────────────────────────────────────────────────────────────────────────────
-SIS_WINDOW_FUTURE_DAYS = 180   ## Courses starting up to 180 days from now
-SIS_WINDOW_PAST_DAYS   = 30    ## Courses that ended up to 30 days ago
-
 
 ## ─────────────────────────────────────────────────────────────────────────────
 ## Helper: Parse a date string safely, returning None on failure
@@ -3353,19 +3314,54 @@ def buildTermDateLookup():
 
 
 ## ─────────────────────────────────────────────────────────────────────────────
+## Helper: Build a list of effective date intervals from SIS courses
+## ─────────────────────────────────────────────────────────────────────────────
+def buildSisDateIntervals(sisCoursesDf, canvasTermDateDict):
+    """
+    Return a set of (start_dt, end_dt) tuples, one per SIS course whose
+    effective date range can be resolved. Falls back to Canvas term dates
+    (which include all terms, active and legacy) when a course row has no
+    course-level dates. Courses whose dates cannot be resolved are skipped.
+    """
+    functionName = "buildSisDateIntervals"
+    try:
+        intervals = set()
+        for _, row in sisCoursesDf.iterrows():
+            startDt = _safeParseDatetime(row.get("start_date"))
+            endDt   = _safeParseDatetime(row.get("end_date"))
+            if startDt is None or endDt is None:
+                termId    = str(row.get("term_id", "")).strip()
+                termDates = canvasTermDateDict.get(termId, {})
+                if startDt is None:
+                    startDt = termDates.get("start_date")
+                if endDt is None:
+                    endDt = termDates.get("end_date")
+            if startDt is not None and endDt is not None:
+                intervals.add((startDt, endDt))
+        localSetup.logger.info(
+            f"Built {len(intervals)} unique SIS date pair(s) from {len(sisCoursesDf)} SIS course rows"
+        )
+        return intervals
+    except Exception as Error:
+        errorHandler.sendError(functionName, Error)
+        return set()
+
+
+## ─────────────────────────────────────────────────────────────────────────────
 ## Helper: Resolve a course's effective start / end dates
 ## ─────────────────────────────────────────────────────────────────────────────
 def resolveCourseDates(courseRow, termDateDict):
     """
     Return (startDatetime, endDatetime) for a course row.
-    Prefers course-level dates; falls back to Canvas term dates.
+    Prefers course-level dates; falls back to Canvas term dates (which include
+    all terms, past and present, from CanvasReport.getTermsDf).
     """
     functionName = "resolveCourseDates"
     try:
         startDt = _safeParseDatetime(courseRow.get("start_date"))
         endDt   = _safeParseDatetime(courseRow.get("end_date"))
 
-        ## Fall back to term dates when course‑level dates are missing
+        ## Fall back to Canvas term dates when course‑level dates are missing
         if startDt is None or endDt is None:
             termId = str(courseRow.get("term_id", ""))
             termDates = termDateDict.get(termId, {})
@@ -3639,34 +3635,46 @@ def removeOrphanedSisItems():
             dtype=str,
         )
 
-        ## Build the set of active SIS course IDs
-        activeSisCourseIds = set(
-            sisCoursesDf.loc[
-                sisCoursesDf["status"].str.lower() == "active", "course_id"
-            ]
-        )
-        localSetup.logger.info(f"SIS feed: {len(activeSisCourseIds)} active course IDs")
+        ## ══════════════════════════════════════════════════════════════════════
+        ## 2. Build Canvas term date lookup (all terms, including legacy)
+        ## ══════════════════════════════════════════════════════════════════════
+        termDateDict     = buildTermDateLookup()
+        sisDateIntervals = buildSisDateIntervals(sisCoursesDf, termDateDict)
 
-        ## Build the set of active SIS enrollment keys (course_id, user_id, role)
-        sisEnrollDf["_role_lower"] = sisEnrollDf["role"].str.lower()
-        sisEnrollDf["_status_lower"] = sisEnrollDf["status"].str.lower()
+        ## Build the set of all known SIS course IDs (any status)
+        ## If the SIS has a course at all, it will manage its own deletion; this script
+        ## only removes courses that are completely absent from the SIS feed.
+        activeSisCourseIds = set(sisCoursesDf["course_id"].dropna())
+        localSetup.logger.info(f"SIS feed: {len(activeSisCourseIds)} known course IDs (all statuses)")
+
+        ## Build the set of all known SIS enrollment keys (any status)
+        ## If the SIS has an enrollment at all, it will manage its own deletion; this script
+        ## only removes enrollments that are completely absent from the SIS feed.
         activeEnrollKeys = set(
             zip(
-                sisEnrollDf.loc[sisEnrollDf["_status_lower"] == "active", "course_id"],
-                sisEnrollDf.loc[sisEnrollDf["_status_lower"] == "active", "user_id"],
-                sisEnrollDf.loc[sisEnrollDf["_status_lower"] == "active", "_role_lower"],
+                sisEnrollDf["course_id"].str.lower().str.strip(),
+                sisEnrollDf["user_id"].str.strip(),
+                sisEnrollDf["role"].str.lower().str.strip(),
             )
         )
-        localSetup.logger.info(f"SIS feed: {len(activeEnrollKeys)} active enrollment keys")
+        localSetup.logger.info(f"SIS feed: {len(activeEnrollKeys)} known enrollment keys (all statuses)")
 
-        ## ══════════════════════════════════════════════════════════════════════
-        ## 2. Build term date lookup & determine which terms to query
-        ## ══════════════════════════════════════════════════════════════════════
-        termDateDict = buildTermDateLookup()
+        ## Derive a broad span from the SIS date pairs purely to limit which Canvas
+        ## term provisioning reports we need to pull.  The actual per-course date
+        ## gate in Step 5 uses exact (start, end) pair matching, not this window.
+        if sisDateIntervals:
+            windowStart = min(s for s, e in sisDateIntervals)
+            windowEnd   = max(e for s, e in sisDateIntervals)
+        else:
+            localSetup.logger.warning(
+                "No resolvable SIS date intervals found -- no Canvas terms will be queried"
+            )
+            return
 
-        today = datetime.now()
-        windowStart = today - timedelta(days=SIS_WINDOW_PAST_DAYS)
-        windowEnd   = today + timedelta(days=SIS_WINDOW_FUTURE_DAYS)
+        localSetup.logger.info(
+            f"SIS date span for term pre-filter: {windowStart.date()} → {windowEnd.date()} "
+            f"({len(sisDateIntervals)} unique SIS date pair(s))"
+        )
 
         ## Determine which Canvas terms overlap with our SIS date window
         relevantTermIds = []
@@ -3685,10 +3693,11 @@ def removeOrphanedSisItems():
         )
 
         ## ══════════════════════════════════════════════════════════════════════
-        ## 3. Retrieve Canvas courses and enrollments across relevant terms
+        ## 3. Retrieve Canvas courses, enrollments, and sections across relevant terms
         ## ══════════════════════════════════════════════════════════════════════
         allCoursesDfs     = []
         allEnrollmentsDfs = []
+        allSectionsDfs    = []
 
         for termId in relevantTermIds:
             termCoursesDf = CanvasReport.getCoursesDf(localSetup, termId)
@@ -3699,8 +3708,13 @@ def removeOrphanedSisItems():
             if termEnrollDf is not None and not termEnrollDf.empty:
                 allEnrollmentsDfs.append(termEnrollDf)
 
+            termSectionsDf = CanvasReport.getSectionsDf(localSetup, termId)
+            if termSectionsDf is not None and not termSectionsDf.empty:
+                allSectionsDfs.append(termSectionsDf)
+
         canvasCoursesDf = pd.concat(allCoursesDfs, ignore_index=True) if allCoursesDfs else pd.DataFrame()
         canvasEnrollDf  = pd.concat(allEnrollmentsDfs, ignore_index=True) if allEnrollmentsDfs else pd.DataFrame()
+        canvasSectionsDf = pd.concat(allSectionsDfs, ignore_index=True) if allSectionsDfs else pd.DataFrame()
 
         if canvasCoursesDf.empty:
             localSetup.logger.info("No Canvas courses found across relevant terms -- nothing to do")
@@ -3709,7 +3723,76 @@ def removeOrphanedSisItems():
             localSetup.logger.info("No Canvas enrollments found across relevant terms")
 
         ## ══════════════════════════════════════════════════════════════════════
-        ## Step 0: Active‑status pre‑filter
+        ## Step 3.5: Build crosslist mapping from sections
+        ## ══════════════════════════════════════════════════════════════════════
+        ## Maps original_course_id → set of parent_course_ids
+        ## so we can recognize crosslisted enrollments
+
+        crosslistOrigToParent = {}   # SIS course_id → parent SIS course_id
+        crosslistedAwayCourseIds = set()  # course SIS IDs whose sections were crosslisted away
+
+        if not canvasSectionsDf.empty:
+            ## Filter to rows where the course_id is not in the name and the course_id is present
+            ## In a normal section the section name contains the originating course SIS ID.
+            ## When a section has been cross-listed into a parent course, its canvas_course_id
+            ## changes to the parent course but the name still reflects the original course,
+            ## so the current course_id field no longer appears in the name.
+            crosslistedSections = canvasSectionsDf[
+                canvasSectionsDf.apply(
+                    lambda row: (
+                        isPresent(row.get("course_id"))
+                        and str(row.get("course_id", "")).strip() != ""
+                        and str(row.get("course_id", "")).strip()
+                            not in str(row.get("name", ""))
+                    ),
+                    axis=1,
+                )
+            ].copy()
+            
+
+            for _, secRow in crosslistedSections.iterrows():
+                ## The section now lives in the course identified by canvas_course_id
+                parentCanvasCourseId = str(secRow.get("canvas_course_id", "")).strip()
+
+                ## Find the course row for the parent course to get its SIS ID
+                parentCourseRow = canvasCoursesDf[
+                    canvasCoursesDf["canvas_course_id"].astype(str) == parentCanvasCourseId
+                ]
+                parentSisId = parentCourseRow["course_id"].values[0] if not parentCourseRow.empty else None
+                
+                ## Resolve SIS course_ids from the canvas_course_ids
+                ## Look up the original course SIS ID from the section name or from courses df
+                sectionName = str(secRow.get("name", ""))
+
+                ## Seperate out the original course ID from the section name. It is the last thing after seperating by space
+                origSisId = sectionName.split(" ")[-1].strip() if sectionName else None
+
+                if origSisId and parentSisId:
+                    crosslistOrigToParent[origSisId.lower()] = parentSisId.lower()
+                    crosslistedAwayCourseIds.add(origSisId)
+
+            localSetup.logger.info(
+                f"Built crosslist mapping: {len(crosslistOrigToParent)} original→parent course mappings, "
+                f"{len(crosslistedAwayCourseIds)} courses with sections crosslisted away"
+            )
+
+            ## For each SIS enrollment where the course was crosslisted, also add a key
+            ## with the parent course_id so Canvas enrollments under the parent match
+            crosslistExpandedKeys = set()
+            for courseId, userId, role in activeEnrollKeys:
+                ## If this course has been crosslisted into a parent, add the parent variant
+                if courseId in crosslistOrigToParent:
+                    parentCourseId = crosslistOrigToParent[courseId]
+                    crosslistExpandedKeys.add((parentCourseId, userId, role))
+
+            activeEnrollKeys.update(crosslistExpandedKeys)
+            localSetup.logger.info(
+                f"After crosslist expansion: {len(activeEnrollKeys)} active enrollment keys "
+                f"(added {len(crosslistExpandedKeys)} crosslisted variants)"
+            )
+
+        ## ══════════════════════════════════════════════════════════════════════
+        ## Step 4: Active‑status pre‑filter
         ## ══════════════════════════════════════════════════════════════════════
         canvasCoursesDf = canvasCoursesDf[canvasCoursesDf["status"].astype(str).str.lower() == "active"].copy()
         if not canvasEnrollDf.empty:
@@ -3721,30 +3804,49 @@ def removeOrphanedSisItems():
         )
 
         ## ══════════════════════════════════════════════════════════════════════
-        ## Step 1: SIS date‑window filter on courses
+        ## Step 5: SIS exact-date filter on courses
         ## ══════════════════════════════════════════════════════════════════════
+        ## A Canvas course is in scope only if its resolved (start, end) date pair
+        ## exactly matches one of the date pairs present in the SIS feed.  This
+        ## avoids treating courses that legitimately ended mid-window (e.g. Quad 1)
+        ## as out-of-scope simply because their end date predates the overall span.
+        ## Courses whose dates cannot be resolved are kept conservatively.
         inWindowMask = []
         for _, row in canvasCoursesDf.iterrows():
             startDt, endDt = resolveCourseDates(row, termDateDict)
-            ## Both dates must be resolvable; if not, include the course conservatively
             if startDt is None or endDt is None:
                 inWindowMask.append(True)
             else:
-                inWindow = (startDt <= windowEnd) and (endDt >= windowStart)
-                inWindowMask.append(inWindow)
+                inWindowMask.append((startDt, endDt) in sisDateIntervals)
 
         canvasCoursesDf = canvasCoursesDf[inWindowMask].copy()
         localSetup.logger.info(
-            f"After SIS date-window filter: {len(canvasCoursesDf)} active courses within window"
+            f"After SIS exact-date filter: {len(canvasCoursesDf)} active courses with matching SIS date pair"
+        )
+
+        ## Build the set of canvas_course_ids whose term has not yet ended.
+        ## Enrollments in ended-term courses are excluded from orphan detection
+        ## because the SIS feed no longer carries historical enrollment records.
+        now = datetime.now()
+        enrollmentScopeCanvasIds = set()
+        for _, row in canvasCoursesDf.iterrows():
+            _, endDt = resolveCourseDates(row, termDateDict)
+            if endDt is None or endDt >= now:
+                enrollmentScopeCanvasIds.add(row["canvas_course_id"])
+
+        localSetup.logger.info(
+            f"Enrollment orphan scope: {len(enrollmentScopeCanvasIds)} course(s) in non-ended terms "
+            f"(excluded {len(canvasCoursesDf) - len(enrollmentScopeCanvasIds)} ended-term course(s))"
         )
 
         ## ══════════════════════════════════════════════════════════════════════
-        ## Step 2: Identify orphaned courses
+        ## Step 6: Identify orphaned courses
         ## ══════════════════════════════════════════════════════════════════════
         orphanedCoursesDf = canvasCoursesDf[
             (canvasCoursesDf["created_by_sis"].astype(str).str.lower() == "true")
             & (canvasCoursesDf["status"].astype(str).str.lower() == "active")
             & (~canvasCoursesDf["course_id"].isin(activeSisCourseIds))
+            & (~canvasCoursesDf["course_id"].isin(crosslistedAwayCourseIds))  ## NEW: exclude crosslisted courses
         ].copy()
 
         localSetup.logger.info(f"Identified {len(orphanedCoursesDf)} orphaned course(s)")
@@ -3753,7 +3855,7 @@ def removeOrphanedSisItems():
         orphanedCanvasCourseIds = set(orphanedCoursesDf["canvas_course_id"])
 
         ## ══════════════════════════════════════════════════════════════════════
-        ## Step 3: Identify orphaned enrollments in still‑active courses
+        ## Step 7: Identify orphaned enrollments in still‑active courses
         ## ══════════════════════════════════════════════════════════════════════
         orphanedEnrollRows = []
         if not canvasEnrollDf.empty:
@@ -3767,11 +3869,14 @@ def removeOrphanedSisItems():
                 ## Parent course must NOT be in the orphaned‑courses set
                 if eRow["canvas_course_id"] in orphanedCanvasCourseIds:
                     continue
+                ## Skip enrollments in ended-term courses — SIS no longer carries those records
+                if eRow["canvas_course_id"] not in enrollmentScopeCanvasIds:
+                    continue
                 ## Check if the enrollment key exists in the SIS feed
                 enrollKey = (
-                    str(eRow.get("course_id", "")),
-                    str(eRow.get("user_id", "")),
-                    str(eRow.get("role", "")).lower(),
+                    str(eRow.get("course_id", "")).lower().strip(),
+                    str(eRow.get("user_id", "")).strip(),
+                    str(eRow.get("role", "")).lower().strip(),
                 )
                 if enrollKey not in activeEnrollKeys:
                     orphanedEnrollRows.append(eRow)
@@ -3779,9 +3884,14 @@ def removeOrphanedSisItems():
         localSetup.logger.info(
             f"Identified {len(orphanedEnrollRows)} orphaned enrollment(s) in still-active courses"
         )
+        ## save the orpahned enroll rows to a csv file for reference
+        outputResourcePath = localSetup.getInternalResourcePaths("Canvas")
+        orphanEnrollmentsOutputPath = os.path.join(outputResourcePath, "orphaned_enrollments.csv")
+        pd.DataFrame(orphanedEnrollRows).to_csv(orphanEnrollmentsOutputPath, index=False)
+
 
         ## ═══════════════════════════════════════════════���══════════════════════
-        ## Step 4 & 5: Process orphaned courses and enrollments in batches
+        ## Step 8 & 9: Process orphaned courses and enrollments in batches
         ## ══════════════════════════════════════════════════════════════════════
         ## Thread‑safe summary (lists are append‑safe in CPython)
         summary = {
@@ -3816,7 +3926,7 @@ def removeOrphanedSisItems():
             localSetup.logger.info(f"Orphaned enrollments: all {len(futures)} threads completed")
 
         ## ════════════════════════════════════════════════════════════════��═════
-        ## Step 7: Final summary log
+        ## Step 10: Final summary log
         ## ══════════════════════════════════════════════════════════════════════
         localSetup.logger.info("===============================================")
         localSetup.logger.info("        Remove Orphaned SIS Items -- Summary")
@@ -3838,6 +3948,43 @@ def removeOrphanedSisItems():
             f"{len(summary['orphaned_enrollments_deleted'])}"
         )
         localSetup.logger.info("===============================================")
+
+        ## Send a summary email if anything was actually deleted
+        totalDeleted = (
+            len(summary["deleted_silently"])
+            + len(summary["deleted_with_enrollments"])
+            + len(summary["orphaned_enrollments_deleted"])
+        )
+        if totalDeleted > 0:
+            def _bulletList(items):
+                return "".join(f"<li>{item}</li>" for item in items) if items else "<li>(none)</li>"
+
+            summaryEmailBody = (
+                f"<!DOCTYPE html><html><body>"
+                f"<h2>Remove Orphaned SIS Items — Run Summary</h2>"
+                f"<p><b>Courses deleted silently</b> (no enrollments, no grades): "
+                f"{len(summary['deleted_silently'])}</p>"
+                f"<ul>{_bulletList(summary['deleted_silently'])}</ul>"
+                f"<p><b>Courses deleted after enrollment cleanup:</b> "
+                f"{len(summary['deleted_with_enrollments'])}</p>"
+                f"<ul>{_bulletList(summary['deleted_with_enrollments'])}</ul>"
+                f"<p><b>Courses skipped — grades found (manual review required):</b> "
+                f"{len(summary['skipped_grades'])}</p>"
+                f"<ul>{_bulletList(summary['skipped_grades'])}</ul>"
+                f"<p><b>Orphaned enrollments deleted (in still-active courses):</b> "
+                f"{len(summary['orphaned_enrollments_deleted'])}</p>"
+                f"<ul>{_bulletList(summary['orphaned_enrollments_deleted'])}</ul>"
+                f"</body></html>"
+            )
+
+            sendOutlookEmail(
+                p1_microsoftUserName=serviceEmailAccount,
+                p1_subject="Remove Orphaned SIS Items — Run Summary",
+                p1_body=summaryEmailBody,
+                p1_recipientEmailList=f"{scriptLibrary}@nnu.edu",
+                p1_shared_mailbox=f"{scriptLibrary}@nnu.edu",
+            )
+            localSetup.logger.info("Summary email sent")
 
     except Exception as Error:
         errorHandler.sendError(functionName, Error)
@@ -5631,6 +5778,7 @@ from ActionModules.Course_Date_Related_Actions import termDetermineAndPerformRel
 from ActionModules.Change_Syllabus_Tab import updateCourseSyllabusTab
 from ActionModules.Send_Catalog_To_Simple_Syllabus import processCatalogCoursesAndUploadToSimpleSyllabus
 from ActionModules.Send_Course_Editors_To_Simple_Syllabus import processCourseEditorsAndUploadToSimpleSyllabus
+from ActionModules.Remove_Orphaned_SIS_Items import removeOrphanedSisItems
 
 ## Define the script name, purpose, and external requirements for logging and error reporting purposes
 scriptName = os.path.basename(__file__).replace(".py", "")
@@ -5880,10 +6028,10 @@ def determineTargetTerms():
 
         ## Get the current term codes
         targetTermSet = localSetup.getCurrentTermCodes()
-        
+
         ## If today is Friday
         if currentWeekDay == 4:
-            ## Add current school year, most recent term, and next term
+            ## Add current school year and next term
             targetTermSet.update(localSetup.getCurrentSchoolYearTermCodes())
             targetTermSet.update(localSetup.getMostRecentCompletedTermCodes())
             targetTermSet.update(localSetup.getNextTermCodes())
@@ -5990,6 +6138,9 @@ def fourTimesDaily (p1_relaventTerm):
                 ## Run the get incoming student info for the current terms
                 termGetIncomingStudentsInfo(p1_relaventTerm)
                 termGetIncomingStudentsInfo(p1_relaventTerm.replace("SP", "GS").replace("FA", "GF"))
+
+        ## Remove any orphaned SIS-created courses and enrollments
+        removeOrphanedSisItems()
 
     except Exception as Error:
         errorHandler.sendError (functionName, Error)
@@ -8266,7 +8417,7 @@ def Nighthawk360CanvasReport():
         localSetup.logger.info("\nActivity and Data CSVs saved to internal and external paths")
 
     except Exception as Error:
-         ErrorHandler.sendError("functionName", Error)
+         ErrorHandler.sendError(f"{functionName}", Error)
 
 if __name__ == "__main__":
 
@@ -11539,7 +11690,7 @@ four character format (FA20, SU20, SP20): "))
 
 import os, sys, time, functools, threading, random, requests
 from datetime import datetime
-from typing import Callable, Tuple, Type, Optional
+from typing import Callable, Tuple, Type, Optional, Dict, Any, List
 
 try: ## If the module is run directly
     from Local_Setup import LocalSetup
@@ -11587,7 +11738,7 @@ rateLimitBackoffMultiplier: float = 1.5
 maxThrottleRetries: int = 10
 
 ## Pre-emptive pause when remaining quota is low
-rateLimitPauseThreshold: float = 10.0
+rateLimitPauseThreshold: float = 50.0
 basePreemptivePauseSeconds: float = 0.5
 preemptivePauseJitterMaxSeconds: float = 0.25
 
@@ -11597,6 +11748,34 @@ requestTimeoutSeconds: float = 600.0
 ## Shared rate-limit state across threads in this process
 _rateLimitRemaining: Optional[float] = None
 _rateLimitLock = threading.Lock()
+
+## -------------------------
+## Global Concurrency Gate (Canvas-only)
+## -------------------------
+## Canvas uses a token-bucket rate limiter shared across ALL requests for the same
+## API token.  When dozens of threads fire simultaneously, each one independently
+## hits 429 and independently backs off — creating a thundering-herd effect that
+## wastes time and generates massive log spam.
+##
+## Solution:
+##   1. _canvasApiSemaphore — limits how many threads can be inside the HTTP dispatch
+##      at the same time.  This prevents overwhelming the bucket in the first place.
+##   2. _canvasApiGate — a threading.Event that is normally "set" (open).  When ANY
+##      thread receives a 429, it "clears" the gate (blocking) for the cooldown
+##      duration.  ALL other threads block on gate.wait() before they can dispatch,
+##      so only ONE coordinated pause happens instead of N independent ones.
+
+## Maximum concurrent Canvas API requests.  Canvas refills ~10 tokens/second for
+## most institutions.  Keeping this at the refill rate prevents steady-state 429s.
+_canvasMaxConcurrentRequests: int = 10
+_canvasApiSemaphore = threading.Semaphore(_canvasMaxConcurrentRequests)
+
+## Global cooldown gate — cleared (blocking) during a 429 cooldown, set (open) normally
+_canvasApiGate = threading.Event()
+_canvasApiGate.set()  ## Start open
+
+_gateLock = threading.Lock()
+_gateReopenTime: float = 0.0  ## time.monotonic() when the gate should reopen
 
 
 ## -------------------------
@@ -11630,6 +11809,11 @@ def retry(
 
     Rate-limit retries (RateLimitExceeded) are handled separately and do not count
     against max_attempts.
+
+    CHANGED from original: The per-thread sleep on 429 is removed.  Instead,
+    _triggerGlobalCooldown() blocks ALL threads.  The retry loop here just
+    catches the exception and loops back to the top of makeApiCall, where the
+    gate.wait() will block until the global cooldown expires.
     """
     def decorator(func: Callable):
         @functools.wraps(func)
@@ -11642,7 +11826,6 @@ def retry(
             throttleRetries = 0
 
             currentDelaySeconds = delay
-            currentRateLimitWaitSeconds = baseRateLimitWaitSeconds
 
             while attempts < max_attempts:
                 try:
@@ -11651,21 +11834,11 @@ def retry(
                 except RateLimitExceeded as rateLimitError:
                     throttleRetries += 1
 
-                    ## Use Retry-After if provided, else base wait + jitter
-                    if rateLimitError.retryAfter is not None:
-                        waitSeconds = float(rateLimitError.retryAfter)
-                    else:
-                        jitterSeconds = random.uniform(0.0, rateLimitJitterMaxSeconds)
-                        waitSeconds = currentRateLimitWaitSeconds + jitterSeconds
-
-                        ## Increase rate-limit wait for repeated 429s (doesn't consume general retry attempts)
-                        currentRateLimitWaitSeconds *= rateLimitBackoffMultiplier
-
                     if getattr(localSetup, "logger", None):
                         localSetup.logger.warning(
                             f"Rate limit hit for {func.__name__} "
                             f"(throttle retry {throttleRetries}/{max_throttle_retries}). "
-                            f"Waiting {waitSeconds:.2f}s before retrying..."
+                            f"Global cooldown triggered — waiting for gate to reopen..."
                         )
 
                     if throttleRetries >= max_throttle_retries:
@@ -11675,7 +11848,10 @@ def retry(
                             )
                         raise
 
-                    time.sleep(waitSeconds)
+                    ## No per-thread sleep here.  The global cooldown (_triggerGlobalCooldown)
+                    ## was already initiated by makeApiCall before raising RateLimitExceeded.
+                    ## When we loop back, makeApiCall will gate.wait() before dispatching,
+                    ## which blocks until the coordinated cooldown expires.
 
                 except exceptions as error:
                     attempts += 1
@@ -11693,7 +11869,6 @@ def retry(
 
                     time.sleep(currentDelaySeconds)
                     currentDelaySeconds *= backoff
-
         return wrapper
     return decorator
 
@@ -11710,6 +11885,7 @@ def _sendTimeoutEmail(localSetup, apiUrl: str, timeoutSeconds: float, error: Exc
     subject = f"API Timeout ({timeoutSeconds:.0f}s)"
     body = (
         f"An API request timed out.\n\n"
+        f"Script Context: {localSetup.__scriptName}\n"
         f"URL: {apiUrl}\n"
         f"Timeout: {timeoutSeconds:.0f}s\n"
         f"Error: {error}\n"
@@ -11756,6 +11932,11 @@ def _updateRateLimitRemainingFromResponse(responseObject) -> None:
 
 
 def _preemptiveRateLimitPauseIfNeeded(localSetup, apiUrl: str) -> None:
+    """
+    If the most recently observed X-Rate-Limit-Remaining is below the threshold,
+    pause briefly before making the next request.  This is a best-effort hint;
+    the global gate is the real enforcer.
+    """
     with _rateLimitLock:
         currentRemaining = _rateLimitRemaining
 
@@ -11776,6 +11957,47 @@ def _preemptiveRateLimitPauseIfNeeded(localSetup, apiUrl: str) -> None:
 
 
 ## -------------------------
+## Global Cooldown Functions
+## -------------------------
+
+def _triggerGlobalCooldown(waitSeconds: float, localSetup=None) -> None:
+    """
+    Called when ANY thread receives a 429.  Closes the gate so ALL threads
+    wait until the cooldown expires, then reopens it.
+
+    Only the first thread to trigger the cooldown actually sleeps and reopens
+    the gate.  Subsequent threads that call this while the gate is already
+    closed will see that _gateReopenTime is already far enough in the future
+    and return immediately (they will block on _canvasApiGate.wait() instead).
+    """
+    global _gateReopenTime
+
+    reopenAt = time.monotonic() + waitSeconds
+
+    with _gateLock:
+        ## Only extend the cooldown — never shorten it
+        if reopenAt <= _gateReopenTime:
+            return  ## Another thread already set a longer (or equal) cooldown
+        _gateReopenTime = reopenAt
+        _canvasApiGate.clear()  ## Block all threads
+
+    if localSetup and getattr(localSetup, "logger", None):
+        localSetup.logger.warning(
+            f"Global rate-limit cooldown: blocking all Canvas API threads for {waitSeconds:.1f}s"
+        )
+
+    ## This thread is responsible for reopening the gate
+    time.sleep(waitSeconds)
+
+    with _gateLock:
+        ## Only reopen if no other thread extended the cooldown further
+        if time.monotonic() >= _gateReopenTime:
+            _canvasApiGate.set()
+            if localSetup and getattr(localSetup, "logger", None):
+                localSetup.logger.info("Global rate-limit cooldown expired. Resuming API calls.")
+
+
+## -------------------------
 ## ApiCaller Class
 ## -------------------------
 
@@ -11786,6 +12008,8 @@ class ApiCaller:
     Canvas calls are detected by the presence of 'instructure.com' in the URL and receive:
     - A default Authorization header using canvasAccessToken
     - X-Rate-Limit-Remaining tracking and preemptive pauses
+    - Global concurrency semaphore limiting concurrent Canvas requests
+    - Global cooldown gate — when ANY thread gets 429, ALL threads pause together
     - HTTP 429 -> RateLimitExceeded (separate retry lane, does not consume max_attempts)
     - Canvas-specific 409 Conflict handling for report generation
 
@@ -11809,12 +12033,14 @@ class ApiCaller:
         p1_files=None,
         p1_apiCallType="get",
         firstPageOnly=False,
-    ):
+    ) -> Tuple[requests.Response, List[requests.Response]]:
         """
         Makes an API call using localSetup.canvasSession and a 600s timeout.
 
         Canvas calls (URLs containing 'instructure.com'):
         - Default Authorization header using canvasAccessToken
+        - Global concurrency gate (semaphore) limiting simultaneous requests
+        - Global cooldown gate that blocks ALL threads when any thread gets 429
         - Preemptive pause when remaining quota is low (X-Rate-Limit-Remaining)
         - HTTP 429 raises RateLimitExceeded (handled separately by retry decorator)
         - Canvas-specific 409 Conflict handling
@@ -11841,9 +12067,16 @@ class ApiCaller:
 
         session = self.localSetup.canvasSession
 
-        ## Canvas-only: preemptive rate-limit pause
+        ## Canvas-only: wait for global cooldown gate + preemptive pause + acquire semaphore
         if isCanvas:
+            ## Block if a global cooldown is active (another thread got 429)
+            _canvasApiGate.wait()
+
+            ## Best-effort preemptive pause based on X-Rate-Limit-Remaining header
             _preemptiveRateLimitPauseIfNeeded(self.localSetup, p1_apiUrl)
+
+            ## Limit concurrent Canvas requests to prevent overwhelming the bucket
+            _canvasApiSemaphore.acquire()
 
         ## Dispatch
         try:
@@ -11923,11 +12156,18 @@ class ApiCaller:
             _sendTimeoutEmail(self.localSetup, p1_apiUrl, requestTimeoutSeconds, timeoutError)
             raise
 
+        finally:
+            ## Always release the semaphore so other threads can proceed
+            if isCanvas:
+                _canvasApiSemaphore.release()
+
         ## Canvas-only: update shared rate-limit remaining tracker from response headers
         if isCanvas:
             _updateRateLimitRemainingFromResponse(responseObject)
 
-        ## Handle 429 -> RateLimitExceeded (separate retry lane for both Canvas and non-Canvas)
+        ## -------------------------
+        ## Handle 429 -> trigger global cooldown, then raise for retry
+        ## -------------------------
         if responseObject.status_code == 429:
             retryAfterSeconds: Optional[float] = None
 
@@ -11938,10 +12178,16 @@ class ApiCaller:
                 except (ValueError, TypeError):
                     retryAfterSeconds = None
 
+            ## Determine how long to block ALL threads
+            cooldownSeconds = retryAfterSeconds if retryAfterSeconds else baseRateLimitWaitSeconds
+
             try:
                 responseObject.close()
             except Exception:
                 pass
+
+            ## Block ALL threads, not just this one
+            _triggerGlobalCooldown(cooldownSeconds, self.localSetup)
 
             raise RateLimitExceeded(
                 retryAfter=retryAfterSeconds,
@@ -12034,7 +12280,7 @@ class ApiCaller:
                         self.localSetup.logger.warning(
                             f"Failed to delete resource at {p1_apiUrl}: HTTP {statusCode}"
                         )
-                    return None, None
+                    return responseObject, []
 
         ## -------------------------
         ## Pagination (follows RFC 5988 link headers)
@@ -12090,7 +12336,6 @@ def makeApiCall(
         p1_apiCallType=p1_apiCallType,
         firstPageOnly=firstPageOnly,
     )
-
 
 ## ===========================================================================
 ## FILE: ResourceModules\Canvas_Report.py
@@ -14382,6 +14627,7 @@ four character format (FA20, SU20, SP20): "))
 ## Import Generic Modules
 import os, json, sys, logging, calendar, re, requests
 from datetime import datetime
+from requests.adapters import HTTPAdapter
 ## Add the config path
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "Configs"))
 
@@ -14451,6 +14697,13 @@ class LocalSetup:
 
         ## Canvas API Session (persistent connection pool for all makeApiCall usage)
         self.canvasSession = requests.Session()
+        adapter = HTTPAdapter(
+            pool_connections=10,   ## Match _canvasMaxConcurrentRequests
+            pool_maxsize=10,       ## Match _canvasMaxConcurrentRequests
+            max_retries=0,         ## We handle retries ourselves in Api_Caller
+        )
+        self.canvasSession.mount("https://", adapter)
+        self.canvasSession.mount("http://", adapter)
 
     ## Internal Methods
 
@@ -14813,17 +15066,15 @@ class LocalSetup:
         ## e.g. {"FA2024", "GF2024", "SP2025", "GS2025", "SU2025", "SG2025"}
         """    
         currentTerm = self._determineCurrentTerm(self.dateDict["month"])
-        previousTerm = self._determinePreviousTerm(currentTerm)
         currentYear = self.dateDict["year"]
 
-        ## Determine correct year for previous term
-        previousTermYear = currentYear - 1 if termSchoolYearLogic[previousTerm] == 'current-next' else currentYear
-
-        startYear, endYear = self._getSchoolYearRange(previousTerm, previousTermYear)
+        ## Get the current school year range first, then subtract 1 from both years
+        startYear, endYear = self._getSchoolYearRange(currentTerm, currentYear)
+        prevStartYear, prevEndYear = startYear - 1, endYear - 1
 
         terms = set()
         for term, logic in termSchoolYearLogic.items():
-            yearForTerm = startYear if logic == "current-next" else endYear
+            yearForTerm = prevStartYear if logic == "current-next" else prevEndYear
             startMonth = termMonthRanges[term][0]
             terms.update(self.getTerms(startMonth, yearForTerm))
         return terms
@@ -14835,17 +15086,16 @@ class LocalSetup:
         ## e.g. {"FA24", "GF24", "SP25", "GS25", "SU25", "SG25"}
         """
         currentTerm = self._determineCurrentTerm(self.dateDict["month"])
-        previousTerm = self._determinePreviousTerm(currentTerm)
         currentYear = self.dateDict["year"]
 
-        previousTermYear = currentYear - 1 if termSchoolYearLogic[previousTerm] == 'current-next' else currentYear
-
-        startYear, endYear = self._getSchoolYearRange(previousTerm, previousTermYear)
-        startDecade, endDecade = startYear % 100, endYear % 100
+        ## Get the current school year range first, then subtract 1 from both years
+        startYear, endYear = self._getSchoolYearRange(currentTerm, currentYear)
+        prevStartYear, prevEndYear = startYear - 1, endYear - 1
+        prevStartDecade, prevEndDecade = prevStartYear % 100, prevEndYear % 100
 
         termCodes = set()
         for term, logic in termSchoolYearLogic.items():
-            decadeForTerm = startDecade if logic == "current-next" else endDecade
+            decadeForTerm = prevStartDecade if logic == "current-next" else prevEndDecade
             startMonth = termMonthRanges[term][0]
             termCodes.update(self.getTermCodes(startMonth, decadeForTerm))
         return termCodes

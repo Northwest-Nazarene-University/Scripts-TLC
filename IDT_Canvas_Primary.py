@@ -278,10 +278,10 @@ def determineTargetTerms():
 
         ## Get the current term codes
         targetTermSet = localSetup.getCurrentTermCodes()
-        
+
         ## If today is Friday
         if currentWeekDay == 4:
-            ## Add current school year, most recent term, and next term
+            ## Add current school year, most recent completed terms, and next terms
             targetTermSet.update(localSetup.getCurrentSchoolYearTermCodes())
             targetTermSet.update(localSetup.getMostRecentCompletedTermCodes())
             targetTermSet.update(localSetup.getNextTermCodes())

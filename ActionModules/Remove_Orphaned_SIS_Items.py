@@ -2,7 +2,7 @@
 ## Last Updated by: Bryce Miller
 
 ## Import necessary modules
-import os, sys, pandas as pd
+import os, sys, re, pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from dateutil import parser as dateutil_parser
@@ -465,16 +465,29 @@ def removeOrphanedSisItems():
         )
 
         ## Determine which Canvas terms overlap with our SIS date window
+        ## Only accept NNU term codes: 2-letter prefix + 2-digit year
+        _VALID_TERM_RE = re.compile(r"^(FA|SP|SU|GF|GS|SG)\d{2}$")
+
         relevantTermIds = []
+        skippedTermIds  = []
         for termId, dates in termDateDict.items():
             tStart = dates.get("start_date")
             tEnd   = dates.get("end_date")
             ## If either date is unknown, exclude the term to be safe
             if tStart is None or tEnd is None:
                 continue
+            ## Skip non-standard term IDs (e.g. MASTER, AF25, AS26, SA26)
+            if not _VALID_TERM_RE.match(termId):
+                skippedTermIds.append(termId)
+                continue
             ## Check overlap: term ends after windowStart AND term starts before windowEnd
             if tEnd >= windowStart and tStart <= windowEnd:
                 relevantTermIds.append(termId)
+
+        if skippedTermIds:
+            localSetup.logger.info(
+                f"Skipped {len(skippedTermIds)} non-standard Canvas term(s): {', '.join(skippedTermIds)}"
+            )
 
         localSetup.logger.info(
             f"Identified {len(relevantTermIds)} Canvas term(s) overlapping the SIS date window"

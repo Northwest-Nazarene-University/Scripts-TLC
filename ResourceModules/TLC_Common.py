@@ -205,7 +205,16 @@ def isMissing(value):
     - empty string ""
     - whitespace-only strings
     - strings that spell 'nan' (case-insensitive)
+    - empty DataFrames or Series
     """
+
+    ## DataFrames -> missing if empty
+    if isinstance(value, pd.DataFrame):
+        return value.empty
+
+    ## Series -> missing if empty
+    if isinstance(value, pd.Series):
+        return value.empty
 
     ## String-like values -> normalize and check
     if isinstance(value, str):

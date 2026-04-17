@@ -15,7 +15,7 @@ try: ## Irregular try clause, do not comment out in testing
     from Canvas_Report import CanvasReport
     from Core_Microsoft_Api import sendOutlookEmail, CoreMicrosoftAPI
     from Error_Email import errorEmail
-    from TLC_Common import isPresent
+    from TLC_Common import isPresent, isMissing
     from TLC_Action import (
         retrieveDataForRelevantCommunication,
         getUniqueOutcomesAndOutcomeCoursesDict,
@@ -28,7 +28,7 @@ except ImportError:
     from ResourceModules.Canvas_Report import CanvasReport
     from ResourceModules.Core_Microsoft_Api import sendOutlookEmail
     from ResourceModules.Error_Email import errorEmail
-    from ResourceModules.TLC_Common import isPresent
+    from ResourceModules.TLC_Common import isPresent, isMissing
     from ResourceModules.TLC_Action import (
             retrieveDataForRelevantCommunication,
             getUniqueOutcomesAndOutcomeCoursesDict,
@@ -322,7 +322,7 @@ def craftAndSendRelevantEmail(
                         ]
 
                         ## If the outcome is not in the missing-attachment report's Required Outcome column, skip it
-                        if filteredWithoutAttachmentsDF.empty or datapoint not in filteredWithoutAttachmentsDF["Required Outcome"].values:
+                        if isMissing(filteredWithoutAttachmentsDF) or datapoint not in filteredWithoutAttachmentsDF["Required Outcome"].values:
                             continue
 
                     ## If the key does not already exist in the email details
@@ -391,7 +391,7 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
                 relevantAuxillaryDfDict = {}
             
                 ## If the course is in the list of courses who do not have their outcome attached to a published assignment
-                if not auxiliaryDfDict["Outcome Courses Without Attachments DF"].empty:
+                if "Outcome Courses Without Attachments DF" in auxiliaryDfDict and isPresent(auxiliaryDfDict["Outcome Courses Without Attachments DF"]):
                     
                     ## Isolate the course's data in p1_outcomeCoursesWithoutAttachmentDF
                     relevantAuxillaryDfDict["Relevant Course Outcome Without Attachment Df"] = (
@@ -407,7 +407,7 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
                     relevantAuxillaryDfDict["Relevant Course Outcome Without Attachment Df"] = pd.DataFrame()
 
                 ## If the course is in the list of courses who have no outcome results
-                if not auxiliaryDfDict["Unassessed Outcome Courses DF"].empty:
+                if "Unassessed Outcome Courses DF" in auxiliaryDfDict and isPresent(auxiliaryDfDict["Unassessed Outcome Courses DF"]):
                     
                     ## Isolate the course's data in p1_outcomeCoursesWithoutOutcomeData
                     relevantAuxillaryDfDict["Relevant Course Outcome Without Data Df"] = (
@@ -471,8 +471,8 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
                     if isOutcomeCourse:
 
                         ## If the course is an outcome course that does not have all of its outcomes attached to published assignments
-                        if not relevantAuxillaryDfDict["Relevant Course Outcome Without Attachment Df"].empty:    
-                
+                        if isPresent(relevantAuxillaryDfDict.get("Relevant Course Outcome Without Attachment Df")):    
+
                             ## Send the courses's instructors the Midterm Reminder email
                             relevantEmailList.append("Associated Course Outcomes: Midterm Reminder")
 
@@ -485,8 +485,8 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
                     if isOutcomeCourse:
 
                         ## If the course is an outcome course that does not have all of its outcomes attached to published assignments
-                        if not relevantAuxillaryDfDict["Relevant Course Outcome Without Attachment Df"].empty: 
-                
+                        if isPresent(relevantAuxillaryDfDict.get("Relevant Course Outcome Without Attachment Df")): 
+
                             ## Send the courses's instructors the Finals Reminder email
                             relevantEmailList.append("Associated Course Outcomes: Finals Reminder")
 
@@ -499,8 +499,8 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
                     if isOutcomeCourse:
 
                         ## If the course is in the list of courses who do not have all of their outcome data
-                        if not relevantAuxillaryDfDict["Relevant Course Outcome Without Data Df"].empty:    
-            
+                        if isPresent(relevantAuxillaryDfDict.get("Relevant Course Outcome Without Data Df")):    
+
                             ## Send the courses's instructors the Missing Data email as the course's outcome data is past due
                             relevantEmailList.append("Associated Course Outcomes: Missing Required Data")
 
