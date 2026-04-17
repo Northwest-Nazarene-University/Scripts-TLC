@@ -14,13 +14,13 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules")
 ## New resource modules
 try:
     from Local_Setup import LocalSetup
-    from TLC_Common import makeApiCall, flattenApiObjectToJsonList, isPresent
+    from TLC_Common import makeApiCall, flattenApiObjectToJsonList, isPresent, isMissing
     from Canvas_Report import CanvasReport
     from Error_Email import errorEmail
     from Core_Microsoft_Api import sendOutlookEmail
 except ImportError:
     from ResourceModules.Local_Setup import LocalSetup
-    from ResourceModules.TLC_Common import makeApiCall, flattenApiObjectToJsonList, isPresent
+    from ResourceModules.TLC_Common import makeApiCall, flattenApiObjectToJsonList, isPresent, isMissing
     from ResourceModules.Canvas_Report import CanvasReport
     from ResourceModules.Error_Email import errorEmail
     from ResourceModules.Core_Microsoft_Api import sendOutlookEmail
@@ -82,7 +82,7 @@ def buildTermDateLookup():
         termsDf = CanvasReport.getTermsDf(localSetup)
         termDateDict = {}
 
-        if termsDf is not None and not termsDf.empty:
+        if isPresent(termsDf):
             for _, row in termsDf.iterrows():
                 termId = row.get("term_id") or row.get("canvas_term_id")
                 if pd.isna(termId):
@@ -502,25 +502,25 @@ def removeOrphanedSisItems():
 
         for termId in relevantTermIds:
             termCoursesDf = CanvasReport.getCoursesDf(localSetup, termId)
-            if termCoursesDf is not None and not termCoursesDf.empty:
+            if isPresent(termCoursesDf):
                 allCoursesDfs.append(termCoursesDf)
 
             termEnrollDf = CanvasReport.getEnrollmentsDf(localSetup, termId, includeDeleted=False)
-            if termEnrollDf is not None and not termEnrollDf.empty:
+            if isPresent(termEnrollDf):
                 allEnrollmentsDfs.append(termEnrollDf)
 
             termSectionsDf = CanvasReport.getSectionsDf(localSetup, termId)
-            if termSectionsDf is not None and not termSectionsDf.empty:
+            if isPresent(termSectionsDf):
                 allSectionsDfs.append(termSectionsDf)
 
         canvasCoursesDf = pd.concat(allCoursesDfs, ignore_index=True) if allCoursesDfs else pd.DataFrame()
         canvasEnrollDf  = pd.concat(allEnrollmentsDfs, ignore_index=True) if allEnrollmentsDfs else pd.DataFrame()
         canvasSectionsDf = pd.concat(allSectionsDfs, ignore_index=True) if allSectionsDfs else pd.DataFrame()
 
-        if canvasCoursesDf.empty:
+        if isMissing(canvasCoursesDf):
             localSetup.logger.info("No Canvas courses found across relevant terms -- nothing to do")
             return
-        if canvasEnrollDf.empty:
+        if isMissing(canvasEnrollDf):
             localSetup.logger.info("No Canvas enrollments found across relevant terms")
 
         ## ══════════════════════════════════════════════════════════════════════
@@ -532,7 +532,7 @@ def removeOrphanedSisItems():
         crosslistOrigToParent = {}   # SIS course_id → parent SIS course_id
         crosslistedAwayCourseIds = set()  # course SIS IDs whose sections were crosslisted away
 
-        if not canvasSectionsDf.empty:
+        if isPresent(canvasSectionsDf):
             ## Filter to rows where the course_id is not in the name and the course_id is present
             ## In a normal section the section name contains the originating course SIS ID.
             ## When a section has been cross-listed into a parent course, its canvas_course_id
@@ -559,7 +559,7 @@ def removeOrphanedSisItems():
                 parentCourseRow = canvasCoursesDf[
                     canvasCoursesDf["canvas_course_id"].astype(str) == parentCanvasCourseId
                 ]
-                parentSisId = parentCourseRow["course_id"].values[0] if not parentCourseRow.empty else None
+                parentSisId = parentCourseRow["course_id"].values[0] if isPresent(parentCourseRow) else None
                 
                 ## Resolve SIS course_ids from the canvas_course_ids
                 ## Look up the original course SIS ID from the section name or from courses df
@@ -596,7 +596,7 @@ def removeOrphanedSisItems():
         ## Step 4: Active‑status pre‑filter
         ## ══════════════════════════════════════════════════════════════════════
         canvasCoursesDf = canvasCoursesDf[canvasCoursesDf["status"].astype(str).str.lower() == "active"].copy()
-        if not canvasEnrollDf.empty:
+        if isPresent(canvasEnrollDf):
             canvasEnrollDf = canvasEnrollDf[canvasEnrollDf["status"].astype(str).str.lower() == "active"].copy()
 
         localSetup.logger.info(
@@ -659,7 +659,7 @@ def removeOrphanedSisItems():
         ## Step 7: Identify orphaned enrollments in still‑active courses
         ## ══════════════════════════════════════════════════════════════════════
         orphanedEnrollRows = []
-        if not canvasEnrollDf.empty:
+        if isPresent(canvasEnrollDf):
             for _, eRow in canvasEnrollDf.iterrows():
                 ## Skip any that are not SIS‑created and active
                 if (

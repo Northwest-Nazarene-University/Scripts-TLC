@@ -12,7 +12,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules")
 
 ## New resource modules
 from Local_Setup import LocalSetup
-from TLC_Common import makeApiCall, isFileRecent, flattenApiObjectToJsonList 
+from TLC_Common import makeApiCall, isFileRecent, flattenApiObjectToJsonList, isPresent 
 from Canvas_Report import CanvasReport
 from Common_Configs import coreCanvasApiUrl
 from Error_Email import errorEmail
@@ -54,7 +54,7 @@ def termCreateOutcomeComplianceReport(
     try:
 
         ## If the p1_combinedTermoutcomeResultDF is not empty
-        if not p2_outcomeResultDF.empty:
+        if isPresent(p2_outcomeResultDF):
             
             ## Define a dict to hold the outcome result report
             outcomeResultReportDict = {
@@ -287,7 +287,7 @@ def termCreateOutcomeComplianceReport(
                                         targetStudentCourseDf = targetStudentDf[targetStudentDf["course_id"] == targetCourseSisId]
 
                                         ## If the targetStudentCourseDf is not empty and the status is active
-                                        if not targetStudentCourseDf.empty and targetStudentCourseDf["status"].values[0] != "deleted":
+                                        if isPresent(targetStudentCourseDf) and targetStudentCourseDf["status"].values[0] != "deleted":
                                     
                                             ## If "user_id" hasn't already been added to the list
                                             ## and they are not the test student (indicated by a null excused field)
@@ -433,7 +433,7 @@ def termCompileCourseOutcomesScores (p1_CourseDict
 
                 ## If any of the targetStudentOutcomeResults's learning outcome name values are not 
                 ## equal to the outcomeName and match one of the keys in p2_uniqueOutcomeInfoDictOfDicts
-                if (not targetStudentOutcomeResults.empty
+                if (isPresent(targetStudentOutcomeResults)
                     and targetStudentOutcomeResults[
                         "learning outcome name"
                         ].str.contains(
@@ -502,7 +502,7 @@ def termCompileCourseOutcomesScores (p1_CourseDict
                         }
                     
                 ## If the targetStudentOutcomeResults is not empty and the student name dict is not empty
-                if (not targetStudentOutcomeResults.empty 
+                if (isPresent(targetStudentOutcomeResults) 
                     and not targetStudentOutcomeResults['student name'].isnull().all()
                     and not targetStudentOutcomeResults['learning outcome rating'].isnull().all()
                     ):
@@ -641,7 +641,7 @@ def targetDesignatorProcessOutcomeResults(
                 )
 
             ## If a df returned from termCreateOutcomeComplianceReport
-            if outcomeResultReportDF is not None and not outcomeResultReportDF.empty:
+            if outcomeResultReportDF is not None and isPresent(outcomeResultReportDF):
             
                 ## Save the DF into an excel file
                 outcomeResultReportDF.to_excel(p1_destinationFilePathDict["Internal Output Report File Path and Name"], sheet_name = "General", index=False)

@@ -11,7 +11,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules")
 
 ## New resource modules
 from Local_Setup import LocalSetup
-from TLC_Common import makeApiCall
+from TLC_Common import makeApiCall, isPresent
 from Canvas_Report import CanvasReport
 from Common_Configs import coreCanvasApiUrl, canvasAccessToken, undgTermsCodesToWordsDict, gradTermsCodesToWordsDict
 from Error_Email import errorEmail
@@ -280,7 +280,7 @@ def getTargetIncomingStudentInfo (row
             hasParticipatedAfterTenthDay = ""
 
             ## If the targetDataActivityDF is not empty
-            if not targetDataActivityDF.empty:
+            if isPresent(targetDataActivityDF):
 
                 ## For each course in the most recent tenth day courses df
                 for index, row in mostRecentTenthDayCoursesDF.iterrows():
@@ -289,7 +289,7 @@ def getTargetIncomingStudentInfo (row
                     targetDataActivityCourseDF = targetDataActivityDF[targetDataActivityDF['Course Number'] == row['course_id'].replace('_', '-')]
 
                     ## If the targetDataActivityCourseDF is not empty and the row's activity date is not NaT
-                    if not targetDataActivityCourseDF.empty and not pd.isnull(targetDataActivityCourseDF['Last Course Participation'].values[0]):
+                    if isPresent(targetDataActivityCourseDF) and not pd.isnull(targetDataActivityCourseDF['Last Course Participation'].values[0]):
 
                         ## Convert the last course participation date to a date
                         targetCourseLastParticipationDate = datetime.strptime(f"{str(localSetup.dateDict['year'])}-{targetDataActivityCourseDF['Last Course Participation'].values[0]}", '%Y-%m-%d').date()
@@ -305,7 +305,7 @@ def getTargetIncomingStudentInfo (row
             if hasParticipatedAfterTenthDay == "" and mostRecentTenthDayPoint is not None:
 
                 ## If the targetDataActivityDF not empty
-                if not targetDataActivityDF.empty:
+                if isPresent(targetDataActivityDF):
                     
                     ## Set the has participated after tenth day variable to no
                     hasParticipatedAfterTenthDay = "No"

@@ -28,6 +28,7 @@ try: ## Irregular try clause, do not comment out in testing
         retrieveDataForRelevantCommunication,
         addOutcomeToCourse,
     )
+    from TLC_Common import isMissing
 
 except ImportError:
     from ResourceModules.Local_Setup import LocalSetup
@@ -36,6 +37,7 @@ except ImportError:
         retrieveDataForRelevantCommunication,
         addOutcomeToCourse,
     )
+    from ResourceModules.TLC_Common import isMissing
 
 # Create LocalSetup and localSetup.logger
 localSetup = LocalSetup(datetime.now(), __file__)
@@ -60,7 +62,7 @@ def termOutcomeExporter(p1_inputTerm, p1_targetDesignator):
             )
 
         ## If the complete active canvas courses df is empty
-        if completeActiveCanvasCoursesDF.empty:
+        if isMissing(completeActiveCanvasCoursesDF):
 
             ## Log the fact that there are no active courses
             localSetup.logger.info(f"\nNo {p1_targetDesignator} active courses within {p1_inputTerm}")

@@ -12,7 +12,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules")
 
 ## New resource modules
 from Local_Setup import LocalSetup
-from TLC_Common import makeApiCall
+from TLC_Common import makeApiCall, isPresent, isMissing
 from Canvas_Report import CanvasReport
 from Common_Configs import coreCanvasApiUrl, canvasAccessToken
 from Error_Email import errorEmail
@@ -431,7 +431,7 @@ def getStuCourseData(
         parentCourseId = ""
     
         ## Check for crosslisting by looking for parent course ID
-        if enrollmentDf.empty:
+        if isMissing(enrollmentDf):
             for secondaryCourseId in p1_canvasEnrollmentsDf["course_id"].unique():
                 if not parentCourseId:
                     sectionApiUrl = f"{coreCanvasApiUrl}/courses/sis_course_id:{secondaryCourseId}/sections"
@@ -447,7 +447,7 @@ def getStuCourseData(
                     break
     
         ## If not enrolled, skip
-        if enrollmentDf.empty:
+        if isMissing(enrollmentDf):
             localSetup.logger.warning(f"Student {p2_stuId} is not enrolled in course {p1_targetCourseId}")
             del p2_stuCoursesData[p1_targetCourseId]
             return "Remove"
@@ -455,13 +455,13 @@ def getStuCourseData(
         ## Get enrollment ID
         ## Prefer an active (non-deleted) enrollment row when both exist in the includeDeleted report
         activeDf = enrollmentDf[enrollmentDf["status"].str.lower() != "deleted"]
-        selectedDf = activeDf if not activeDf.empty else enrollmentDf
+        selectedDf = activeDf if isPresent(activeDf) else enrollmentDf
 
         enrollmentId = selectedDf["canvas_enrollment_id"].values[0]
         p2_stuCoursesData[p1_targetCourseId]["canvas_enrollment_id"] = enrollmentId
 
         ## Check if enrollment is deleted (only true when NO active row exists)
-        enrollmentDeleted = activeDf.empty
+        enrollmentDeleted = isMissing(activeDf)
 
         ## Get enrollment object
         enrollmentObject, oldCourseEndDate = getEnrollmentApiObject(enrollmentId, p1_targetCourseId, parentCourseId,  p2_stuId, enrollmentDeleted)
@@ -672,7 +672,7 @@ def getStuCoursesData(
             ]
 
         ## If Canvas ID is found, store it
-        if not canvasIdDf.empty:
+        if isPresent(canvasIdDf):
             p1_stuCoursesData["stuCanvasId"] = canvasIdDf.values[0]
 
         ## If no Canvas ID is found, skip
@@ -772,7 +772,7 @@ def getNighthawk360Data(p1_oldEnrollmentDataDf):
         ## Seperate deleted enrollments
         deletedEnrollmentsDf = filteredSisEnrollmentsDf[filteredSisEnrollmentsDf["status"] == "deleted"].copy()
 
-        if not p1_oldEnrollmentDataDf.empty:
+        if isPresent(p1_oldEnrollmentDataDf):
 
             ## Make sure oldEnrollmentDataDf keys are strings
             p1_oldEnrollmentDataDf["Student ID"]   = p1_oldEnrollmentDataDf["Student ID"].astype(str).str.strip()

@@ -10,11 +10,11 @@ from pandas.errors import EmptyDataError
 try: ## Irregular try clause, do not comment out in testing
     ## Import local modules and variables
     from Local_Setup import LocalSetup
-    from TLC_Common import (downloadFile, makeApiCall, isFileRecent)
+    from TLC_Common import (downloadFile, makeApiCall, isFileRecent, isPresent, isMissing)
     from Core_Microsoft_Api import downloadSharedMicrosoftFile
 except ImportError: ## Otherwise as a relative import if the module is imported
     from .Local_Setup import LocalSetup
-    from .TLC_Common import (downloadFile, makeApiCall, isFileRecent)
+    from .TLC_Common import (downloadFile, makeApiCall, isFileRecent, isPresent, isMissing)
     from .Core_Microsoft_Api import downloadSharedMicrosoftFile
 
 ## Import neccessary config variables
@@ -104,7 +104,7 @@ class CanvasReport:
             return 1
         if self.accountsDf is not None and self.accountName:
             match = self.accountsDf.loc[self.accountsDf["name"] == self.accountName, "canvas_account_id"]
-            if not match.empty:
+            if isPresent(match):
                 return match.values[0]
         return None  # fallback if not resolvable
 
@@ -398,7 +398,7 @@ class CanvasReport:
                 localSetup.logger.warning(f"Initial read_csv failed for {methodName} for term={term}, account={account}. Retrying with 'latin-1' encoding.")
 
             ## IF the downloadedFileDf isn't empty
-            if not downloadedFileDf.empty:
+            if isPresent(downloadedFileDf):
             
                 ## Drop empty columns beyond 12th
                 downloadedFileDf = downloadedFileDf.dropna(axis=1, how='all')
@@ -695,7 +695,7 @@ class CanvasReport:
                 p1_outcomeToolConfigDf=outcomeToolConfigDf,
             )
             
-            if outcomeCourseDf.empty:
+            if isMissing(outcomeCourseDf):
                 pd.DataFrame().to_excel(outputFilePath, index=False)
                 return pd.read_excel(targetDestination)
 
@@ -945,7 +945,7 @@ class CanvasReport:
 
             # Enrich instructor details
             # Create a user map preferring rows where created_by_sis == True, then rows with an email, then fallback.
-            if not usersDf.empty:
+            if isPresent(usersDf):
                 tempUsersDf = usersDf.copy()
                 # Build a numeric priority: created_by_sis (2) + has_email (1)
                 tempUsersDf["_priority"] = tempUsersDf["created_by_sis"].fillna(False).astype(bool).astype(int) * 2 + tempUsersDf["email"].notna().astype(int)

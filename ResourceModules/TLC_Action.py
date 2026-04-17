@@ -665,7 +665,7 @@ def retrieveDataForRelevantCommunication (p1_localSetup
 
         ## Define the term related path to the outcome attachment report
         termOutcomeAttachmentReportPath = termOutcomeAttachmentReport(p2_inputTerm, p3_targetDesignator)
-        if isFileRecent(termOutcomeAttachmentReportPath):
+        if isFileRecent(p1_localSetup, termOutcomeAttachmentReportPath):
             auxillaryDFDict["Outcome Courses Without Attachments DF"] = pd.read_csv(termOutcomeAttachmentReportPath)
         else:
             p1_localSetup.logger.warning(f"Outcome attachment report not found or stale: {termOutcomeAttachmentReportPath}")
@@ -673,7 +673,7 @@ def retrieveDataForRelevantCommunication (p1_localSetup
 
         ## Define the term related path to the outcome results report
         termProcessOutcomeResultsPath = termProcessOutcomeResults(p2_inputTerm, p3_targetDesignator)[0]
-        if isFileRecent(termProcessOutcomeResultsPath):
+        if isFileRecent(p1_localSetup, termProcessOutcomeResultsPath):
             outcomeCoursesDataDF = pd.read_excel(termProcessOutcomeResultsPath)
         else:
             p1_localSetup.logger.warning(f"Outcome results report not found or stale: {termProcessOutcomeResultsPath}")

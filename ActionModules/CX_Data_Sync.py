@@ -8,7 +8,7 @@ from datetime import datetime
 ## Ensure ResourceModules path is available and import shared helpers
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules"))
 from Local_Setup import LocalSetup
-from TLC_Common import makeApiCall
+from TLC_Common import makeApiCall, isPresent
 from Common_Configs import coreCanvasApiUrl
 from Error_Email import errorEmail
 
@@ -103,7 +103,7 @@ def importCXData():
                 fileDataDf = pd.read_csv(filePath)
 
             ## If there are start_date and an end_date columns
-            if not fileDataDf.empty and ('start_date' in fileDataDf.columns and 'end_date' in fileDataDf.columns):
+            if isPresent(fileDataDf) and ('start_date' in fileDataDf.columns and 'end_date' in fileDataDf.columns):
 
                 ## Set the date format to be compatible with the Canvas API (i.e. 2012-03-14)
                 fileDataDf['start_date'] = pd.to_datetime(fileDataDf['start_date']).dt.strftime('%Y-%m-%d')

@@ -15,14 +15,14 @@ try: ## Irregular try clause, do not comment out in testing
     from Local_Setup import LocalSetup
     from Canvas_Report import CanvasReport
     from Error_Email import errorEmail
-    from TLC_Common import isPresent, downloadFile, makeApiCall
+    from TLC_Common import isPresent, isMissing, downloadFile, makeApiCall
     from TLC_Action import readCsvWithEncoding, uploadToSimpleSyllabus, hasChangedSinceLastUpload, writeSuccessTag, removeStaleSuccessTag
 except ImportError:
     # Fallback to relative imports if package layout differs
     from ResourceModules.Local_Setup import LocalSetup
     from ResourceModules.Canvas_Report import CanvasReport
     from ResourceModules.Error_Email import errorEmail
-    from ResourceModules.TLC_Common import isPresent, downloadFile, makeApiCall
+    from ResourceModules.TLC_Common import isPresent, isMissing, downloadFile, makeApiCall
     from ResourceModules.TLC_Action import readCsvWithEncoding, uploadToSimpleSyllabus, hasChangedSinceLastUpload, writeSuccessTag, removeStaleSuccessTag
 
 ## Get catalogToSimpleSyllabusConfig from configs
@@ -198,7 +198,7 @@ def formatCombinedCatalogForSimpleSyllabus(p1_combinedCatalogDf: pd.DataFrame, p
 
         termsDf = CanvasReport.getTermsDf(localSetup)
         termCodeToNameDict = {}
-        if termsDf is not None and not termsDf.empty:
+        if isPresent(termsDf):
             for _, row in termsDf.iterrows():
                 termSisId = _safe_strip(row.get("term_id", ""))
                 termName = _safe_strip(row.get("name", ""))
@@ -230,7 +230,7 @@ def formatCombinedCatalogForSimpleSyllabus(p1_combinedCatalogDf: pd.DataFrame, p
         accountsDf = CanvasReport.getAccountsDf(localSetup)
         accountParentDict = {}
         accountNameDict = {}
-        if accountsDf is not None and not accountsDf.empty:
+        if isPresent(accountsDf):
             for _, accRow in accountsDf.iterrows():
                 canvasAccId = accRow.get("canvas_account_id")
                 canvasParentId = accRow.get("canvas_parent_id")
@@ -267,7 +267,7 @@ def formatCombinedCatalogForSimpleSyllabus(p1_combinedCatalogDf: pd.DataFrame, p
             try:
                 coursesDf = CanvasReport.getCoursesDf(localSetup, termCode)
                 courseInfo = {}
-                if coursesDf is not None and not coursesDf.empty:
+                if isPresent(coursesDf):
                     for _, crsRow in coursesDf.iterrows():
                         courseId = crsRow.get("course_id")
                         canvasAccId = crsRow.get("canvas_account_id")
@@ -555,7 +555,7 @@ def retrieveCatalogCourseReportsDfs():
         for catalogType, filePath in catalogCourseReportsDict.items():
             catalogCourseReportsDf = readCsvWithEncoding(filePath)
             catalogCourseReportsDf['Catalog Type'] = catalogType
-            if combinedCatalogCourseReportDf.empty:
+            if isMissing(combinedCatalogCourseReportDf):
                 combinedCatalogCourseReportDf = catalogCourseReportsDf
             else:
                 combinedCatalogCourseReportDf = pd.concat([combinedCatalogCourseReportDf, catalogCourseReportsDf], ignore_index=True)
