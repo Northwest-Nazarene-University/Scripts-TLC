@@ -4,7 +4,7 @@
 ## Import necessary modules
 import os, sys, pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from dateutil import parser as dateutil_parser
 
 ## Import necessary functions from local modules
@@ -14,13 +14,13 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules")
 ## New resource modules
 try:
     from Local_Setup import LocalSetup
-    from TLC_Common import makeApiCall, flattenApiObjectToJsonList
+    from TLC_Common import makeApiCall, flattenApiObjectToJsonList, isPresent
     from Canvas_Report import CanvasReport
     from Error_Email import errorEmail
     from Core_Microsoft_Api import sendOutlookEmail
 except ImportError:
     from ResourceModules.Local_Setup import LocalSetup
-    from ResourceModules.TLC_Common import makeApiCall, flattenApiObjectToJsonList
+    from ResourceModules.TLC_Common import makeApiCall, flattenApiObjectToJsonList, isPresent
     from ResourceModules.Canvas_Report import CanvasReport
     from ResourceModules.Error_Email import errorEmail
     from ResourceModules.Core_Microsoft_Api import sendOutlookEmail
@@ -29,7 +29,7 @@ except ImportError:
 localSetup = LocalSetup(datetime.now(), __file__)  ## sets cwd, paths, logs, date parts
 
 ## Import configs
-from Common_Configs import coreCanvasApiUrl, canvasAccessToken, scriptLibrary, serviceEmailAccount
+from Common_Configs import coreCanvasApiUrl, scriptLibrary, serviceEmailAccount
 
 ## Define the script name, purpose, and external requirements for logging and error reporting purposes
 scriptName = os.path.basename(__file__).replace(".py", "")
@@ -42,7 +42,7 @@ flagged for manual review via email rather than being deleted.
 """
 externalRequirements = r"""
 To function properly, this script requires:
-1. Access to NNU's SIS feed files (canvas_course.csv and canvas_enroll.csv) via the SIS external resource path.
+1. Access to NNU's SIS feed files (canvas_course.csv, canvas_enroll.csv, and canvas_term.csv) via the SIS external resource path.
 2. A valid Canvas API access token.
 3. Access to the Canvas provisioning reports for courses, enrollments, and terms.
 4. The ability to send notification emails via the Microsoft Outlook API.
@@ -50,13 +50,6 @@ To function properly, this script requires:
 
 ## Setup the error handler
 errorHandler = errorEmail(scriptName, scriptPurpose, externalRequirements, localSetup)
-
-## ─────────────────────────────────────────────────────────────────────────────
-## Constants
-## ─────────────────────────────────────────────────────────────────────────────
-SIS_WINDOW_FUTURE_DAYS = 180   ## Courses starting up to 180 days from now
-SIS_WINDOW_PAST_DAYS   = 30    ## Courses that ended up to 30 days ago
-
 
 ## ─────────────────────────────────────────────────────────────────────────────
 ## Helper: Parse a date string safely, returning None on failure
@@ -109,19 +102,54 @@ def buildTermDateLookup():
 
 
 ## ─────────────────────────────────────────────────────────────────────────────
+## Helper: Build a list of effective date intervals from SIS courses
+## ─────────────────────────────────────────────────────────────────────────────
+def buildSisDateIntervals(sisCoursesDf, canvasTermDateDict):
+    """
+    Return a set of (start_dt, end_dt) tuples, one per SIS course whose
+    effective date range can be resolved. Falls back to Canvas term dates
+    (which include all terms, active and legacy) when a course row has no
+    course-level dates. Courses whose dates cannot be resolved are skipped.
+    """
+    functionName = "buildSisDateIntervals"
+    try:
+        intervals = set()
+        for _, row in sisCoursesDf.iterrows():
+            startDt = _safeParseDatetime(row.get("start_date"))
+            endDt   = _safeParseDatetime(row.get("end_date"))
+            if startDt is None or endDt is None:
+                termId    = str(row.get("term_id", "")).strip()
+                termDates = canvasTermDateDict.get(termId, {})
+                if startDt is None:
+                    startDt = termDates.get("start_date")
+                if endDt is None:
+                    endDt = termDates.get("end_date")
+            if startDt is not None and endDt is not None:
+                intervals.add((startDt, endDt))
+        localSetup.logger.info(
+            f"Built {len(intervals)} unique SIS date pair(s) from {len(sisCoursesDf)} SIS course rows"
+        )
+        return intervals
+    except Exception as Error:
+        errorHandler.sendError(functionName, Error)
+        return set()
+
+
+## ─────────────────────────────────────────────────────────────────────────────
 ## Helper: Resolve a course's effective start / end dates
 ## ─────────────────────────────────────────────────────────────────────────────
 def resolveCourseDates(courseRow, termDateDict):
     """
     Return (startDatetime, endDatetime) for a course row.
-    Prefers course-level dates; falls back to Canvas term dates.
+    Prefers course-level dates; falls back to Canvas term dates (which include
+    all terms, past and present, from CanvasReport.getTermsDf).
     """
     functionName = "resolveCourseDates"
     try:
         startDt = _safeParseDatetime(courseRow.get("start_date"))
         endDt   = _safeParseDatetime(courseRow.get("end_date"))
 
-        ## Fall back to term dates when course‑level dates are missing
+        ## Fall back to Canvas term dates when course‑level dates are missing
         if startDt is None or endDt is None:
             termId = str(courseRow.get("term_id", ""))
             termDates = termDateDict.get(termId, {})
@@ -395,36 +423,46 @@ def removeOrphanedSisItems():
             dtype=str,
         )
 
-        ## Build the set of active SIS course IDs
-        activeSisCourseIds = set(
-            sisCoursesDf.loc[
-                sisCoursesDf["status"].str.lower() == "active", "course_id"
-            ]
-        )
-        localSetup.logger.info(f"SIS feed: {len(activeSisCourseIds)} active course IDs")
+        ## ══════════════════════════════════════════════════════════════════════
+        ## 2. Build Canvas term date lookup (all terms, including legacy)
+        ## ══════════════════════════════════════════════════════════════════════
+        termDateDict     = buildTermDateLookup()
+        sisDateIntervals = buildSisDateIntervals(sisCoursesDf, termDateDict)
 
-        ## Build the set of active SIS enrollment keys (course_id, user_id, role)
-        activeSisEnroll = sisEnrollDf[
-            sisEnrollDf["status"].str.lower().str.strip() == "active"
-        ].copy()
+        ## Build the set of all known SIS course IDs (any status)
+        ## If the SIS has a course at all, it will manage its own deletion; this script
+        ## only removes courses that are completely absent from the SIS feed.
+        activeSisCourseIds = set(sisCoursesDf["course_id"].dropna())
+        localSetup.logger.info(f"SIS feed: {len(activeSisCourseIds)} known course IDs (all statuses)")
 
+        ## Build the set of all known SIS enrollment keys (any status)
+        ## If the SIS has an enrollment at all, it will manage its own deletion; this script
+        ## only removes enrollments that are completely absent from the SIS feed.
         activeEnrollKeys = set(
             zip(
-                activeSisEnroll["course_id"].str.lower().str.strip(),
-                activeSisEnroll["user_id"].str.strip(),
-                activeSisEnroll["role"].str.lower().str.strip(),
+                sisEnrollDf["course_id"].str.lower().str.strip(),
+                sisEnrollDf["user_id"].str.strip(),
+                sisEnrollDf["role"].str.lower().str.strip(),
             )
         )
-        localSetup.logger.info(f"SIS feed: {len(activeEnrollKeys)} active enrollment keys")
+        localSetup.logger.info(f"SIS feed: {len(activeEnrollKeys)} known enrollment keys (all statuses)")
 
-        ## ══════════════════════════════════════════════════════════════════════
-        ## 2. Build term date lookup & determine which terms to query
-        ## ══════════════════════════════════════════════════════════════════════
-        termDateDict = buildTermDateLookup()
+        ## Derive a broad span from the SIS date pairs purely to limit which Canvas
+        ## term provisioning reports we need to pull.  The actual per-course date
+        ## gate in Step 5 uses exact (start, end) pair matching, not this window.
+        if sisDateIntervals:
+            windowStart = min(s for s, e in sisDateIntervals)
+            windowEnd   = max(e for s, e in sisDateIntervals)
+        else:
+            localSetup.logger.warning(
+                "No resolvable SIS date intervals found -- no Canvas terms will be queried"
+            )
+            return
 
-        today = datetime.now()
-        windowStart = today - timedelta(days=SIS_WINDOW_PAST_DAYS)
-        windowEnd   = today + timedelta(days=SIS_WINDOW_FUTURE_DAYS)
+        localSetup.logger.info(
+            f"SIS date span for term pre-filter: {windowStart.date()} → {windowEnd.date()} "
+            f"({len(sisDateIntervals)} unique SIS date pair(s))"
+        )
 
         ## Determine which Canvas terms overlap with our SIS date window
         relevantTermIds = []
@@ -443,10 +481,11 @@ def removeOrphanedSisItems():
         )
 
         ## ══════════════════════════════════════════════════════════════════════
-        ## 3. Retrieve Canvas courses and enrollments across relevant terms
+        ## 3. Retrieve Canvas courses, enrollments, and sections across relevant terms
         ## ══════════════════════════════════════════════════════════════════════
         allCoursesDfs     = []
         allEnrollmentsDfs = []
+        allSectionsDfs    = []
 
         for termId in relevantTermIds:
             termCoursesDf = CanvasReport.getCoursesDf(localSetup, termId)
@@ -457,8 +496,13 @@ def removeOrphanedSisItems():
             if termEnrollDf is not None and not termEnrollDf.empty:
                 allEnrollmentsDfs.append(termEnrollDf)
 
+            termSectionsDf = CanvasReport.getSectionsDf(localSetup, termId)
+            if termSectionsDf is not None and not termSectionsDf.empty:
+                allSectionsDfs.append(termSectionsDf)
+
         canvasCoursesDf = pd.concat(allCoursesDfs, ignore_index=True) if allCoursesDfs else pd.DataFrame()
         canvasEnrollDf  = pd.concat(allEnrollmentsDfs, ignore_index=True) if allEnrollmentsDfs else pd.DataFrame()
+        canvasSectionsDf = pd.concat(allSectionsDfs, ignore_index=True) if allSectionsDfs else pd.DataFrame()
 
         if canvasCoursesDf.empty:
             localSetup.logger.info("No Canvas courses found across relevant terms -- nothing to do")
@@ -467,7 +511,76 @@ def removeOrphanedSisItems():
             localSetup.logger.info("No Canvas enrollments found across relevant terms")
 
         ## ══════════════════════════════════════════════════════════════════════
-        ## Step 0: Active‑status pre‑filter
+        ## Step 3.5: Build crosslist mapping from sections
+        ## ══════════════════════════════════════════════════════════════════════
+        ## Maps original_course_id → set of parent_course_ids
+        ## so we can recognize crosslisted enrollments
+
+        crosslistOrigToParent = {}   # SIS course_id → parent SIS course_id
+        crosslistedAwayCourseIds = set()  # course SIS IDs whose sections were crosslisted away
+
+        if not canvasSectionsDf.empty:
+            ## Filter to rows where the course_id is not in the name and the course_id is present
+            ## In a normal section the section name contains the originating course SIS ID.
+            ## When a section has been cross-listed into a parent course, its canvas_course_id
+            ## changes to the parent course but the name still reflects the original course,
+            ## so the current course_id field no longer appears in the name.
+            crosslistedSections = canvasSectionsDf[
+                canvasSectionsDf.apply(
+                    lambda row: (
+                        isPresent(row.get("course_id"))
+                        and str(row.get("course_id", "")).strip() != ""
+                        and str(row.get("course_id", "")).strip()
+                            not in str(row.get("name", ""))
+                    ),
+                    axis=1,
+                )
+            ].copy()
+            
+
+            for _, secRow in crosslistedSections.iterrows():
+                ## The section now lives in the course identified by canvas_course_id
+                parentCanvasCourseId = str(secRow.get("canvas_course_id", "")).strip()
+
+                ## Find the course row for the parent course to get its SIS ID
+                parentCourseRow = canvasCoursesDf[
+                    canvasCoursesDf["canvas_course_id"].astype(str) == parentCanvasCourseId
+                ]
+                parentSisId = parentCourseRow["course_id"].values[0] if not parentCourseRow.empty else None
+                
+                ## Resolve SIS course_ids from the canvas_course_ids
+                ## Look up the original course SIS ID from the section name or from courses df
+                sectionName = str(secRow.get("name", ""))
+
+                ## Seperate out the original course ID from the section name. It is the last thing after seperating by space
+                origSisId = sectionName.split(" ")[-1].strip() if sectionName else None
+
+                if origSisId and parentSisId:
+                    crosslistOrigToParent[origSisId.lower()] = parentSisId.lower()
+                    crosslistedAwayCourseIds.add(origSisId)
+
+            localSetup.logger.info(
+                f"Built crosslist mapping: {len(crosslistOrigToParent)} original→parent course mappings, "
+                f"{len(crosslistedAwayCourseIds)} courses with sections crosslisted away"
+            )
+
+            ## For each SIS enrollment where the course was crosslisted, also add a key
+            ## with the parent course_id so Canvas enrollments under the parent match
+            crosslistExpandedKeys = set()
+            for courseId, userId, role in activeEnrollKeys:
+                ## If this course has been crosslisted into a parent, add the parent variant
+                if courseId in crosslistOrigToParent:
+                    parentCourseId = crosslistOrigToParent[courseId]
+                    crosslistExpandedKeys.add((parentCourseId, userId, role))
+
+            activeEnrollKeys.update(crosslistExpandedKeys)
+            localSetup.logger.info(
+                f"After crosslist expansion: {len(activeEnrollKeys)} active enrollment keys "
+                f"(added {len(crosslistExpandedKeys)} crosslisted variants)"
+            )
+
+        ## ══════════════════════════════════════════════════════════════════════
+        ## Step 4: Active‑status pre‑filter
         ## ══════════════════════════════════════════════════════════════════════
         canvasCoursesDf = canvasCoursesDf[canvasCoursesDf["status"].astype(str).str.lower() == "active"].copy()
         if not canvasEnrollDf.empty:
@@ -479,30 +592,49 @@ def removeOrphanedSisItems():
         )
 
         ## ══════════════════════════════════════════════════════════════════════
-        ## Step 1: SIS date‑window filter on courses
+        ## Step 5: SIS exact-date filter on courses
         ## ══════════════════════════════════════════════════════════════════════
+        ## A Canvas course is in scope only if its resolved (start, end) date pair
+        ## exactly matches one of the date pairs present in the SIS feed.  This
+        ## avoids treating courses that legitimately ended mid-window (e.g. Quad 1)
+        ## as out-of-scope simply because their end date predates the overall span.
+        ## Courses whose dates cannot be resolved are kept conservatively.
         inWindowMask = []
         for _, row in canvasCoursesDf.iterrows():
             startDt, endDt = resolveCourseDates(row, termDateDict)
-            ## Both dates must be resolvable; if not, include the course conservatively
             if startDt is None or endDt is None:
                 inWindowMask.append(True)
             else:
-                inWindow = (startDt <= windowEnd) and (endDt >= windowStart)
-                inWindowMask.append(inWindow)
+                inWindowMask.append((startDt, endDt) in sisDateIntervals)
 
         canvasCoursesDf = canvasCoursesDf[inWindowMask].copy()
         localSetup.logger.info(
-            f"After SIS date-window filter: {len(canvasCoursesDf)} active courses within window"
+            f"After SIS exact-date filter: {len(canvasCoursesDf)} active courses with matching SIS date pair"
+        )
+
+        ## Build the set of canvas_course_ids whose term has not yet ended.
+        ## Enrollments in ended-term courses are excluded from orphan detection
+        ## because the SIS feed no longer carries historical enrollment records.
+        now = datetime.now()
+        enrollmentScopeCanvasIds = set()
+        for _, row in canvasCoursesDf.iterrows():
+            _, endDt = resolveCourseDates(row, termDateDict)
+            if endDt is None or endDt >= now:
+                enrollmentScopeCanvasIds.add(row["canvas_course_id"])
+
+        localSetup.logger.info(
+            f"Enrollment orphan scope: {len(enrollmentScopeCanvasIds)} course(s) in non-ended terms "
+            f"(excluded {len(canvasCoursesDf) - len(enrollmentScopeCanvasIds)} ended-term course(s))"
         )
 
         ## ══════════════════════════════════════════════════════════════════════
-        ## Step 2: Identify orphaned courses
+        ## Step 6: Identify orphaned courses
         ## ══════════════════════════════════════════════════════════════════════
         orphanedCoursesDf = canvasCoursesDf[
             (canvasCoursesDf["created_by_sis"].astype(str).str.lower() == "true")
             & (canvasCoursesDf["status"].astype(str).str.lower() == "active")
             & (~canvasCoursesDf["course_id"].isin(activeSisCourseIds))
+            & (~canvasCoursesDf["course_id"].isin(crosslistedAwayCourseIds))  ## NEW: exclude crosslisted courses
         ].copy()
 
         localSetup.logger.info(f"Identified {len(orphanedCoursesDf)} orphaned course(s)")
@@ -511,7 +643,7 @@ def removeOrphanedSisItems():
         orphanedCanvasCourseIds = set(orphanedCoursesDf["canvas_course_id"])
 
         ## ══════════════════════════════════════════════════════════════════════
-        ## Step 3: Identify orphaned enrollments in still‑active courses
+        ## Step 7: Identify orphaned enrollments in still‑active courses
         ## ══════════════════════════════════════════════════════════════════════
         orphanedEnrollRows = []
         if not canvasEnrollDf.empty:
@@ -524,6 +656,9 @@ def removeOrphanedSisItems():
                     continue
                 ## Parent course must NOT be in the orphaned‑courses set
                 if eRow["canvas_course_id"] in orphanedCanvasCourseIds:
+                    continue
+                ## Skip enrollments in ended-term courses — SIS no longer carries those records
+                if eRow["canvas_course_id"] not in enrollmentScopeCanvasIds:
                     continue
                 ## Check if the enrollment key exists in the SIS feed
                 enrollKey = (
@@ -544,7 +679,7 @@ def removeOrphanedSisItems():
 
 
         ## ═══════════════════════════════════════════════���══════════════════════
-        ## Step 4 & 5: Process orphaned courses and enrollments in batches
+        ## Step 8 & 9: Process orphaned courses and enrollments in batches
         ## ══════════════════════════════════════════════════════════════════════
         ## Thread‑safe summary (lists are append‑safe in CPython)
         summary = {
@@ -579,7 +714,7 @@ def removeOrphanedSisItems():
             localSetup.logger.info(f"Orphaned enrollments: all {len(futures)} threads completed")
 
         ## ════════════════════════════════════════════════════════════════��═════
-        ## Step 7: Final summary log
+        ## Step 10: Final summary log
         ## ══════════════════════════════════════════════════════════════════════
         localSetup.logger.info("===============================================")
         localSetup.logger.info("        Remove Orphaned SIS Items -- Summary")
@@ -601,6 +736,43 @@ def removeOrphanedSisItems():
             f"{len(summary['orphaned_enrollments_deleted'])}"
         )
         localSetup.logger.info("===============================================")
+
+        ## Send a summary email if anything was actually deleted
+        totalDeleted = (
+            len(summary["deleted_silently"])
+            + len(summary["deleted_with_enrollments"])
+            + len(summary["orphaned_enrollments_deleted"])
+        )
+        if totalDeleted > 0:
+            def _bulletList(items):
+                return "".join(f"<li>{item}</li>" for item in items) if items else "<li>(none)</li>"
+
+            summaryEmailBody = (
+                f"<!DOCTYPE html><html><body>"
+                f"<h2>Remove Orphaned SIS Items — Run Summary</h2>"
+                f"<p><b>Courses deleted silently</b> (no enrollments, no grades): "
+                f"{len(summary['deleted_silently'])}</p>"
+                f"<ul>{_bulletList(summary['deleted_silently'])}</ul>"
+                f"<p><b>Courses deleted after enrollment cleanup:</b> "
+                f"{len(summary['deleted_with_enrollments'])}</p>"
+                f"<ul>{_bulletList(summary['deleted_with_enrollments'])}</ul>"
+                f"<p><b>Courses skipped — grades found (manual review required):</b> "
+                f"{len(summary['skipped_grades'])}</p>"
+                f"<ul>{_bulletList(summary['skipped_grades'])}</ul>"
+                f"<p><b>Orphaned enrollments deleted (in still-active courses):</b> "
+                f"{len(summary['orphaned_enrollments_deleted'])}</p>"
+                f"<ul>{_bulletList(summary['orphaned_enrollments_deleted'])}</ul>"
+                f"</body></html>"
+            )
+
+            sendOutlookEmail(
+                p1_microsoftUserName=serviceEmailAccount,
+                p1_subject="Remove Orphaned SIS Items — Run Summary",
+                p1_body=summaryEmailBody,
+                p1_recipientEmailList=f"{scriptLibrary}@nnu.edu",
+                p1_shared_mailbox=f"{scriptLibrary}@nnu.edu",
+            )
+            localSetup.logger.info("Summary email sent")
 
     except Exception as Error:
         errorHandler.sendError(functionName, Error)
