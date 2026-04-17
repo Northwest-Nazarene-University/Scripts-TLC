@@ -13,11 +13,13 @@ try: ## Irregular try clause, do not comment out in testing
     from Local_Setup import LocalSetup
     from Error_Email import errorEmail
     from TLC_Action import readCsvWithEncoding, uploadToSimpleSyllabus, removeStaleSuccessTag
+    from TLC_Common import isPresent, isMissing
 except ImportError:
     # Fallback to relative imports if package layout differs
     from ResourceModules.Local_Setup import LocalSetup
     from ResourceModules.Error_Email import errorEmail
     from ResourceModules.TLC_Action import readCsvWithEncoding, uploadToSimpleSyllabus, removeStaleSuccessTag
+    from ResourceModules.TLC_Common import isPresent, isMissing
 
 ## Import the catalog helper that determines the school year path
 try:
@@ -278,7 +280,7 @@ def buildCourseEditorFile(p1_combinedEditorInputDf: pd.DataFrame, p1_courseExtra
 
             matchingCourses = courseExtractDf[matchMask]
 
-            if matchingCourses.empty:
+            if isMissing(matchingCourses):
                 localSetup.logger.warning(
                     f"{functionName}: No matching courses found in Course Extract for "
                     f"subject='{inputSubject}', course_number='{inputCourseNumber}', term='{inputTerm}'. Skipping."
@@ -390,11 +392,11 @@ def processCourseEditorsAndUploadToSimpleSyllabus():
         for editorFilePath in allEditorFiles:
             try:
                 rawDf = readCsvWithEncoding(editorFilePath)
-                if rawDf.empty:
+                if isMissing(rawDf):
                     localSetup.logger.warning(f"{functionName}: File is empty, skipping: {editorFilePath}")
                     continue
                 normalizedDf = _normalizeCourseEditorDf(rawDf, editorFilePath)
-                if not normalizedDf.empty:
+                if isPresent(normalizedDf):
                     normalizedDfs.append(normalizedDf)
             except Exception as fileError:
                 localSetup.logger.warning(
@@ -434,7 +436,7 @@ def processCourseEditorsAndUploadToSimpleSyllabus():
 
         ## ── Verify the output file has content before uploading ──
         outputDf = readCsvWithEncoding(courseEditorOutputPath)
-        if outputDf.empty:
+        if isMissing(outputDf):
             localSetup.logger.warning(
                 f"{functionName}: Course Editor output file is empty. No matching courses were found. Skipping upload."
             )

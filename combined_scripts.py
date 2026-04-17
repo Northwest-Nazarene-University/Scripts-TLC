@@ -71,7 +71,7 @@ def termOutcomeExporter(p1_inputTerm, p1_targetDesignator):
             )
 
         ## If the complete active canvas courses df is empty
-        if completeActiveCanvasCoursesDF.empty:
+        if isMissing(completeActiveCanvasCoursesDF):
 
             ## Log the fact that there are no active courses
             localSetup.logger.info(f"\nNo {p1_targetDesignator} active courses within {p1_inputTerm}")
@@ -209,7 +209,7 @@ def importCXData():
                 fileDataDf = pd.read_csv(filePath)
 
             ## If there are start_date and an end_date columns
-            if not fileDataDf.empty and ('start_date' in fileDataDf.columns and 'end_date' in fileDataDf.columns):
+            if isPresent(fileDataDf) and ('start_date' in fileDataDf.columns and 'end_date' in fileDataDf.columns):
 
                 ## Set the date format to be compatible with the Canvas API (i.e. 2012-03-14)
                 fileDataDf['start_date'] = pd.to_datetime(fileDataDf['start_date']).dt.strftime('%Y-%m-%d')
@@ -2275,7 +2275,7 @@ def craftAndSendRelevantEmail(
                         ]
 
                         ## If the outcome is not in the missing-attachment report's Required Outcome column, skip it
-                        if filteredWithoutAttachmentsDF.empty or datapoint not in filteredWithoutAttachmentsDF["Required Outcome"].values:
+                        if isMissing(filteredWithoutAttachmentsDF) or datapoint not in filteredWithoutAttachmentsDF["Required Outcome"].values:
                             continue
 
                     ## If the key does not already exist in the email details
@@ -2344,7 +2344,7 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
                 relevantAuxillaryDfDict = {}
             
                 ## If the course is in the list of courses who do not have their outcome attached to a published assignment
-                if not auxiliaryDfDict["Outcome Courses Without Attachments DF"].empty:
+                if isPresent(auxiliaryDfDict.get("Outcome Courses Without Attachments DF")):
                     
                     ## Isolate the course's data in p1_outcomeCoursesWithoutAttachmentDF
                     relevantAuxillaryDfDict["Relevant Course Outcome Without Attachment Df"] = (
@@ -2360,7 +2360,7 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
                     relevantAuxillaryDfDict["Relevant Course Outcome Without Attachment Df"] = pd.DataFrame()
 
                 ## If the course is in the list of courses who have no outcome results
-                if not auxiliaryDfDict["Unassessed Outcome Courses DF"].empty:
+                if isPresent(auxiliaryDfDict.get("Unassessed Outcome Courses DF")):
                     
                     ## Isolate the course's data in p1_outcomeCoursesWithoutOutcomeData
                     relevantAuxillaryDfDict["Relevant Course Outcome Without Data Df"] = (
@@ -2424,7 +2424,7 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
                     if isOutcomeCourse:
 
                         ## If the course is an outcome course that does not have all of its outcomes attached to published assignments
-                        if not relevantAuxillaryDfDict["Relevant Course Outcome Without Attachment Df"].empty:    
+                        if isPresent(relevantAuxillaryDfDict.get("Relevant Course Outcome Without Attachment Df")):    
                 
                             ## Send the courses's instructors the Midterm Reminder email
                             relevantEmailList.append("Associated Course Outcomes: Midterm Reminder")
@@ -2438,7 +2438,7 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
                     if isOutcomeCourse:
 
                         ## If the course is an outcome course that does not have all of its outcomes attached to published assignments
-                        if not relevantAuxillaryDfDict["Relevant Course Outcome Without Attachment Df"].empty: 
+                        if isPresent(relevantAuxillaryDfDict.get("Relevant Course Outcome Without Attachment Df")): 
                 
                             ## Send the courses's instructors the Finals Reminder email
                             relevantEmailList.append("Associated Course Outcomes: Finals Reminder")
@@ -2452,7 +2452,7 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
                     if isOutcomeCourse:
 
                         ## If the course is in the list of courses who do not have all of their outcome data
-                        if not relevantAuxillaryDfDict["Relevant Course Outcome Without Data Df"].empty:    
+                        if isPresent(relevantAuxillaryDfDict.get("Relevant Course Outcome Without Data Df")):    
             
                             ## Send the courses's instructors the Missing Data email as the course's outcome data is past due
                             relevantEmailList.append("Associated Course Outcomes: Missing Required Data")
@@ -3294,7 +3294,7 @@ def buildTermDateLookup():
         termsDf = CanvasReport.getTermsDf(localSetup)
         termDateDict = {}
 
-        if termsDf is not None and not termsDf.empty:
+        if isPresent(termsDf):
             for _, row in termsDf.iterrows():
                 termId = row.get("term_id") or row.get("canvas_term_id")
                 if pd.isna(termId):
@@ -3701,25 +3701,25 @@ def removeOrphanedSisItems():
 
         for termId in relevantTermIds:
             termCoursesDf = CanvasReport.getCoursesDf(localSetup, termId)
-            if termCoursesDf is not None and not termCoursesDf.empty:
+            if isPresent(termCoursesDf):
                 allCoursesDfs.append(termCoursesDf)
 
             termEnrollDf = CanvasReport.getEnrollmentsDf(localSetup, termId, includeDeleted=False)
-            if termEnrollDf is not None and not termEnrollDf.empty:
+            if isPresent(termEnrollDf):
                 allEnrollmentsDfs.append(termEnrollDf)
 
             termSectionsDf = CanvasReport.getSectionsDf(localSetup, termId)
-            if termSectionsDf is not None and not termSectionsDf.empty:
+            if isPresent(termSectionsDf):
                 allSectionsDfs.append(termSectionsDf)
 
         canvasCoursesDf = pd.concat(allCoursesDfs, ignore_index=True) if allCoursesDfs else pd.DataFrame()
         canvasEnrollDf  = pd.concat(allEnrollmentsDfs, ignore_index=True) if allEnrollmentsDfs else pd.DataFrame()
         canvasSectionsDf = pd.concat(allSectionsDfs, ignore_index=True) if allSectionsDfs else pd.DataFrame()
 
-        if canvasCoursesDf.empty:
+        if isMissing(canvasCoursesDf):
             localSetup.logger.info("No Canvas courses found across relevant terms -- nothing to do")
             return
-        if canvasEnrollDf.empty:
+        if isMissing(canvasEnrollDf):
             localSetup.logger.info("No Canvas enrollments found across relevant terms")
 
         ## ══════════════════════════════════════════════════════════════════════
@@ -3731,7 +3731,7 @@ def removeOrphanedSisItems():
         crosslistOrigToParent = {}   # SIS course_id → parent SIS course_id
         crosslistedAwayCourseIds = set()  # course SIS IDs whose sections were crosslisted away
 
-        if not canvasSectionsDf.empty:
+        if isPresent(canvasSectionsDf):
             ## Filter to rows where the course_id is not in the name and the course_id is present
             ## In a normal section the section name contains the originating course SIS ID.
             ## When a section has been cross-listed into a parent course, its canvas_course_id
@@ -3758,7 +3758,7 @@ def removeOrphanedSisItems():
                 parentCourseRow = canvasCoursesDf[
                     canvasCoursesDf["canvas_course_id"].astype(str) == parentCanvasCourseId
                 ]
-                parentSisId = parentCourseRow["course_id"].values[0] if not parentCourseRow.empty else None
+                parentSisId = parentCourseRow["course_id"].values[0] if isPresent(parentCourseRow) else None
                 
                 ## Resolve SIS course_ids from the canvas_course_ids
                 ## Look up the original course SIS ID from the section name or from courses df
@@ -3795,7 +3795,7 @@ def removeOrphanedSisItems():
         ## Step 4: Active‑status pre‑filter
         ## ══════════════════════════════════════════════════════════════════════
         canvasCoursesDf = canvasCoursesDf[canvasCoursesDf["status"].astype(str).str.lower() == "active"].copy()
-        if not canvasEnrollDf.empty:
+        if isPresent(canvasEnrollDf):
             canvasEnrollDf = canvasEnrollDf[canvasEnrollDf["status"].astype(str).str.lower() == "active"].copy()
 
         localSetup.logger.info(
@@ -3858,7 +3858,7 @@ def removeOrphanedSisItems():
         ## Step 7: Identify orphaned enrollments in still‑active courses
         ## ══════════════════════════════════════════════════════════════════════
         orphanedEnrollRows = []
-        if not canvasEnrollDf.empty:
+        if isPresent(canvasEnrollDf):
             for _, eRow in canvasEnrollDf.iterrows():
                 ## Skip any that are not SIS‑created and active
                 if (
@@ -4202,7 +4202,7 @@ def formatCombinedCatalogForSimpleSyllabus(p1_combinedCatalogDf: pd.DataFrame, p
 
         termsDf = CanvasReport.getTermsDf(localSetup)
         termCodeToNameDict = {}
-        if termsDf is not None and not termsDf.empty:
+        if isPresent(termsDf):
             for _, row in termsDf.iterrows():
                 termSisId = _safe_strip(row.get("term_id", ""))
                 termName = _safe_strip(row.get("name", ""))
@@ -4234,7 +4234,7 @@ def formatCombinedCatalogForSimpleSyllabus(p1_combinedCatalogDf: pd.DataFrame, p
         accountsDf = CanvasReport.getAccountsDf(localSetup)
         accountParentDict = {}
         accountNameDict = {}
-        if accountsDf is not None and not accountsDf.empty:
+        if isPresent(accountsDf):
             for _, accRow in accountsDf.iterrows():
                 canvasAccId = accRow.get("canvas_account_id")
                 canvasParentId = accRow.get("canvas_parent_id")
@@ -4271,7 +4271,7 @@ def formatCombinedCatalogForSimpleSyllabus(p1_combinedCatalogDf: pd.DataFrame, p
             try:
                 coursesDf = CanvasReport.getCoursesDf(localSetup, termCode)
                 courseInfo = {}
-                if coursesDf is not None and not coursesDf.empty:
+                if isPresent(coursesDf):
                     for _, crsRow in coursesDf.iterrows():
                         courseId = crsRow.get("course_id")
                         canvasAccId = crsRow.get("canvas_account_id")
@@ -4559,7 +4559,7 @@ def retrieveCatalogCourseReportsDfs():
         for catalogType, filePath in catalogCourseReportsDict.items():
             catalogCourseReportsDf = readCsvWithEncoding(filePath)
             catalogCourseReportsDf['Catalog Type'] = catalogType
-            if combinedCatalogCourseReportDf.empty:
+            if isMissing(combinedCatalogCourseReportDf):
                 combinedCatalogCourseReportDf = catalogCourseReportsDf
             else:
                 combinedCatalogCourseReportDf = pd.concat([combinedCatalogCourseReportDf, catalogCourseReportsDf], ignore_index=True)
@@ -4899,7 +4899,7 @@ def buildCourseEditorFile(p1_combinedEditorInputDf: pd.DataFrame, p1_courseExtra
 
             matchingCourses = courseExtractDf[matchMask]
 
-            if matchingCourses.empty:
+            if isMissing(matchingCourses):
                 localSetup.logger.warning(
                     f"{functionName}: No matching courses found in Course Extract for "
                     f"subject='{inputSubject}', course_number='{inputCourseNumber}', term='{inputTerm}'. Skipping."
@@ -5011,11 +5011,11 @@ def processCourseEditorsAndUploadToSimpleSyllabus():
         for editorFilePath in allEditorFiles:
             try:
                 rawDf = readCsvWithEncoding(editorFilePath)
-                if rawDf.empty:
+                if isMissing(rawDf):
                     localSetup.logger.warning(f"{functionName}: File is empty, skipping: {editorFilePath}")
                     continue
                 normalizedDf = _normalizeCourseEditorDf(rawDf, editorFilePath)
-                if not normalizedDf.empty:
+                if isPresent(normalizedDf):
                     normalizedDfs.append(normalizedDf)
             except Exception as fileError:
                 localSetup.logger.warning(
@@ -5055,7 +5055,7 @@ def processCourseEditorsAndUploadToSimpleSyllabus():
 
         ## ── Verify the output file has content before uploading ──
         outputDf = readCsvWithEncoding(courseEditorOutputPath)
-        if outputDf.empty:
+        if isMissing(outputDf):
             localSetup.logger.warning(
                 f"{functionName}: Course Editor output file is empty. No matching courses were found. Skipping upload."
             )
@@ -6910,7 +6910,7 @@ def getTargetIncomingStudentInfo (row
             hasParticipatedAfterTenthDay = ""
 
             ## If the targetDataActivityDF is not empty
-            if not targetDataActivityDF.empty:
+            if isPresent(targetDataActivityDF):
 
                 ## For each course in the most recent tenth day courses df
                 for index, row in mostRecentTenthDayCoursesDF.iterrows():
@@ -6919,7 +6919,7 @@ def getTargetIncomingStudentInfo (row
                     targetDataActivityCourseDF = targetDataActivityDF[targetDataActivityDF['Course Number'] == row['course_id'].replace('_', '-')]
 
                     ## If the targetDataActivityCourseDF is not empty and the row's activity date is not NaT
-                    if not targetDataActivityCourseDF.empty and not pd.isnull(targetDataActivityCourseDF['Last Course Participation'].values[0]):
+                    if isPresent(targetDataActivityCourseDF) and not pd.isnull(targetDataActivityCourseDF['Last Course Participation'].values[0]):
 
                         ## Convert the last course participation date to a date
                         targetCourseLastParticipationDate = datetime.strptime(f"{str(localSetup.dateDict['year'])}-{targetDataActivityCourseDF['Last Course Participation'].values[0]}", '%Y-%m-%d').date()
@@ -6935,7 +6935,7 @@ def getTargetIncomingStudentInfo (row
             if hasParticipatedAfterTenthDay == "" and mostRecentTenthDayPoint is not None:
 
                 ## If the targetDataActivityDF not empty
-                if not targetDataActivityDF.empty:
+                if isPresent(targetDataActivityDF):
                     
                     ## Set the has participated after tenth day variable to no
                     hasParticipatedAfterTenthDay = "No"
@@ -7882,7 +7882,7 @@ def getStuCourseData(
         parentCourseId = ""
     
         ## Check for crosslisting by looking for parent course ID
-        if enrollmentDf.empty:
+        if isMissing(enrollmentDf):
             for secondaryCourseId in p1_canvasEnrollmentsDf["course_id"].unique():
                 if not parentCourseId:
                     sectionApiUrl = f"{coreCanvasApiUrl}/courses/sis_course_id:{secondaryCourseId}/sections"
@@ -7898,7 +7898,7 @@ def getStuCourseData(
                     break
     
         ## If not enrolled, skip
-        if enrollmentDf.empty:
+        if isMissing(enrollmentDf):
             localSetup.logger.warning(f"Student {p2_stuId} is not enrolled in course {p1_targetCourseId}")
             del p2_stuCoursesData[p1_targetCourseId]
             return "Remove"
@@ -7906,13 +7906,13 @@ def getStuCourseData(
         ## Get enrollment ID
         ## Prefer an active (non-deleted) enrollment row when both exist in the includeDeleted report
         activeDf = enrollmentDf[enrollmentDf["status"].str.lower() != "deleted"]
-        selectedDf = activeDf if not activeDf.empty else enrollmentDf
+        selectedDf = activeDf if isPresent(activeDf) else enrollmentDf
 
         enrollmentId = selectedDf["canvas_enrollment_id"].values[0]
         p2_stuCoursesData[p1_targetCourseId]["canvas_enrollment_id"] = enrollmentId
 
         ## Check if enrollment is deleted (only true when NO active row exists)
-        enrollmentDeleted = activeDf.empty
+        enrollmentDeleted = isMissing(activeDf)
 
         ## Get enrollment object
         enrollmentObject, oldCourseEndDate = getEnrollmentApiObject(enrollmentId, p1_targetCourseId, parentCourseId,  p2_stuId, enrollmentDeleted)
@@ -8123,7 +8123,7 @@ def getStuCoursesData(
             ]
 
         ## If Canvas ID is found, store it
-        if not canvasIdDf.empty:
+        if isPresent(canvasIdDf):
             p1_stuCoursesData["stuCanvasId"] = canvasIdDf.values[0]
 
         ## If no Canvas ID is found, skip
@@ -8223,7 +8223,7 @@ def getNighthawk360Data(p1_oldEnrollmentDataDf):
         ## Seperate deleted enrollments
         deletedEnrollmentsDf = filteredSisEnrollmentsDf[filteredSisEnrollmentsDf["status"] == "deleted"].copy()
 
-        if not p1_oldEnrollmentDataDf.empty:
+        if isPresent(p1_oldEnrollmentDataDf):
 
             ## Make sure oldEnrollmentDataDf keys are strings
             p1_oldEnrollmentDataDf["Student ID"]   = p1_oldEnrollmentDataDf["Student ID"].astype(str).str.strip()
@@ -9311,7 +9311,7 @@ def termCreateOutcomeComplianceReport(
     try:
 
         ## If the p1_combinedTermoutcomeResultDF is not empty
-        if not p2_outcomeResultDF.empty:
+        if isPresent(p2_outcomeResultDF):
             
             ## Define a dict to hold the outcome result report
             outcomeResultReportDict = {
@@ -9539,7 +9539,7 @@ def termCreateOutcomeComplianceReport(
                                         targetStudentCourseDf = targetStudentDf[targetStudentDf["course_id"] == targetCourseSisId]
 
                                         ## If the targetStudentCourseDf is not empty and the status is active
-                                        if not targetStudentCourseDf.empty and targetStudentCourseDf["status"].values[0] != "deleted":
+                                        if isPresent(targetStudentCourseDf) and targetStudentCourseDf["status"].values[0] != "deleted":
                                     
                                             ## If "user_id" hasn't already been added to the list
                                             ## and they are not the test student (indicated by a null excused field)
@@ -9685,7 +9685,7 @@ def termCompileCourseOutcomesScores (p1_CourseDict
 
                 ## If any of the targetStudentOutcomeResults's learning outcome name values are not 
                 ## equal to the outcomeName and match one of the keys in p2_uniqueOutcomeInfoDictOfDicts
-                if (not targetStudentOutcomeResults.empty
+                if (isPresent(targetStudentOutcomeResults)
                     and targetStudentOutcomeResults[
                         "learning outcome name"
                         ].str.contains(
@@ -9754,7 +9754,7 @@ def termCompileCourseOutcomesScores (p1_CourseDict
                         }
                     
                 ## If the targetStudentOutcomeResults is not empty and the student name dict is not empty
-                if (not targetStudentOutcomeResults.empty 
+                if (isPresent(targetStudentOutcomeResults) 
                     and not targetStudentOutcomeResults['student name'].isnull().all()
                     and not targetStudentOutcomeResults['learning outcome rating'].isnull().all()
                     ):
@@ -9893,7 +9893,7 @@ def targetDesignatorProcessOutcomeResults(
                 )
 
             ## If a df returned from termCreateOutcomeComplianceReport
-            if not outcomeResultReportDF.empty:
+            if isPresent(outcomeResultReportDF):
             
                 ## Save the DF into an excel file
                 outcomeResultReportDF.to_excel(p1_destinationFilePathDict["Internal Output Report File Path and Name"], sheet_name = "General", index=False)
@@ -12447,7 +12447,7 @@ class CanvasReport:
             return 1
         if self.accountsDf is not None and self.accountName:
             match = self.accountsDf.loc[self.accountsDf["name"] == self.accountName, "canvas_account_id"]
-            if not match.empty:
+            if isPresent(match):
                 return match.values[0]
         return None  # fallback if not resolvable
 
@@ -12741,7 +12741,7 @@ class CanvasReport:
                 localSetup.logger.warning(f"Initial read_csv failed for {methodName} for term={term}, account={account}. Retrying with 'latin-1' encoding.")
 
             ## IF the downloadedFileDf isn't empty
-            if not downloadedFileDf.empty:
+            if isPresent(downloadedFileDf):
             
                 ## Drop empty columns beyond 12th
                 downloadedFileDf = downloadedFileDf.dropna(axis=1, how='all')
@@ -13038,7 +13038,7 @@ class CanvasReport:
                 p1_outcomeToolConfigDf=outcomeToolConfigDf,
             )
             
-            if outcomeCourseDf.empty:
+            if isMissing(outcomeCourseDf):
                 pd.DataFrame().to_excel(outputFilePath, index=False)
                 return pd.read_excel(targetDestination)
 
@@ -13288,7 +13288,7 @@ class CanvasReport:
 
             # Enrich instructor details
             # Create a user map preferring rows where created_by_sis == True, then rows with an email, then fallback.
-            if not usersDf.empty:
+            if isPresent(usersDf):
                 tempUsersDf = usersDf.copy()
                 # Build a numeric priority: created_by_sis (2) + has_email (1)
                 tempUsersDf["_priority"] = tempUsersDf["created_by_sis"].fillna(False).astype(bool).astype(int) * 2 + tempUsersDf["email"].notna().astype(int)
@@ -15625,9 +15625,9 @@ def retrieveDataForRelevantCommunication (p1_localSetup
         designatorRow = automatedOutcomeToolVariablesDf[
             automatedOutcomeToolVariablesDf["Target Designator"] == p3_targetDesignator
         ]
-        courseLevel = designatorRow.iloc[0]["Course Level"] if not designatorRow.empty else "All"
+        courseLevel = designatorRow.iloc[0]["Course Level"] if isPresent(designatorRow) else "All"
 
-        targetAccountName = designatorRow.iloc[0]["Outcome Location Account Name"] if not designatorRow.empty else "NNU"
+        targetAccountName = designatorRow.iloc[0]["Outcome Location Account Name"] if isPresent(designatorRow) else "NNU"
 
         ## Determine the graduate term equivalent (e.g. FA25 → GF25)
         gradTerm = CanvasReport.determineGradTerm(p2_inputTerm)
@@ -15644,7 +15644,7 @@ def retrieveDataForRelevantCommunication (p1_localSetup
         rawActiveOutcomeCourseDf = CanvasReport.getActiveOutcomeCoursesDf(p1_localSetup, p2_inputTerm, p3_targetDesignator)
 
         ## If the raw active outcome course df is empty
-        if rawActiveOutcomeCourseDf.empty:
+        if isMissing(rawActiveOutcomeCourseDf):
 
             ## Return an empty dataframe for the active outcome courses df and the auxillary df dict
             return rawActiveOutcomeCourseDf, auxillaryDFDict
@@ -15687,7 +15687,7 @@ def retrieveDataForRelevantCommunication (p1_localSetup
         allCanvasCoursesDfs = []
         for relevantTerm in relevantTerms:
             termDf = CanvasReport.getCoursesDf(p1_localSetup, relevantTerm)
-            if not termDf.empty:
+            if isPresent(termDf):
                 allCanvasCoursesDfs.append(termDf)
         
         rawTermCanvasCoursesDF = pd.concat(allCanvasCoursesDfs, ignore_index=True) if allCanvasCoursesDfs else pd.DataFrame()
@@ -15738,7 +15738,7 @@ def retrieveDataForRelevantCommunication (p1_localSetup
             ## Get the index of the rawCompleteActiveCanvasCoursesDF that matches the course id
             matchingIndices = rawCompleteActiveCanvasCoursesDF[rawCompleteActiveCanvasCoursesDF["course_id"] == targetCourseSisId].index
 
-            if matchingIndices.empty:
+            if isMissing(matchingIndices):
                 p1_localSetup.logger.warning(
                     f"{functionName}: targetCourseSisId '{targetCourseSisId}' from outcome course "
                     f"'{row.get('Course_sis_id', 'unknown')}' not found in active Canvas courses DF. "
@@ -15800,7 +15800,7 @@ def retrieveDataForRelevantCommunication (p1_localSetup
 
             ## Get the index of the term within the term_id column of the allCanvasTermsDf
             termMatchIndices = allCanvasTermsDf[allCanvasTermsDf["term_id"] == courseTerm].index
-            if termMatchIndices.empty:
+            if isMissing(termMatchIndices):
                 p1_localSetup.logger.warning(
                     f"{functionName}: Term '{courseTerm}' not found in Canvas terms DF. "
                     f"Skipping date fallback for course '{row.get('course_id', 'unknown')}'."
@@ -15833,7 +15833,7 @@ def retrieveDataForRelevantCommunication (p1_localSetup
             completeActiveCanvasCoursesDF.at[index, "end_date"] = end_date
 
         ## If the complete active canvas courses df is empty
-        if completeActiveCanvasCoursesDF.empty:
+        if isMissing(completeActiveCanvasCoursesDF):
 
             ## Return an empty dataframe for the active outcome courses df and the auxillary df dict
             return completeActiveCanvasCoursesDF, auxillaryDFDict
@@ -16119,7 +16119,7 @@ def getUniqueOutcomesAndOutcomeCoursesDict (p1_localSetup, p1_errorHandler, p3_i
             outcomeIndexSearch = targetDesignatorCanvasOutcomeDf[targetDesignatorCanvasOutcomeDf['title'] == outcome].index
 
             ## If the outcomeIndexs is empty
-            if outcomeIndexSearch.empty:
+            if isMissing(outcomeIndexSearch):
 
                 ## Log the fact that the outcome was not found
                 p1_localSetup.logger.error(f"\nOutcome not found: {outcome}")
