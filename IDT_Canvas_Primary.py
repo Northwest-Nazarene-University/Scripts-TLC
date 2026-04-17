@@ -28,6 +28,7 @@ from ActionModules.Course_Date_Related_Actions import termDetermineAndPerformRel
 from ActionModules.Change_Syllabus_Tab import updateCourseSyllabusTab
 from ActionModules.Send_Catalog_To_Simple_Syllabus import processCatalogCoursesAndUploadToSimpleSyllabus
 from ActionModules.Send_Course_Editors_To_Simple_Syllabus import processCourseEditorsAndUploadToSimpleSyllabus
+from ActionModules.Remove_Orphaned_SIS_Items import removeOrphanedSisItems
 
 ## Define the script name, purpose, and external requirements for logging and error reporting purposes
 scriptName = os.path.basename(__file__).replace(".py", "")
@@ -387,6 +388,9 @@ def fourTimesDaily (p1_relaventTerm):
                 ## Run the get incoming student info for the current terms
                 termGetIncomingStudentsInfo(p1_relaventTerm)
                 termGetIncomingStudentsInfo(p1_relaventTerm.replace("SP", "GS").replace("FA", "GF"))
+
+        ## Remove any orphaned SIS-created courses and enrollments
+        removeOrphanedSisItems()
 
     except Exception as Error:
         errorHandler.sendError (functionName, Error)
