@@ -1005,6 +1005,73 @@ class CanvasReport:
             return pd.DataFrame()  # Return empty DataFrame on error
 
     @classmethod
+    def getAccountOrgStructure(cls, localSetup, courseAccountId, accountsDf=None):
+        """
+    Determine the organizational structure placement of a Canvas sub-account
+    by traversing the account hierarchy from the given account up to (but not
+    including) the root account.
+
+    Args:
+        localSetup (LocalSetup): The LocalSetup instance for logging and path management.
+        courseAccountId (int): The Canvas account ID to resolve.
+        accountsDf (pd.DataFrame, optional): Pre-loaded accounts DataFrame.
+            If None, it will be fetched via getAccountsDf.
+
+    Returns:
+        list[str]: Ordered list of account names from the highest ancestor
+            (just below root) down to the given account.  Returns ["NNU"] for
+            the root account and an empty list on error.
+        """
+        methodName = "getAccountOrgStructure"
+        try:
+            if courseAccountId == 1:
+                return ["NNU"]
+
+            if accountsDf is None or accountsDf.empty:
+                accountsDf = cls.getAccountsDf(localSetup)
+
+            # Determine which column to use for matching
+            targetCol = "account_id"
+            if courseAccountId not in accountsDf[targetCol].tolist():
+                targetCol = "canvas_account_id"
+
+            # Locate the row for the given account ID
+            rowIdx = accountsDf.index.get_loc(
+                accountsDf[accountsDf[targetCol] == courseAccountId].index[0]
+            )
+
+            # Collect account names from leaf up to root
+            hierarchy = [accountsDf["name"][rowIdx]]
+
+            _rawParentId = accountsDf["canvas_parent_id"][rowIdx]
+            parentId: int | None = None
+            if isinstance(_rawParentId, (int, float)):
+                try:
+                    parentId = int(_rawParentId)
+                except (ValueError, TypeError, OverflowError):
+                    pass
+
+            while parentId is not None and parentId != 1:
+                parentRowIdx = accountsDf.index.get_loc(
+                    accountsDf[accountsDf["canvas_account_id"] == parentId].index[0]
+                )
+                hierarchy.insert(0, accountsDf["name"][parentRowIdx])
+                _rawParentId = accountsDf["canvas_parent_id"][parentRowIdx]
+                if isinstance(_rawParentId, (int, float)):
+                    try:
+                        parentId = int(_rawParentId)
+                    except (ValueError, TypeError, OverflowError):
+                        parentId = None
+                else:
+                    parentId = None
+
+            return hierarchy
+
+        except Exception as Error:
+            localSetup.logger.error(f"Error in {methodName}: {Error}")
+            return []
+
+    @classmethod
     def determineDepartmentSavePath(cls, localSetup, courseAccountId):
         """
     Determine the save path for a given Canvas account ID by traversing the account hierarchy.
@@ -1023,45 +1090,13 @@ class CanvasReport:
             if courseAccountId == 1:
                 return "NNU\\"
 
-            # Read the accounts CSV into a DataFrame
-            departmentSavePathsDF = cls.getAccountsDf(localSetup)
+            # Use the org structure helper to get the hierarchy
+            hierarchy = cls.getAccountOrgStructure(localSetup, courseAccountId)
+            if not hierarchy:
+                return ""
 
-            # Determine which column to use for matching
-            targetRow = "account_id"
-            if courseAccountId not in departmentSavePathsDF[targetRow].tolist():
-                targetRow = "canvas_account_id"
-
-            # Locate the row for the given account ID
-            accountRow = departmentSavePathsDF.index.get_loc(
-                departmentSavePathsDF[departmentSavePathsDF[targetRow] == courseAccountId].index[0]
-            )
-
-            # Start building the path with the account name
-            accountName = departmentSavePathsDF["name"][accountRow]
-            accountSavePath = f"{accountName}\\"
-
-            # Traverse parent accounts until root
-            _rawParentId = departmentSavePathsDF["canvas_parent_id"][accountRow]
-            targetAccountParentID: int | None = None
-            if isinstance(_rawParentId, (int, float)):
-                try:
-                    targetAccountParentID = int(_rawParentId)
-                except (ValueError, TypeError, OverflowError):
-                    pass
-            while targetAccountParentID is not None and targetAccountParentID != 1:
-                parentAccountRow = departmentSavePathsDF.index.get_loc(
-                    departmentSavePathsDF[departmentSavePathsDF["canvas_account_id"] == targetAccountParentID].index[0]
-                )
-                targetAccountName = departmentSavePathsDF["name"][parentAccountRow]
-                accountSavePath = f"{targetAccountName}\\{accountSavePath}"
-                _rawParentId = departmentSavePathsDF["canvas_parent_id"][parentAccountRow]
-                if isinstance(_rawParentId, (int, float)):
-                    try:
-                        targetAccountParentID = int(_rawParentId)
-                    except (ValueError, TypeError, OverflowError):
-                        targetAccountParentID = None
-                else:
-                    targetAccountParentID = None
+            # Build the backslash-delimited path from the hierarchy
+            accountSavePath = "\\".join(hierarchy) + "\\"
 
             # Clean up path formatting for department/college names
             if len(accountSavePath.rsplit("\\")) > 3:

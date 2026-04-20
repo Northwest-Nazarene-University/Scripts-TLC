@@ -118,25 +118,42 @@ class LocalSetup:
         FORMAT = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
         logging.basicConfig(format="%(asctime)s %(levelname)s %(message)s", encoding='utf-8', filemode="a", level=logging.INFO)
 
+        ## Lazy file handler: defers file creation until the first record is emitted,
+        ## preventing empty log files from being created on every script run.
+        class _LazyFileHandler(logging.FileHandler):
+            def __init__(self, filename, level, formatter):
+                ## Store params without opening the file yet
+                self._filename = filename
+                self._level = level
+                self._formatter = formatter
+                self._opened = False
+                logging.Handler.__init__(self)
+                self.setLevel(level)
+                self.setFormatter(formatter)
+            def _open_if_needed(self):
+                if not self._opened:
+                    super().__init__(self._filename, mode='a')
+                    self._opened = True
+            def emit(self, record):
+                self._open_if_needed()
+                super().emit(record)
+            def close(self):
+                if self._opened:
+                    super().close()
+
         ## Info Log
         infoLogFile = os.path.join(self.baseLogPath, "Info Log.txt")
-        logInfo = logging.FileHandler(infoLogFile, mode='a')
-        logInfo.setLevel(logging.INFO)
-        logInfo.setFormatter(FORMAT)
+        logInfo = _LazyFileHandler(infoLogFile, logging.INFO, FORMAT)
         logger.addHandler(logInfo)
 
         ## Warning Log
         warningLogFile = os.path.join(self.baseLogPath, "Warning Log.txt")
-        logWarning = logging.FileHandler(warningLogFile, mode='a')
-        logWarning.setLevel(logging.WARNING)
-        logWarning.setFormatter(FORMAT)
+        logWarning = _LazyFileHandler(warningLogFile, logging.WARNING, FORMAT)
         logger.addHandler(logWarning)
 
         ## Error Log
         errorLogFile = os.path.join(self.baseLogPath, "Error Log.txt")
-        logError = logging.FileHandler(errorLogFile, mode='a')
-        logError.setLevel(logging.ERROR)
-        logError.setFormatter(FORMAT)
+        logError = _LazyFileHandler(errorLogFile, logging.ERROR, FORMAT)
         logger.addHandler(logError)
 
         return logger

@@ -28,6 +28,7 @@ config = pdfkit.configuration(wkhtmltopdf=path_wkhtmltopdf)
 ## Import local modules
 from Download_File import downloadFile
 from Core_Microsoft_Api import downloadSharedMicrosoftFile
+from Canvas_Report import CanvasReport
 
 
 ## List of courses that don't need a syllabus. Syllabi for such courses are still gathered but they are not listed in the missing_syllabi.csv
@@ -477,8 +478,7 @@ def courseSyllabiReport (p1_row, p2_inputTerm, p1_departmentSavePaths, p1_Colleg
                     courseDepartmentPath = "Misc\\Uncategorized\\"
 
                 else:
-                    courseDepartmentPath = p1_departmentSavePaths[courseAccountId] = determineDepartmentSavePath \
-                        (courseAccountId = courseAccountId)
+                    courseDepartmentPath = p1_departmentSavePaths[courseAccountId] = CanvasReport.determineDepartmentSavePath(localSetup, courseAccountId)
 
             ## If the determined path has the manually created courses parent account name in it, skip the course
             if "Manually-Created Courses" in courseDepartmentPath:

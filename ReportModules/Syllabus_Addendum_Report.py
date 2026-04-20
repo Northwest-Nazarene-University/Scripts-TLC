@@ -64,10 +64,7 @@ sys.path.append(f"{absolutePath}Scripts TLC\\ResourceModules")
 
 ## Import local modules
 from Error_Email import errorEmail
-
-## Stub for removed Create_Sub_Account_Save_Path dependency
-def determineDepartmentSavePath(*args, **kwargs):
-    raise NotImplementedError("determineDepartmentSavePath requires the Create_Sub_Account_Save_Path module")
+from Canvas_Report import CanvasReport
 
 ## Local Path Variables
 baseLogPath = f"{absolutePath}Logs\\{scriptName}\\"
@@ -315,8 +312,7 @@ def courseAddendumReport (row, p3_inputTerm, p1_departmentSavePaths, p1_CollegeO
                     courseDepartmentPath = "Misc\\Uncategorized\\"
 
                 else:
-                    courseDepartmentPath = p1_departmentSavePaths[courseAccountId] = determineDepartmentSavePath \
-                        (courseAccountId = courseAccountId)
+                    courseDepartmentPath = p1_departmentSavePaths[courseAccountId] = CanvasReport.determineDepartmentSavePath(localSetup, courseAccountId)
 
             ## If the determined path has the manually created courses parent account name in it, skip the course
             if "Manually-Created Courses" in courseDepartmentPath:

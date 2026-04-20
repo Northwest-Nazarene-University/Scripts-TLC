@@ -12,7 +12,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules")
 
 ## New resource modules
 from Local_Setup import LocalSetup
-from TLC_Common import makeApiCall, isFileRecent, flattenApiObjectToJsonList, isPresent 
+from TLC_Common import makeApiCall, isFileRecent, flattenApiObjectToJsonList, isPresent, isMissing
 from Canvas_Report import CanvasReport
 from Common_Configs import coreCanvasApiUrl
 from Error_Email import errorEmail
@@ -394,6 +394,15 @@ def termCompileCourseOutcomesScores (p1_CourseDict
     functionName = "Term Compile Outcome Scores"
 
     try:
+
+        ## If the outcome result report df is empty there is no instructor/college/department
+        ## metadata for this course (e.g. account could not be resolved), so skip it
+        if isMissing(p1_targetOutcomeResultReportDf):
+            localSetup.logger.warning(
+                f"{functionName}: No outcome result report row found for course "
+                f"'{p1_CourseDict.get('Course_sis_id', 'unknown')}' -- skipping"
+            )
+            return
 
         ## For each unique student of the course
         #for studentID in p1_targetTermEnrollmentDf["user_id"].astype(int).unique():

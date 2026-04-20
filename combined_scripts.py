@@ -39,6 +39,7 @@ try: ## Irregular try clause, do not comment out in testing
         retrieveDataForRelevantCommunication,
         addOutcomeToCourse,
     )
+    from TLC_Common import isMissing
 
 except ImportError:
     from ResourceModules.Local_Setup import LocalSetup
@@ -47,6 +48,7 @@ except ImportError:
         retrieveDataForRelevantCommunication,
         addOutcomeToCourse,
     )
+    from ResourceModules.TLC_Common import isMissing
 
 # Create LocalSetup and localSetup.logger
 localSetup = LocalSetup(datetime.now(), __file__)
@@ -114,7 +116,7 @@ from datetime import datetime
 ## Ensure ResourceModules path is available and import shared helpers
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules"))
 from Local_Setup import LocalSetup
-from TLC_Common import makeApiCall
+from TLC_Common import makeApiCall, isPresent
 from Common_Configs import coreCanvasApiUrl
 from Error_Email import errorEmail
 
@@ -1494,12 +1496,16 @@ localSetup = LocalSetup(datetime.now(), __file__)
 ## ─────────────────────────────────────────────────────────────────────────────
 ## Core: Collect and merge log lines from all script log directories
 ## ─────────────────────────────────────────────────────────────────────────────
-def collectLogs(startDate, endDate):
+## Log level hierarchy for filtering
+_LEVEL_RANK = {"info": 0, "warning": 1, "error": 2}
+
+def collectLogs(startDate, endDate, minLevel="info"):
     """
     Walk every subdirectory under the Logs root, read all .txt log files,
-    filter lines to the given date range, and return them sorted by timestamp.
+    filter lines to the given date range and minimum level, and return them sorted by timestamp.
     """
     logsRoot = os.path.dirname(localSetup.baseLogPath)  ## e.g. .../Logs
+    minRank = _LEVEL_RANK.get(minLevel, 0)
 
     allLines = []
 
@@ -1529,7 +1535,10 @@ def collectLogs(startDate, endDate):
 
                         ## Check if the line falls within the date range
                         if startDate <= lineDatetime.date() <= endDate:
-                            allLines.append((lineDatetime, scriptDir, logType, line))
+                            ## Check if the line meets the minimum level
+                            lineLevel = _parseLineLevel(line)
+                            if _LEVEL_RANK.get(lineLevel, 0) >= minRank:
+                                allLines.append((lineDatetime, scriptDir, logType, line))
             except Exception:
                 continue
 
@@ -1550,6 +1559,22 @@ def _parseLineTimestamp(line):
         return datetime.strptime(rawTs, "%Y-%m-%d %H:%M:%S,%f")
     except (ValueError, IndexError):
         return None
+
+
+def _parseLineLevel(line):
+    """
+    Extract the log level from a log line.
+    Expected format: 2025-06-13 15:44:40,609 - LEVEL - message
+    Returns 'info', 'warning', or 'error' (lowercase), or 'info' as default.
+    """
+    try:
+        ## Level sits between the first and second " - " delimiters
+        parts = line.split(" - ", 2)
+        if len(parts) >= 2:
+            return parts[1].strip().lower()
+    except Exception:
+        pass
+    return "info"
 
 
 ## ─────────────────────────────────────────────────────────────────────────────
@@ -1588,27 +1613,48 @@ def main():
         default=None,
         help="End date (YYYY-MM-DD). Defaults to the start date.",
     )
+    parser.add_argument(
+        "--level",
+        type=str,
+        default=None,
+        choices=["info", "warning", "error"],
+        help="Minimum log level: info (all), warning, or error. Prompted if not provided.",
+    )
     args = parser.parse_args()
 
     ## Resolve dates
     if args.start:
         startDate = datetime.strptime(args.start, "%Y-%m-%d").date()
     else:
-        startDate = datetime.now().date()
+        startInput = input("Enter start date (YYYY-MM-DD), or press Enter to use today: ").strip()
+        startDate = datetime.strptime(startInput, "%Y-%m-%d").date() if startInput else datetime.now().date()
 
     if args.end:
         endDate = datetime.strptime(args.end, "%Y-%m-%d").date()
     else:
-        endDate = startDate
+        endInput = input(f"Enter end date (YYYY-MM-DD), or press Enter to use start date ({startDate}): ").strip()
+        endDate = datetime.strptime(endInput, "%Y-%m-%d").date() if endInput else startDate
 
     if endDate < startDate:
         print("Error: end date cannot be before start date.")
         return
 
-    print(f"Collecting logs from {startDate} to {endDate}...")
+    ## Resolve log level
+    if args.level:
+        minLevel = args.level.lower()
+    else:
+        print("\nSelect minimum log level:")
+        print("  1. Info (all logs)")
+        print("  2. Warning and above")
+        print("  3. Error only")
+        levelChoice = input("Enter choice (1/2/3): ").strip()
+        levelMap = {"1": "info", "2": "warning", "3": "error"}
+        minLevel = levelMap.get(levelChoice, "info")
+
+    print(f"Collecting logs from {startDate} to {endDate} (level: {minLevel} and above)...")
 
     ## Collect and sort
-    lines = collectLogs(startDate, endDate)
+    lines = collectLogs(startDate, endDate, minLevel)
 
     if not lines:
         print("No log entries found for the specified date range.")
@@ -1968,7 +2014,7 @@ try: ## Irregular try clause, do not comment out in testing
     from Canvas_Report import CanvasReport
     from Core_Microsoft_Api import sendOutlookEmail, CoreMicrosoftAPI
     from Error_Email import errorEmail
-    from TLC_Common import isPresent
+    from TLC_Common import isPresent, isMissing
     from TLC_Action import (
         retrieveDataForRelevantCommunication,
         getUniqueOutcomesAndOutcomeCoursesDict,
@@ -1981,7 +2027,7 @@ except ImportError:
     from ResourceModules.Canvas_Report import CanvasReport
     from ResourceModules.Core_Microsoft_Api import sendOutlookEmail
     from ResourceModules.Error_Email import errorEmail
-    from ResourceModules.TLC_Common import isPresent
+    from ResourceModules.TLC_Common import isPresent, isMissing
     from ResourceModules.TLC_Action import (
             retrieveDataForRelevantCommunication,
             getUniqueOutcomesAndOutcomeCoursesDict,
@@ -2344,7 +2390,7 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
                 relevantAuxillaryDfDict = {}
             
                 ## If the course is in the list of courses who do not have their outcome attached to a published assignment
-                if isPresent(auxiliaryDfDict.get("Outcome Courses Without Attachments DF", pd.DataFrame())):
+                if "Outcome Courses Without Attachments DF" in auxiliaryDfDict and isPresent(auxiliaryDfDict["Outcome Courses Without Attachments DF"]):
                     
                     ## Isolate the course's data in p1_outcomeCoursesWithoutAttachmentDF
                     relevantAuxillaryDfDict["Relevant Course Outcome Without Attachment Df"] = (
@@ -2360,7 +2406,7 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
                     relevantAuxillaryDfDict["Relevant Course Outcome Without Attachment Df"] = pd.DataFrame()
 
                 ## If the course is in the list of courses who have no outcome results
-                if isPresent(auxiliaryDfDict.get("Unassessed Outcome Courses DF", pd.DataFrame())):
+                if "Unassessed Outcome Courses DF" in auxiliaryDfDict and isPresent(auxiliaryDfDict["Unassessed Outcome Courses DF"]):
                     
                     ## Isolate the course's data in p1_outcomeCoursesWithoutOutcomeData
                     relevantAuxillaryDfDict["Relevant Course Outcome Without Data Df"] = (
@@ -2424,8 +2470,8 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
                     if isOutcomeCourse:
 
                         ## If the course is an outcome course that does not have all of its outcomes attached to published assignments
-                        if isPresent(relevantAuxillaryDfDict.get("Relevant Course Outcome Without Attachment Df", pd.DataFrame())):    
-                
+                        if isPresent(relevantAuxillaryDfDict.get("Relevant Course Outcome Without Attachment Df")):    
+
                             ## Send the courses's instructors the Midterm Reminder email
                             relevantEmailList.append("Associated Course Outcomes: Midterm Reminder")
 
@@ -2438,8 +2484,8 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
                     if isOutcomeCourse:
 
                         ## If the course is an outcome course that does not have all of its outcomes attached to published assignments
-                        if isPresent(relevantAuxillaryDfDict.get("Relevant Course Outcome Without Attachment Df", pd.DataFrame())): 
-                
+                        if isPresent(relevantAuxillaryDfDict.get("Relevant Course Outcome Without Attachment Df")): 
+
                             ## Send the courses's instructors the Finals Reminder email
                             relevantEmailList.append("Associated Course Outcomes: Finals Reminder")
 
@@ -2452,8 +2498,8 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
                     if isOutcomeCourse:
 
                         ## If the course is in the list of courses who do not have all of their outcome data
-                        if isPresent(relevantAuxillaryDfDict.get("Relevant Course Outcome Without Data Df", pd.DataFrame())):    
-            
+                        if isPresent(relevantAuxillaryDfDict.get("Relevant Course Outcome Without Data Df")):    
+
                             ## Send the courses's instructors the Missing Data email as the course's outcome data is past due
                             relevantEmailList.append("Associated Course Outcomes: Missing Required Data")
 
@@ -2482,26 +2528,26 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
                     #         )
                     
                     ## Create a thread to send the relevant outcome email
-                    communicationThread = threading.Thread(
-                        target=craftAndSendRelevantEmail
-                        , args=(p1_inputTerm
-                                , relevantEmail
-                                , targetRow
-                                , auxiliaryDfDict
-                                )
-                        )
+        #             communicationThread = threading.Thread(
+        #                 target=craftAndSendRelevantEmail
+        #                 , args=(p1_inputTerm
+        #                         , relevantEmail
+        #                         , targetRow
+        #                         , auxiliaryDfDict
+        #                         )
+        #                 )
                 
-                    ## Start the thread
-                    communicationThread.start()
+        #             ## Start the thread
+        #             communicationThread.start()
                 
-                    ## Add the thread to the list of communication threads
-                    actionThreads.append(communicationThread)
+        #             ## Add the thread to the list of communication threads
+        #             actionThreads.append(communicationThread)
 
-        ## For each thread in the list of communication threads
-        for thread in actionThreads:
+        # ## For each thread in the list of communication threads
+        # for thread in actionThreads:
             
-            ## Wait for the thread to finish
-            thread.join()
+        #     ## Wait for the thread to finish
+        #     thread.join()
 
     except Exception as Error:
         errorHandler.sendError(functionName, Error)
@@ -3214,7 +3260,7 @@ four character format (FA20, SU20, SP20): "))
 ## Last Updated by: Bryce Miller
 
 ## Import necessary modules
-import os, sys, pandas as pd
+import os, sys, re, pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from dateutil import parser as dateutil_parser
@@ -3226,13 +3272,13 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules")
 ## New resource modules
 try:
     from Local_Setup import LocalSetup
-    from TLC_Common import makeApiCall, flattenApiObjectToJsonList, isPresent
+    from TLC_Common import makeApiCall, flattenApiObjectToJsonList, isPresent, isMissing
     from Canvas_Report import CanvasReport
     from Error_Email import errorEmail
     from Core_Microsoft_Api import sendOutlookEmail
 except ImportError:
     from ResourceModules.Local_Setup import LocalSetup
-    from ResourceModules.TLC_Common import makeApiCall, flattenApiObjectToJsonList, isPresent
+    from ResourceModules.TLC_Common import makeApiCall, flattenApiObjectToJsonList, isPresent, isMissing
     from ResourceModules.Canvas_Report import CanvasReport
     from ResourceModules.Error_Email import errorEmail
     from ResourceModules.Core_Microsoft_Api import sendOutlookEmail
@@ -3677,16 +3723,29 @@ def removeOrphanedSisItems():
         )
 
         ## Determine which Canvas terms overlap with our SIS date window
+        ## Only accept NNU term codes: 2-letter prefix + 2-digit year
+        _VALID_TERM_RE = re.compile(r"^(FA|SP|SU|GF|GS|SG)\d{2}$")
+
         relevantTermIds = []
+        skippedTermIds  = []
         for termId, dates in termDateDict.items():
             tStart = dates.get("start_date")
             tEnd   = dates.get("end_date")
             ## If either date is unknown, exclude the term to be safe
             if tStart is None or tEnd is None:
                 continue
+            ## Skip non-standard term IDs (e.g. MASTER, AF25, AS26, SA26)
+            if not _VALID_TERM_RE.match(termId):
+                skippedTermIds.append(termId)
+                continue
             ## Check overlap: term ends after windowStart AND term starts before windowEnd
             if tEnd >= windowStart and tStart <= windowEnd:
                 relevantTermIds.append(termId)
+
+        if skippedTermIds:
+            localSetup.logger.info(
+                f"Skipped {len(skippedTermIds)} non-standard Canvas term(s): {', '.join(skippedTermIds)}"
+            )
 
         localSetup.logger.info(
             f"Identified {len(relevantTermIds)} Canvas term(s) overlapping the SIS date window"
@@ -4019,14 +4078,14 @@ try: ## Irregular try clause, do not comment out in testing
     from Local_Setup import LocalSetup
     from Canvas_Report import CanvasReport
     from Error_Email import errorEmail
-    from TLC_Common import isPresent, downloadFile, makeApiCall
+    from TLC_Common import isPresent, isMissing, downloadFile, makeApiCall
     from TLC_Action import readCsvWithEncoding, uploadToSimpleSyllabus, hasChangedSinceLastUpload, writeSuccessTag, removeStaleSuccessTag
 except ImportError:
     # Fallback to relative imports if package layout differs
     from ResourceModules.Local_Setup import LocalSetup
     from ResourceModules.Canvas_Report import CanvasReport
     from ResourceModules.Error_Email import errorEmail
-    from ResourceModules.TLC_Common import isPresent, downloadFile, makeApiCall
+    from ResourceModules.TLC_Common import isPresent, isMissing, downloadFile, makeApiCall
     from ResourceModules.TLC_Action import readCsvWithEncoding, uploadToSimpleSyllabus, hasChangedSinceLastUpload, writeSuccessTag, removeStaleSuccessTag
 
 ## Get catalogToSimpleSyllabusConfig from configs
@@ -4634,11 +4693,13 @@ try: ## Irregular try clause, do not comment out in testing
     from Local_Setup import LocalSetup
     from Error_Email import errorEmail
     from TLC_Action import readCsvWithEncoding, uploadToSimpleSyllabus, removeStaleSuccessTag
+    from TLC_Common import isPresent, isMissing
 except ImportError:
     # Fallback to relative imports if package layout differs
     from ResourceModules.Local_Setup import LocalSetup
     from ResourceModules.Error_Email import errorEmail
     from ResourceModules.TLC_Action import readCsvWithEncoding, uploadToSimpleSyllabus, removeStaleSuccessTag
+    from ResourceModules.TLC_Common import isPresent, isMissing
 
 ## Import the catalog helper that determines the school year path
 try:
@@ -5805,9 +5866,9 @@ decade = localSetup.dateDict["decade"]
 
 
 ## Testing variables
-## currentDay = 1 ## First week of the month testing value make sure to comment out the target terms variable
-## currentWeekDay = 2 ## Day of the week testing value 
-## currentHour = 1 ## First run of the day testing value
+currentDay = 1 ## First week of the month testing value make sure to comment out the target terms variable
+currentWeekDay = 4 ## Day of the week testing value 
+currentHour = 1 ## First run of the day testing value
 ## currentHour = 16 ## Last run of the day testing value
 
         
@@ -6031,7 +6092,7 @@ def determineTargetTerms():
 
         ## If today is Friday
         if currentWeekDay == 4:
-            ## Add current school year and next term
+            ## Add current school year, most recent completed terms, and next terms
             targetTermSet.update(localSetup.getCurrentSchoolYearTermCodes())
             targetTermSet.update(localSetup.getMostRecentCompletedTermCodes())
             targetTermSet.update(localSetup.getNextTermCodes())
@@ -6641,7 +6702,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules")
 
 ## New resource modules
 from Local_Setup import LocalSetup
-from TLC_Common import makeApiCall
+from TLC_Common import makeApiCall, isPresent
 from Canvas_Report import CanvasReport
 from Common_Configs import coreCanvasApiUrl, canvasAccessToken, undgTermsCodesToWordsDict, gradTermsCodesToWordsDict
 from Error_Email import errorEmail
@@ -7463,7 +7524,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules")
 
 ## New resource modules
 from Local_Setup import LocalSetup
-from TLC_Common import makeApiCall
+from TLC_Common import makeApiCall, isPresent, isMissing
 from Canvas_Report import CanvasReport
 from Common_Configs import coreCanvasApiUrl, canvasAccessToken
 from Error_Email import errorEmail
@@ -9269,7 +9330,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules")
 
 ## New resource modules
 from Local_Setup import LocalSetup
-from TLC_Common import makeApiCall, isFileRecent, flattenApiObjectToJsonList 
+from TLC_Common import makeApiCall, isFileRecent, flattenApiObjectToJsonList, isPresent 
 from Canvas_Report import CanvasReport
 from Common_Configs import coreCanvasApiUrl
 from Error_Email import errorEmail
@@ -9404,6 +9465,11 @@ def termCreateOutcomeComplianceReport(
 
                         ## Split the path by \\ to seperate the college, department, and sub department where applicable
                         courseDepartmentPathSeperated = courseDepartmentPath.split("\\")
+
+                        ## Skip this account if the department path could not be resolved
+                        if len(courseDepartmentPathSeperated) < 2 or courseDepartmentPathSeperated[0] == "":
+                            localSetup.logger.warning(f"Could not resolve department path for account {courseInfoDict['Canvas_Account_id']} -- skipping")
+                            continue
 
                         ## The course college (## e.g. College of Business) is always the 0th element of the section 
                         courseInfoDict["College"] = courseDepartmentPathSeperated[0].replace("College of ", "")
@@ -12353,11 +12419,11 @@ from pandas.errors import EmptyDataError
 try: ## Irregular try clause, do not comment out in testing
     ## Import local modules and variables
     from Local_Setup import LocalSetup
-    from TLC_Common import (downloadFile, makeApiCall, isFileRecent)
+    from TLC_Common import (downloadFile, makeApiCall, isFileRecent, isPresent, isMissing)
     from Core_Microsoft_Api import downloadSharedMicrosoftFile
 except ImportError: ## Otherwise as a relative import if the module is imported
     from .Local_Setup import LocalSetup
-    from .TLC_Common import (downloadFile, makeApiCall, isFileRecent)
+    from .TLC_Common import (downloadFile, makeApiCall, isFileRecent, isPresent, isMissing)
     from .Core_Microsoft_Api import downloadSharedMicrosoftFile
 
 ## Import neccessary config variables
@@ -15183,11 +15249,11 @@ from dateutil import parser
 
 try: ## If the module is run directly
     from Local_Setup import LocalSetup
-    from TLC_Common import getEncryptionKey, makeApiCall, flattenApiObjectToJsonList
+    from TLC_Common import getEncryptionKey, makeApiCall, flattenApiObjectToJsonList, isPresent, isMissing, isFileRecent
     from Canvas_Report import CanvasReport
 except ImportError: ## Otherwise as a relative import if the module is imported
     from .Local_Setup import LocalSetup
-    from .TLC_Common import getEncryptionKey, makeApiCall, flattenApiObjectToJsonList, isPresent
+    from .TLC_Common import getEncryptionKey, makeApiCall, flattenApiObjectToJsonList, isPresent, isMissing, isFileRecent
     from .Canvas_Report import CanvasReport
 
 ## Add the config path
@@ -15840,11 +15906,19 @@ def retrieveDataForRelevantCommunication (p1_localSetup
 
         ## Define the term related path to the outcome attachment report
         termOutcomeAttachmentReportPath = termOutcomeAttachmentReport(p2_inputTerm, p3_targetDesignator)
-        auxillaryDFDict["Outcome Courses Without Attachments DF"] = pd.read_csv(termOutcomeAttachmentReportPath)
+        if isFileRecent(p1_localSetup, termOutcomeAttachmentReportPath):
+            auxillaryDFDict["Outcome Courses Without Attachments DF"] = pd.read_csv(termOutcomeAttachmentReportPath)
+        else:
+            p1_localSetup.logger.warning(f"Outcome attachment report not found or stale: {termOutcomeAttachmentReportPath}")
+            auxillaryDFDict["Outcome Courses Without Attachments DF"] = pd.DataFrame()
 
         ## Define the term related path to the outcome results report
         termProcessOutcomeResultsPath = termProcessOutcomeResults(p2_inputTerm, p3_targetDesignator)[0]
-        outcomeCoursesDataDF = pd.read_excel(termProcessOutcomeResultsPath)
+        if isFileRecent(p1_localSetup, termProcessOutcomeResultsPath):
+            outcomeCoursesDataDF = pd.read_excel(termProcessOutcomeResultsPath)
+        else:
+            p1_localSetup.logger.warning(f"Outcome results report not found or stale: {termProcessOutcomeResultsPath}")
+            outcomeCoursesDataDF = pd.DataFrame(columns=["Assessment_Status"])
 
         ## Create a df of outcome courses that have not been assessed
         auxillaryDFDict["Unassessed Outcome Courses DF"] = outcomeCoursesDataDF[outcomeCoursesDataDF["Assessment_Status"] != "Assessed"]
@@ -16492,7 +16566,16 @@ def isMissing(value):
     - empty string ""
     - whitespace-only strings
     - strings that spell 'nan' (case-insensitive)
+    - empty DataFrames or Series
     """
+
+    ## DataFrames -> missing if empty
+    if isinstance(value, pd.DataFrame):
+        return value.empty
+
+    ## Series -> missing if empty
+    if isinstance(value, pd.Series):
+        return value.empty
 
     ## String-like values -> normalize and check
     if isinstance(value, str):
