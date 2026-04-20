@@ -29,6 +29,24 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "..", "Configs"))
 
 
 ## Return Encryption Key Function
+def _logInfo(localSetup, message):
+    if hasattr(localSetup, "logInfoThreadSafe"):
+        localSetup.logInfoThreadSafe(message)
+    elif getattr(localSetup, "logger", None):
+        localSetup.logger.info(message)
+
+def _logWarning(localSetup, message):
+    if hasattr(localSetup, "logWarningThreadSafe"):
+        localSetup.logWarningThreadSafe(message)
+    elif getattr(localSetup, "logger", None):
+        localSetup.logger.warning(message)
+
+def _logError(localSetup, message):
+    if hasattr(localSetup, "logErrorThreadSafe"):
+        localSetup.logErrorThreadSafe(message)
+    elif getattr(localSetup, "logger", None):
+        localSetup.logger.error(message)
+
 def getEncryptionKey(localSetup: LocalSetup):
     ## Load .env from configPath
     envPath = os.path.join(localSetup.configPath, ".env")
@@ -39,7 +57,7 @@ def getEncryptionKey(localSetup: LocalSetup):
     
     ## If the encryption key is not found, raise an error
     if not encryptionKey:
-        localSetup.logger.error("ENCRYPTION_KEY not found in environment variables.")
+        _logError(localSetup, "ENCRYPTION_KEY not found in environment variables.")
         raise ValueError("ENCRYPTION_KEY not found in environment variables.")
 
     return encryptionKey
@@ -78,21 +96,21 @@ def downloadFile(localSetup: LocalSetup, fileLink, filePathWithName, mode = 'w')
     try:
         if finalFilePathWithName.lower().endswith(".xlsx"):
             if not zipfile.is_zipfile(finalFilePathWithName):
-                localSetup.logger.warning(f"Downloaded file is not a valid Excel file. Attempting repair...")
+                _logWarning(localSetup, f"Downloaded file is not a valid Excel file. Attempting repair...")
                 ## Try reading as CSV and resave as proper Excel
                 try:
                     fileDataframe = pd.read_csv(finalFilePathWithName)
                     with pd.ExcelWriter(finalFilePathWithName, engine="openpyxl") as writer:
                         fileDataframe.to_excel(writer, index=False)
-                    localSetup.logger.info(f"File repaired")
+                    _logInfo(localSetup, f"File repaired")
                     return finalFilePathWithName
                 except Exception as e:
-                    localSetup.logger.error(f"Repair failed: {e}")
+                    _logError(localSetup, f"Repair failed: {e}")
                     raise
         ## If valid or not Excel, return original path
         return finalFilePathWithName
     except Exception as e:
-        localSetup.logger.error(f"Validation/repair step failed: {e}")
+        _logError(localSetup, f"Validation/repair step failed: {e}")
     return finalFilePathWithName
 
 ## This function normalizes a Canvas API response (or list of responses) into a single list of JSON objects.
@@ -116,7 +134,7 @@ def flattenApiObjectToJsonList(localSetup, apiObjectList, apiUrl):
 
     except Exception as error:
         ## Log the error here; the calling function can decide whether to send an error email
-        localSetup.logger.error(
+        _logError(localSetup,
             f"{functionName}: Error while flattening API responses for URL {apiUrl}: {error}"
         )
         raise
@@ -129,7 +147,7 @@ def isFileRecent(localSetup: LocalSetup, filePath, maxAgeHours=3.5):
         ## If the file does not exist, return False
         if not os.path.exists(filePath):
             if localSetup.logger:
-                localSetup.logger.info(f"\n{filePath} does not exist.")
+                _logInfo(localSetup, f"\n{filePath} does not exist.")
             return False
 
         ## Get the last modified time and calculate age in hours
@@ -139,16 +157,16 @@ def isFileRecent(localSetup: LocalSetup, filePath, maxAgeHours=3.5):
         ## Log and return based on file age
         if fileAgeHours < maxAgeHours:
             if localSetup.logger:
-                localSetup.logger.info(f"\n{filePath} is recent ({fileAgeHours:.2f} hours old).")
+                _logInfo(localSetup, f"\n{filePath} is recent ({fileAgeHours:.2f} hours old).")
             return True
         else:
             if localSetup.logger:
-                localSetup.logger.info(f"\n{filePath} is outdated ({fileAgeHours:.2f} hours old).")
+                _logInfo(localSetup, f"\n{filePath} is outdated ({fileAgeHours:.2f} hours old).")
             return False
     except Exception as error:
         ## Log any unexpected errors
         if localSetup.logger:
-            localSetup.logger.error(f"Couldn't determine file age. Error: {error}")
+            _logError(localSetup, f"Couldn't determine file age. Error: {error}")
         return False
 
 ## Load Excel File with Multiple Strategies

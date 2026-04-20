@@ -3,7 +3,7 @@
 
 ## Import Generic Moduels
 from __future__ import print_function
-import traceback, os, sys, logging, requests, os, os.path, time
+import traceback, os, sys, logging, requests, os, os.path, time, threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from datetime import date
@@ -100,6 +100,16 @@ logging.basicConfig(format=rootFormat, filemode = "a", level=logging.INFO)
 class _LoggerShim:
     def __init__(self, p_logger):
         self.logger = p_logger
+        self._threadSafeLogLock = threading.RLock()
+    def logThreadSafe(self, level, msg):
+        with self._threadSafeLogLock:
+            self.logger.log(level, msg)
+    def logInfoThreadSafe(self, msg):
+        self.logThreadSafe(logging.INFO, msg)
+    def logWarningThreadSafe(self, msg):
+        self.logThreadSafe(logging.WARNING, msg)
+    def logErrorThreadSafe(self, msg):
+        self.logThreadSafe(logging.ERROR, msg)
 localSetup = _LoggerShim(logger)
 
 ## Info Log Handler
@@ -125,6 +135,7 @@ localSetup.logger.addHandler(logError)
 
 ## Setup the error handler
 errorHandler = errorEmail(scriptName, scriptPurpose, externalRequirements, localSetup)
+_sharedDataLock = threading.Lock()
 
 ## This function processes the rows of the CSV file and sends on the relavent data to process_course
 def addOutcomeToCourse (row, p2_inputTerm, p1_header, p1_outcomeCourseDict):
@@ -143,7 +154,7 @@ def addOutcomeToCourse (row, p2_inputTerm, p1_header, p1_outcomeCourseDict):
         outcomeKeys = [col for col in row.keys() if "Outcome" in col and "Area" not in col]
             
         ## Log the start of the process
-        localSetup.logger.info("\n     Course:" + targetCourseSisId)
+        localSetup.logInfoThreadSafe("\n     Course:" + targetCourseSisId)
 
         ## Create the URL the API call will be made to
         course_API_url = coreCanvasApiUrl + "courses/sis_course_id:" + targetCourseSisId + "/course_copy"
@@ -166,12 +177,12 @@ def addOutcomeToCourse (row, p2_inputTerm, p1_header, p1_outcomeCourseDict):
                 
             ## If the API status code is anything other than 200 it is an error, so log it and skip
             if (course_object.status_code != 200):
-                localSetup.logger.error("\nCourse Error: " + str(course_object.status_code))
-                localSetup.logger.error(course_API_url)
-                localSetup.logger.error(course_object.url)
+                localSetup.logErrorThreadSafe("\nCourse Error: " + str(course_object.status_code))
+                localSetup.logErrorThreadSafe(course_API_url)
+                localSetup.logErrorThreadSafe(course_object.url)
             else:
                 ## Successfully made the API call
-                localSetup.logger.info("\nOutcome copy successful for : " + targetCourseSisId)
+                localSetup.logInfoThreadSafe("\nOutcome copy successful for : " + targetCourseSisId)
 
     except Exception as Error:
         errorHandler.sendError(functionName, Error)
@@ -206,7 +217,7 @@ def allowThreadedReplies (p1_row, p1_header, p1_canvasCourseUnthreadedDiscussion
                 while (courseDiscussionTopicsObject.status_code == 403):
                     
                     ## Log that the course has been rate limited
-                    localSetup.logger.warning("\nRate limited for course: " + str(canvasCourseId))
+                    localSetup.logWarningThreadSafe("\nRate limited for course: " + str(canvasCourseId))
                     
                     ## Wait 2 seconds
                     time.sleep(5) 
@@ -216,9 +227,9 @@ def allowThreadedReplies (p1_row, p1_header, p1_canvasCourseUnthreadedDiscussion
 
             ## If the API status code is anything other than 200 it is an error, so log it and skip
             if (courseDiscussionTopicsObject.status_code != 200):
-                localSetup.logger.error("\nCourse Error: " + str(courseDiscussionTopicsObject.status_code))
-                localSetup.logger.error(courseDiscussionTopicsApiUrl)
-                localSetup.logger.error(courseDiscussionTopicsObject.url)
+                localSetup.logErrorThreadSafe("\nCourse Error: " + str(courseDiscussionTopicsObject.status_code))
+                localSetup.logErrorThreadSafe(courseDiscussionTopicsApiUrl)
+                localSetup.logErrorThreadSafe(courseDiscussionTopicsObject.url)
 
             ## Otherwise
             else:
@@ -230,7 +241,7 @@ def allowThreadedReplies (p1_row, p1_header, p1_canvasCourseUnthreadedDiscussion
                 if not courseDiscussionTopicsDict:
                     
                     ## Log that the course has no discussion topics
-                    localSetup.logger.info("\nNo discussion topics for course: " + str(canvasCourseId))
+                    localSetup.logInfoThreadSafe("\nNo discussion topics for course: " + str(canvasCourseId))
                 
                 ## Otherwise
                 else:
@@ -246,12 +257,13 @@ def allowThreadedReplies (p1_row, p1_header, p1_canvasCourseUnthreadedDiscussion
                             discussionUrl = topic['html_url']
 
                             ## Add the course's information to the canvasCourseUnthreadedDiscussions dict
-                            p1_canvasCourseUnthreadedDiscussions["canvas_sis_id"].append(sisCourseID)
-                            p1_canvasCourseUnthreadedDiscussions["canvas_course_id"].append(canvasCourseId)
-                            p1_canvasCourseUnthreadedDiscussions["discussion title"].append(discussionTitle)
-                            p1_canvasCourseUnthreadedDiscussions["discussion url"].append(discussionUrl)
+                            with _sharedDataLock:
+                                p1_canvasCourseUnthreadedDiscussions["canvas_sis_id"].append(sisCourseID)
+                                p1_canvasCourseUnthreadedDiscussions["canvas_course_id"].append(canvasCourseId)
+                                p1_canvasCourseUnthreadedDiscussions["discussion title"].append(discussionTitle)
+                                p1_canvasCourseUnthreadedDiscussions["discussion url"].append(discussionUrl)
 
-            localSetup.logger.info (f"Course {canvasCourseId} processed")
+            localSetup.logInfoThreadSafe(f"Course {canvasCourseId} processed")
                             
     except Exception as Error:
         errorHandler.sendError(functionName, Error)

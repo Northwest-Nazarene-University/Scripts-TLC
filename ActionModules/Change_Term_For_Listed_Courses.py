@@ -1,7 +1,7 @@
 ## Author: Bryce Miller - brycezmiller@nnu.edu
 ## Last Updated by: Bryce Miller
 
-import traceback, os, sys, logging, requests, pandas as pd
+import traceback, os, sys, logging, requests, pandas as pd, threading
 from concurrent.futures import ThreadPoolExecutor
 import pandas as pd
 from datetime import datetime
@@ -74,6 +74,16 @@ logging.basicConfig(format=rootFormat, filemode="a", level=logging.INFO)
 class _LoggerShim:
     def __init__(self, p_logger):
         self.logger = p_logger
+        self._threadSafeLogLock = threading.RLock()
+    def logThreadSafe(self, level, msg):
+        with self._threadSafeLogLock:
+            self.logger.log(level, msg)
+    def logInfoThreadSafe(self, msg):
+        self.logThreadSafe(logging.INFO, msg)
+    def logWarningThreadSafe(self, msg):
+        self.logThreadSafe(logging.WARNING, msg)
+    def logErrorThreadSafe(self, msg):
+        self.logThreadSafe(logging.ERROR, msg)
 localSetup = _LoggerShim(logger)
 setOfFunctionsWithErrors = set()
 
@@ -101,14 +111,14 @@ localSetup.logger.addHandler(logError)
 ## This function handles function errors
 def errorHandler(p1_ErrorLocation, p1_errorInfo, sendOnce=True):
     functionName = "errorHandler"
-    localSetup.logger.error(f"\nA script error occurred while running {p1_ErrorLocation}. Error: {str(p1_errorInfo)}")
+    localSetup.logErrorThreadSafe(f"\nA script error occurred while running {p1_ErrorLocation}. Error: {str(p1_errorInfo)}")
 
     ## Only log once per function
     if p1_ErrorLocation not in setOfFunctionsWithErrors:
         setOfFunctionsWithErrors.add(p1_ErrorLocation)
-        localSetup.logger.error(f"\nError logged for {p1_ErrorLocation}")
+        localSetup.logErrorThreadSafe(f"\nError logged for {p1_ErrorLocation}")
     else:
-        localSetup.logger.error(f"\nError already logged for {p1_ErrorLocation}")
+        localSetup.logErrorThreadSafe(f"\nError already logged for {p1_ErrorLocation}")
 
 ## This function sets the term for a course given its Canvas course ID and term ID
 def setCourseTerm(p1_header, p1_courseId, p1_termId):
@@ -119,9 +129,9 @@ def setCourseTerm(p1_header, p1_courseId, p1_termId):
         response, _ = makeApiCall(localSetup, p1_header=p1_header, p1_apiUrl=set_term_url, p1_payload=payload, p1_apiCallType="put")
 
         if response.status_code == 200:
-            localSetup.logger.info(f"Successfully set term for course with ID: {p1_courseId}")
+            localSetup.logInfoThreadSafe(f"Successfully set term for course with ID: {p1_courseId}")
         else:
-            localSetup.logger.warning(f"Failed to set term for course with ID: {p1_courseId}. Status code: {response.status_code}")
+            localSetup.logWarningThreadSafe(f"Failed to set term for course with ID: {p1_courseId}. Status code: {response.status_code}")
 
     except Exception as Error:
         errorHandler(functionName, Error)

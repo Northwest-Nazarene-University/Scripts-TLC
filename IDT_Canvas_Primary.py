@@ -294,7 +294,7 @@ def determineTargetTerms():
         ## Convert set to list for return
         targetTermList = list(targetTermSet)
 
-        localSetup.logger.info(f"\nRelevant Terms set as {targetTermList}.")
+        localSetup.logInfoThreadSafe(f"\nRelevant Terms set as {targetTermList}.")
         return targetTermList
 
     except Exception as Error:
