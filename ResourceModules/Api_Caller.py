@@ -89,24 +89,28 @@ _canvasApiGate.set()  ## Start open
 
 _gateLock = threading.Lock()
 _gateReopenTime: float = 0.0  ## time.monotonic() when the gate should reopen
+_fallbackLogLock = threading.RLock()
 
 def _logInfo(localSetup, message):
     if hasattr(localSetup, "logInfoThreadSafe"):
         localSetup.logInfoThreadSafe(message)
     elif getattr(localSetup, "logger", None):
-        localSetup.logger.info(message)
+        with _fallbackLogLock:
+            localSetup.logger.info(message)
 
 def _logWarning(localSetup, message):
     if hasattr(localSetup, "logWarningThreadSafe"):
         localSetup.logWarningThreadSafe(message)
     elif getattr(localSetup, "logger", None):
-        localSetup.logger.warning(message)
+        with _fallbackLogLock:
+            localSetup.logger.warning(message)
 
 def _logError(localSetup, message):
     if hasattr(localSetup, "logErrorThreadSafe"):
         localSetup.logErrorThreadSafe(message)
     elif getattr(localSetup, "logger", None):
-        localSetup.logger.error(message)
+        with _fallbackLogLock:
+            localSetup.logger.error(message)
 
 
 ## -------------------------
