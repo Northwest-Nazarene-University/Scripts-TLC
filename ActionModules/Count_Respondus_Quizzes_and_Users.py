@@ -1,7 +1,7 @@
 ## Author: Bryce Miller - brycezmiller@nnu.edu
 ## Last Updated by: Bryce Miller
 
-import os, sys, threading, time, pandas as pd
+import os, sys, pandas as pd
 from datetime import datetime
 
 # Make ResourceModules importable (mirrors Course_Date_Related_Actions.py)
@@ -11,11 +11,13 @@ try:  # Irregular try clause, do not comment out in testing
     from Local_Setup import LocalSetup
     from Error_Email import errorEmail
     from TLC_Common import makeApiCall
+    from TLC_Action import runThreadedRows
 except ImportError:
     # Fallback to relative imports if package layout differs
     from ResourceModules.Local_Setup import LocalSetup
     from ResourceModules.Error_Email import errorEmail
     from ResourceModules.TLC_Common import makeApiCall
+    from ResourceModules.TLC_Action import runThreadedRows
 
 #
 # Define the script name, purpose, and external requirements for logging and error reporting purposes
@@ -155,50 +157,24 @@ def countRespondusQuizzes(p1_courseId: str, result_dict: dict) -> None:
 def countListedCoursesRespondusQuizzes() -> None:
     functionName = "countListedCoursesRespondusQuizzes"
     try:
-        # Locate the Canvas resources directory using LocalSetup, similar to SIS in Course_Date_Related_Actions.py
+        ## Step 1: Load the target courses CSV
         baseCanvasResourcesPath = localSetup.getInternalResourcePaths('Canvas')
-
-        # Adjust the filename here if you prefer 'courses_to_check.csv'
         targetCoursesCsvFilePath = os.path.join(
             baseCanvasResourcesPath, "Target_Canvas_Course_Ids.csv"
         )
-
-        # Define the necessary thread list
-        ongoingCountThreads = []
-        result_dict = {}
-
-        # Read the CSV file using pandas
         rawTargetCoursesDf = pd.read_csv(targetCoursesCsvFilePath)
+        targetCoursesDf = rawTargetCoursesDf[rawTargetCoursesDf["canvas_course_id"].notna()]
 
-        # Retain only rows that have a value in canvas_course_id
-        targetCoursesDf = rawTargetCoursesDf[
-            rawTargetCoursesDf["canvas_course_id"].notna()
-        ]
-
-        # Iterate over each row in the DataFrame
-        for index, row in targetCoursesDf.iterrows():
-            # Get the course id from the row
+        ## Step 2: Run the per-course count concurrently, accumulating into a shared dict
+        ## Each courseId key is unique so concurrent dict writes are safe without a lock
+        result_dict = {}
+        def _worker(row):
             courseId = str(row["canvas_course_id"]).replace(".0", "")
+            countRespondusQuizzes(courseId, result_dict)
 
-            # Create a thread to count Respondus quizzes for the course
-            countThread = threading.Thread(
-                target=countRespondusQuizzes,
-                args=(courseId, result_dict),
-            )
+        runThreadedRows(targetCoursesDf, _worker)
 
-            # Start the thread
-            countThread.start()
-
-            # Add the thread to the ongoing count threads list
-            ongoingCountThreads.append(countThread)
-
-            # Sleep for a short time to avoid overloading the server
-            time.sleep(0.1)
-
-        # Wait for all count threads to complete
-        for thread in ongoingCountThreads:
-            thread.join()
-
+        ## Step 3: Aggregate and log the totals
         total_quizzes = sum(result[0] for result in result_dict.values())
         total_students = set()
         for result in result_dict.values():

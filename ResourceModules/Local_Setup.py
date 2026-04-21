@@ -140,6 +140,13 @@ class LocalSetup:
         logError.setFormatter(FORMAT)
         logger.addHandler(logError)
 
+        ## Console handler — mirror all log messages to stdout so they are
+        ## visible when scripts are run interactively or in CI pipelines
+        consoleHandler = logging.StreamHandler()
+        consoleHandler.setLevel(logging.INFO)
+        consoleHandler.setFormatter(FORMAT)
+        logger.addHandler(consoleHandler)
+
         return logger
 
     def logThreadSafe(self, level, msg):

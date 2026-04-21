@@ -2,8 +2,7 @@
 ## Last Updated by: Bryce Miller
 
 ## Import Generic Modules
-import os, sys, time, threading, pandas as pd
-from concurrent.futures import ThreadPoolExecutor
+import os, sys, threading, pandas as pd
 from datetime import datetime
 
 ## Add the resource modules path
@@ -14,11 +13,13 @@ try:
     from Local_Setup import LocalSetup
     from TLC_Common import makeApiCall
     from Error_Email import errorEmail
+    from TLC_Action import runThreadedRows
     from Common_Configs import coreCanvasApiUrl, canvasAccessToken
 except ImportError:  ## When imported as a package/module
     from .Local_Setup import LocalSetup
     from .TLC_Common import makeApiCall
     from .Error_Email import errorEmail
+    from .TLC_Action import runThreadedRows
     from .Common_Configs import coreCanvasApiUrl, canvasAccessToken
 
 ## Define the script name, purpose, and external requirements for logging and error reporting purposes
@@ -119,17 +120,13 @@ def allowThreadedDiscussions(localSetup: LocalSetup, errorHandler: errorEmail) -
             "discussion url": [],
         }
 
-        ## Process each course in a thread pool
-        MAX_WORKERS = 25
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            for index, row in canvasCourses.iterrows():
+        ## Process each course concurrently; skip rows where canvas_course_id is absent
+        def _worker(row):
+            if pd.isna(row['canvas_course_id']):
+                return
+            allowThreadedReplies(localSetup, errorHandler, row, canvasCourseUnthreadedDiscussions)
 
-                ## If the row's canvas_course_id is empty skip it
-                if pd.isna(row['canvas_course_id']):
-                    continue
-
-                ## Submit the task to the thread pool
-                executor.submit(allowThreadedReplies, localSetup, errorHandler, row, canvasCourseUnthreadedDiscussions)
+        runThreadedRows(canvasCourses, _worker)
 
         ## Create a df from the canvasCourseUnthreadedDiscussions dict and save to CSV
         canvasCourseUnthreadedDiscussionsDF = pd.DataFrame(canvasCourseUnthreadedDiscussions)
