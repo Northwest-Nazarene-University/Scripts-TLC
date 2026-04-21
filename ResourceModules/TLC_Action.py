@@ -3,6 +3,7 @@
 
 ## Import Generic Modules
 import os, sys, re, time, math, pandas as pd, paramiko
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from dateutil import parser
 
@@ -1111,3 +1112,265 @@ def getUniqueOutcomesAndOutcomeCoursesDict (p1_localSetup, p1_errorHandler, p3_i
     except Exception as Error:
         p1_errorHandler.sendError (functionName, Error)
         return [], {}
+
+
+## ══════════════════════════════════════════════════════════════════════════════
+## Canvas Action Helpers
+## Shared primitives used by multiple ActionModule scripts so the
+## per-script duplicates can be removed.
+## ══════════════════════════════════════════════════════════════════════════════
+
+## Update a single field on a Canvas course via the Courses API
+def updateCourseField(
+    localSetup: LocalSetup,
+    errorHandler,
+    courseId: str,
+    fieldName: str,
+    fieldValue,
+) -> bool:
+    """
+    Set one field on a Canvas course with PUT /api/v1/courses/:id.
+
+    Args:
+        localSetup:   LocalSetup instance for logging and API auth.
+        errorHandler: errorEmail instance for error reporting.
+        courseId:     Canvas numeric course ID (string).
+        fieldName:    Course field key (e.g. "name", "account_id", "enrollment_term_id").
+        fieldValue:   Value to assign; caller is responsible for the correct Python type.
+
+    Returns:
+        True on HTTP 200, False otherwise.
+    """
+    functionName = "updateCourseField"
+    try:
+        updateUrl = f"{coreCanvasApiUrl}courses/{courseId}"
+        payload = {"course": {fieldName: fieldValue}}
+        response, _ = makeApiCall(
+            localSetup=localSetup,
+            p1_apiUrl=updateUrl,
+            p1_payload=payload,
+            p1_apiCallType="put",
+        )
+        statusCode = getattr(response, "status_code", None)
+        if statusCode == 200:
+            localSetup.logInfoThreadSafe(
+                f"Successfully set {fieldName}={fieldValue!r} for course {courseId}"
+            )
+            return True
+        localSetup.logWarningThreadSafe(
+            f"Failed to set {fieldName} for course {courseId}. Status code: {statusCode}"
+        )
+        return False
+    except Exception as Error:
+        errorHandler.sendError(functionName, Error)
+        return False
+
+
+## Delete a Canvas course via the Courses API
+def deleteCourse(
+    localSetup: LocalSetup,
+    errorHandler,
+    courseId: str,
+) -> bool:
+    """
+    Delete a Canvas course with DELETE /api/v1/courses/:id.
+
+    Args:
+        localSetup:   LocalSetup instance for logging and API auth.
+        errorHandler: errorEmail instance for error reporting.
+        courseId:     Canvas numeric course ID (string).
+
+    Returns:
+        True on HTTP 200, False otherwise.
+    """
+    functionName = "deleteCourse"
+    try:
+        deleteUrl = f"{coreCanvasApiUrl}courses/{courseId}"
+        payload = {"event": "delete"}
+        response, _ = makeApiCall(
+            localSetup=localSetup,
+            p1_apiUrl=deleteUrl,
+            p1_payload=payload,
+            p1_apiCallType="delete",
+        )
+        statusCode = getattr(response, "status_code", None)
+        if statusCode == 200:
+            localSetup.logInfoThreadSafe(f"Successfully deleted course {courseId}")
+            return True
+        localSetup.logWarningThreadSafe(
+            f"Failed to delete course {courseId}. Status code: {statusCode}"
+        )
+        return False
+    except Exception as Error:
+        errorHandler.sendError(functionName, Error)
+        return False
+
+
+## Delete a Canvas enrollment via the Enrollments API
+def deleteEnrollment(
+    localSetup: LocalSetup,
+    errorHandler,
+    courseId: str,
+    enrollmentId: str,
+) -> bool:
+    """
+    Delete a Canvas enrollment with DELETE /api/v1/courses/:course_id/enrollments/:id.
+
+    Args:
+        localSetup:    LocalSetup instance for logging and API auth.
+        errorHandler:  errorEmail instance for error reporting.
+        courseId:      Canvas numeric course ID (string).
+        enrollmentId:  Canvas numeric enrollment ID (string).
+
+    Returns:
+        True on HTTP 200, False otherwise.
+    """
+    functionName = "deleteEnrollment"
+    try:
+        deleteUrl = f"{coreCanvasApiUrl}courses/{courseId}/enrollments/{enrollmentId}"
+        response, _ = makeApiCall(
+            localSetup=localSetup,
+            p1_apiUrl=deleteUrl,
+            p1_apiCallType="delete",
+        )
+        statusCode = getattr(response, "status_code", None)
+        if statusCode == 200:
+            localSetup.logInfoThreadSafe(
+                f"Successfully deleted enrollment {enrollmentId} from course {courseId}"
+            )
+            return True
+        localSetup.logWarningThreadSafe(
+            f"Failed to delete enrollment {enrollmentId} from course {courseId}. "
+            f"Status code: {statusCode}"
+        )
+        return False
+    except Exception as Error:
+        errorHandler.sendError(functionName, Error)
+        return False
+
+
+## Enroll a user in a Canvas course via the Enrollments API
+def enrollUser(
+    localSetup: LocalSetup,
+    errorHandler,
+    courseId: str,
+    userId: str,
+    enrollmentType: str,
+    roleId: str = None,
+    enrollmentState: str = "active",
+) -> bool:
+    """
+    Enroll a user in a Canvas course with POST /api/v1/courses/:id/enrollments.
+
+    Args:
+        localSetup:      LocalSetup instance for logging and API auth.
+        errorHandler:    errorEmail instance for error reporting.
+        courseId:        Canvas numeric course ID (string).
+        userId:          Canvas numeric user ID (string).
+        enrollmentType:  Base role type (e.g. "StudentEnrollment", "TeacherEnrollment").
+        roleId:          Optional Canvas role ID for a custom role override.
+        enrollmentState: Enrollment state; defaults to "active".
+
+    Returns:
+        True on HTTP 200, False otherwise.
+    """
+    functionName = "enrollUser"
+    try:
+        enrollUrl = f"{coreCanvasApiUrl}courses/{courseId}/enrollments"
+        payload = {
+            "enrollment[user_id]": userId,
+            "enrollment[type]": enrollmentType,
+            "enrollment[enrollment_state]": enrollmentState,
+        }
+        if roleId:
+            payload["enrollment[role_id]"] = roleId
+        response, _ = makeApiCall(
+            localSetup=localSetup,
+            p1_apiUrl=enrollUrl,
+            p1_payload=payload,
+            p1_apiCallType="post",
+        )
+        statusCode = getattr(response, "status_code", None)
+        if statusCode == 200:
+            localSetup.logInfoThreadSafe(
+                f"Successfully enrolled user {userId} in course {courseId} as {enrollmentType}"
+            )
+            return True
+        localSetup.logWarningThreadSafe(
+            f"Failed to enroll user {userId} in course {courseId}. Status code: {statusCode}"
+        )
+        return False
+    except Exception as Error:
+        errorHandler.sendError(functionName, Error)
+        return False
+
+
+## Read a target CSV and validate that required columns are present
+def readTargetCsv(
+    localSetup: LocalSetup,
+    errorHandler,
+    csvPath: str,
+    requiredColumns: list = None,
+) -> pd.DataFrame:
+    """
+    Read a CSV file and return a filtered DataFrame.
+
+    Raises FileNotFoundError if the file does not exist and KeyError if a
+    required column is absent.  Returns a DataFrame filtered to rows where
+    the first required column is non-null, or the full DataFrame when no
+    required columns are specified.
+
+    Args:
+        localSetup:      LocalSetup instance for logging.
+        errorHandler:    errorEmail instance for error reporting.
+        csvPath:         Absolute path to the CSV file.
+        requiredColumns: List of column names that must be present.
+
+    Returns:
+        Filtered DataFrame, or an empty DataFrame on failure.
+    """
+    functionName = "readTargetCsv"
+    try:
+        if not os.path.exists(csvPath):
+            raise FileNotFoundError(f"Target CSV not found: {csvPath}")
+
+        df = pd.read_csv(csvPath)
+
+        if requiredColumns:
+            for col in requiredColumns:
+                if col not in df.columns:
+                    raise KeyError(f"Required column '{col}' not found in {csvPath}")
+            ## Filter out rows where the first required column is null
+            df = df[df[requiredColumns[0]].notna()].copy()
+
+        localSetup.logInfoThreadSafe(f"Loaded {len(df)} row(s) from {csvPath}")
+        return df
+
+    except Exception as Error:
+        errorHandler.sendError(functionName, Error)
+        return pd.DataFrame()
+
+
+## Run a worker function over each row of a DataFrame using a thread pool
+def runThreadedRows(
+    df: pd.DataFrame,
+    workerFn,
+    maxWorkers: int = 25,
+) -> None:
+    """
+    Submit workerFn(row) for every row in df via a ThreadPoolExecutor and wait
+    for all futures to complete.
+
+    Exceptions raised inside workerFn should be handled there (e.g. via
+    try/except + errorHandler.sendError) to avoid aborting the whole batch.
+
+    Args:
+        df:          DataFrame whose rows are processed.
+        workerFn:    Callable that accepts one argument: a pandas Series (one row).
+        maxWorkers:  Thread-pool size; defaults to 25.
+    """
+    with ThreadPoolExecutor(max_workers=maxWorkers) as executor:
+        futures = [executor.submit(workerFn, row) for _, row in df.iterrows()]
+        for future in as_completed(futures):
+            ## Re-raise unhandled exceptions so callers see failures
+            future.result()
