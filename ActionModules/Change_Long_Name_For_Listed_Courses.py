@@ -1,138 +1,72 @@
 ## Author: Bryce Miller - brycezmiller@nnu.edu
 ## Last Updated by: Bryce Miller
 
-import traceback, os, sys, logging, requests, threading, time, pandas as pd
+## Import Generic Modules
+import os, sys, pandas as pd
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
-## Define the script name, purpose, and external requirements for logging and error reporting purposes
-scriptName = "Change_Long_Name_For_Listed_Courses"
+## Add the resource modules path
+sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules"))
 
+## Try direct imports if run as main, else relative for package usage
+try:
+    from Local_Setup import LocalSetup
+    from TLC_Common import makeApiCall
+    from Error_Email import errorEmail
+    from Common_Configs import coreCanvasApiUrl, canvasAccessToken
+except ImportError:  ## When imported as a package/module
+    from .Local_Setup import LocalSetup
+    from .TLC_Common import makeApiCall
+    from .Error_Email import errorEmail
+    from .Common_Configs import coreCanvasApiUrl, canvasAccessToken
+
+## Define the script name, purpose, and external requirements for logging and error reporting purposes
+scriptName = os.path.basename(__file__).replace(".py", "")
 scriptPurpose = r"""
 This script reads a CSV file containing Canvas course IDs and changes the long name for each course using the Canvas API.
 """
 externalRequirements = r"""
-To function properly, this script requires a valid access header and URL, and a CSV file named "Target_Canvas_Course_Ids.csv" located in the Canvas Resources directory.
+To function properly, this script requires:
+- Valid Canvas API configuration in Common_Configs (coreCanvasApiUrl, canvasAccessToken).
+- A CSV file named "Target_Canvas_Course_Ids.csv" located in the Canvas internal
+  resources directory (LocalSetup.getInternalResourcePaths("Canvas")) with columns:
+    - canvas_course_id
+    - long_name
 """
 
-## Date Variables
-currentDateTime = datetime.now()
-currentMonth = currentDateTime.month
-currentYear = currentDateTime.year
-
-## Set working directory
-os.chdir(os.path.dirname(__file__))
-
-## Relative Path (this changes depending on the working directory of the main script)
-PFRelativePath = r".\\"
-
-## If the Canvas directory is not in the folder the relative path points to
-## find the Canvas directory and set the relative path to its parent folder
-while "Scripts TLC" not in os.listdir(PFRelativePath):
-    PFRelativePath = f"..\\{PFRelativePath}"
-
-## Change the relative path to an absolute path
-absolutePath = f"{os.path.abspath(PFRelativePath)}\\"
-
-## Local Path Variables
-baseLogPath = f"{absolutePath}Logs\\{scriptName}\\"
-baseLocalInputPath = f"{absolutePath}Canvas Resources\\"
-configPath = f"{absolutePath}Configs TLC\\"
-
-## If the base log path doesn't already exist, create it
-if not os.path.exists(baseLogPath):
-    os.makedirs(baseLogPath, mode=0o777, exist_ok=False)
-
-## Add Input Modules to the sys path
-sys.path.append(f"{absolutePath}Scripts TLC\\ResourceModules")
-sys.path.append(f"{absolutePath}Scripts TLC\\ActionModules")
-
-## Import local modules
-from TLC_Common import makeApiCall  ## Import makeApiCall
-
-## Canvas Instance Url
-coreCanvasApiUrl = None
-## Open the Core_Canvas_Url.txt from the config path
-with open(f"{configPath}Core_Canvas_Url.txt", "r") as file:
-    coreCanvasApiUrl = file.readlines()[0]
-
-## If the script is run as main the folder with the access token is in the parent directory
-canvasAccessToken = ""
-
-## Open and retrieve the Canvas Access Token
-with open(f"{configPath}Canvas_Access_Token.txt", "r") as file:
-    canvasAccessToken = file.readlines()[0]
-
-## Log configurations
-logger = logging.getLogger(__name__)
-rootFormat = ("%(asctime)s %(levelname)s %(message)s")
-FORMAT = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-logging.basicConfig(format=rootFormat, filemode="a", level=logging.INFO)
-
-## Local setup shim for compatibility with shared modules
-class _LoggerShim:
-    def __init__(self, p_logger):
-        self.logger = p_logger
-localSetup = _LoggerShim(logger)
-setOfFunctionsWithErrors = set()
-
-## Info Log Handler
-infoLogFile = f"{baseLogPath}\\Info Log.txt"
-logInfo = logging.FileHandler(infoLogFile, mode='a')
-logInfo.setLevel(logging.INFO)
-logInfo.setFormatter(FORMAT)
-localSetup.logger.addHandler(logInfo)
-
-## Warning Log handler
-warningLogFile = f"{baseLogPath}\\Warning Log.txt"
-logWarning = logging.FileHandler(warningLogFile, mode='a')
-logWarning.setLevel(logging.WARNING)
-logWarning.setFormatter(FORMAT)
-localSetup.logger.addHandler(logWarning)
-
-## Error Log handler
-errorLogFile = f"{baseLogPath}\\Error Log.txt"
-logError = logging.FileHandler(errorLogFile, mode='a')
-logError.setLevel(logging.ERROR)
-logError.setFormatter(FORMAT)
-localSetup.logger.addHandler(logError)
-
-## This function handles function errors
-def errorHandler(p1_ErrorLocation, p1_errorInfo, sendOnce=True):
-    functionName = "errorHandler"
-    localSetup.logger.error(f"\nA script error occurred while running {p1_ErrorLocation}. Error: {str(p1_errorInfo)}")
-
-    ## Only log once per function
-    if p1_ErrorLocation not in setOfFunctionsWithErrors:
-        setOfFunctionsWithErrors.add(p1_ErrorLocation)
-        localSetup.logger.error(f"\nError logged for {p1_ErrorLocation}")
-    else:
-        localSetup.logger.error(f"\nError already logged for {p1_ErrorLocation}")
-
 ## This function sets the long name for a course given its Canvas course ID and long name
-def setCourseLongName(p1_header, p1_courseId, p1_longName):
+def setCourseLongName(
+    localSetup: LocalSetup,
+    errorHandler: errorEmail,
+    courseId: str,
+    longName: str,
+) -> None:
     functionName = "setCourseLongName"
     try:
-        setLongNameApiUrl = f"{coreCanvasApiUrl}courses/{p1_courseId}"
-        payload = {"course": {"name": p1_longName}}
-        response, _ = makeApiCall(localSetup, p1_header=p1_header, p1_apiUrl=setLongNameApiUrl, p1_payload=payload, p1_apiCallType="put")
+        setLongNameApiUrl = f"{coreCanvasApiUrl}courses/{courseId}"
+        payload = {"course": {"name": longName}}
+        response, _ = makeApiCall(
+            localSetup=localSetup,
+            p1_apiUrl=setLongNameApiUrl,
+            p1_payload=payload,
+            p1_apiCallType="put",
+        )
 
         if response.status_code == 200:
-            localSetup.logger.info(f"Successfully set long name for course with ID: {p1_courseId}")
+            localSetup.logInfoThreadSafe(f"Successfully set long name for course with ID: {courseId}")
         else:
-            localSetup.logger.warning(f"Failed to set long name for course with ID: {p1_courseId}. Status code: {response.status_code}")
+            localSetup.logWarningThreadSafe(f"Failed to set long name for course with ID: {courseId}. Status code: {response.status_code}")
 
     except Exception as Error:
-        errorHandler(functionName, Error)
+        errorHandler.sendError(functionName, Error)
 
 ## This function reads the CSV file and sets the long name for the listed courses
-def setListedCoursesLongName():
+def setListedCoursesLongName(localSetup: LocalSetup, errorHandler: errorEmail) -> None:
     functionName = "setListedCoursesLongName"
     try:
-        targetCoursesCsvFilePath = f"{baseLocalInputPath}Target_Canvas_Course_Ids.csv"
-        header = {'Authorization': f"Bearer {canvasAccessToken}"}
-        
-        ## Define the necessary thread list
-        ongoingSetLongNameThreads = []
+        canvasResourcePath = localSetup.getInternalResourcePaths("Canvas")
+        targetCoursesCsvFilePath = os.path.join(canvasResourcePath, "Target_Canvas_Course_Ids.csv")
 
         ## Read the CSV file using pandas
         rawTargetCoursesDf = pd.read_csv(targetCoursesCsvFilePath)
@@ -140,39 +74,32 @@ def setListedCoursesLongName():
         ## Retain only rows that have a value in canvas_course_id
         targetCoursesDf = rawTargetCoursesDf[rawTargetCoursesDf["canvas_course_id"].notna()]
 
-        ## Iterate over each row in the DataFrame
-        for index, row in targetCoursesDf.iterrows():
+        ## Process each course in a thread pool
+        MAX_WORKERS = 25
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            for index, row in targetCoursesDf.iterrows():
 
-            ## Get the course id from the row
-            courseId = str(row["canvas_course_id"]).replace('.0', '')
+                ## Get the course id from the row
+                courseId = str(row["canvas_course_id"]).replace('.0', '')
 
-            ## Get the long name from the row
-            longName = str(row["long_name"])
+                ## Get the long name from the row
+                longName = str(row["long_name"])
 
-            ## Create a thread to set the long name for the course
-            setLongNameThread = threading.Thread(target=setCourseLongName, args=(header, courseId, longName))
+                ## Submit the task to the thread pool
+                executor.submit(setCourseLongName, localSetup, errorHandler, courseId, longName)
 
-            ## Start the thread
-            setLongNameThread.start()
-
-            ## Add the thread to the ongoing set long name threads list
-            ongoingSetLongNameThreads.append(setLongNameThread)
-
-            ## Sleep for a short time to avoid overloading the server
-            time.sleep(0.1)
-
-        ## Check if all ongoing set long name threads have completed
-        for thread in ongoingSetLongNameThreads:
-            thread.join()
+        localSetup.logInfoThreadSafe(f"{functionName} completed. Processed {len(targetCoursesDf)} courses.")
 
     except Exception as Error:
-        errorHandler(functionName, Error)
+        errorHandler.sendError(functionName, Error)
 
 if __name__ == "__main__":
-    ## Set working directory
-    os.chdir(os.path.dirname(__file__))
+    ## Initialize shared LocalSetup (paths, logging)
+    localSetup = LocalSetup(datetime.now(), __file__)
 
-    ## Set the long name for the listed courses
-    setListedCoursesLongName()
+    ## Setup the error handler (sends one email per function error)
+    errorHandler = errorEmail(scriptName, scriptPurpose, externalRequirements, localSetup)
+
+    setListedCoursesLongName(localSetup, errorHandler)
 
     input("Press enter to exit")

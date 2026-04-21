@@ -1,181 +1,119 @@
 ## Author: Bryce Miller - brycezmiller@nnu.edu
 ## Last Updated by: Bryce Miller
 
-## Import necessary modules
-import traceback, os, sys, logging, requests, csv, threading, time, pandas as pd
+## Import Generic Modules
+import os, sys, pandas as pd
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
-## Define the script name, purpose, and external requirements for logging and error reporting purposes
-scriptName = "Change_Role_For_Listed_Enrollments"
+## Add the resource modules path
+sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules"))
 
+## Try direct imports if run as main, else relative for package usage
+try:
+    from Local_Setup import LocalSetup
+    from TLC_Common import makeApiCall
+    from Error_Email import errorEmail
+    from Common_Configs import coreCanvasApiUrl, canvasAccessToken
+except ImportError:  ## When imported as a package/module
+    from .Local_Setup import LocalSetup
+    from .TLC_Common import makeApiCall
+    from .Error_Email import errorEmail
+    from .Common_Configs import coreCanvasApiUrl, canvasAccessToken
+
+## Define the script name, purpose, and external requirements for logging and error reporting purposes
+scriptName = os.path.basename(__file__).replace(".py", "")
 scriptPurpose = r"""
 This script reads a CSV file containing Canvas enrollment IDs and changes the role for each enrollment using the Canvas API.
 """
 externalRequirements = r"""
-To function properly, this script requires a valid access header and URL, and a CSV file named "Target_Canvas_Enrollment_Ids.csv" located in the Canvas Resources directory.
+To function properly, this script requires:
+- Valid Canvas API configuration in Common_Configs (coreCanvasApiUrl, canvasAccessToken).
+- A CSV file named "Target_Canvas_Enrollment_Ids.csv" located in the Canvas internal
+  resources directory (LocalSetup.getInternalResourcePaths("Canvas")) with columns:
+    - canvas_enrollment_id
+    - canvas_user_id
+    - canvas_course_id
+    - role_id
+    - base_role_type
 """
 
-## Date Variables
-currentDateTime = datetime.now()
-## Get the current date and time
-currentMonth = currentDateTime.month
-## Get the current month
-currentYear = currentDateTime.year
-## Get the current year
-
-## Set working directory
-os.chdir(os.path.dirname(__file__))
-## Change the working directory to the script's directory
-
-## Relative Path (this changes depending on the working directory of the main script)
-pfRelativePath = r".\\"
-
-## If the Canvas directory is not in the folder the relative path points to
-## find the Canvas directory and set the relative path to its parent folder
-while "Scripts TLC" not in os.listdir(pfRelativePath):
-    pfRelativePath = f"..\\{pfRelativePath}"
-
-## Change the relative path to an absolute path
-absolutePath = f"{os.path.abspath(pfRelativePath)}\\"
-
-## Local Path Variables
-baseLogPath = f"{absolutePath}Logs\\{scriptName}\\"
-## Define the base log path
-baseLocalInputPath = f"{absolutePath}Canvas Resources\\"
-## Define the base input path
-configPath = f"{absolutePath}Configs TLC\\"
-## Define the config path
-
-## If the base log path doesn't already exist, create it
-if not os.path.exists(baseLogPath):
-    os.makedirs(baseLogPath, mode=0o777, exist_ok=False)
-    ## Create the base log path
-
-## Add Input Modules to the sys path
-sys.path.append(f"{absolutePath}Scripts TLC\\ResourceModules")
-## Add ResourceModules to sys path
-sys.path.append(f"{absolutePath}Scripts TLC\\ActionModules")
-## Add ActionModules to sys path
-
-## Import local modules
-from Error_Email import errorEmail
-## Import errorEmail
-from TLC_Common import makeApiCall
-## Import makeApiCall
-
-## Canvas Instance Url
-coreCanvasApiUrl = None
-## Open the Core_Canvas_Url.txt from the config path
-with open(f"{configPath}Core_Canvas_Url.txt", "r") as file:
-    coreCanvasApiUrl = file.readlines()[0]
-    ## Read the Canvas URL
-
-## If the script is run as main the folder with the access token is in the parent directory
-canvasAccessToken = ""
-## Open and retrieve the Canvas Access Token
-with open(f"{configPath}Canvas_Access_Token.txt", "r") as file:
-    canvasAccessToken = file.readlines()[0]
-    ## Read the Canvas Access Token
-
-## Log configurations
-logger = logging.getLogger(__name__)
-rootFormat = ("%(asctime)s %(levelname)s %(message)s")
-FORMAT = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-logging.basicConfig(format=rootFormat, filemode="a", level=logging.INFO)
-
-## Local setup shim for compatibility with shared modules
-class _LoggerShim:
-    def __init__(self, p_logger):
-        self.logger = p_logger
-localSetup = _LoggerShim(logger)
-
-## Info Log Handler
-infoLogFile = f"{baseLogPath}\\Info Log.txt"
-logInfo = logging.FileHandler(infoLogFile, mode='a')
-logInfo.setLevel(logging.INFO)
-logInfo.setFormatter(FORMAT)
-localSetup.logger.addHandler(logInfo)
-
-## Warning Log handler
-warningLogFile = f"{baseLogPath}\\Warning Log.txt"
-logWarning = logging.FileHandler(warningLogFile, mode='a')
-logWarning.setLevel(logging.WARNING)
-logWarning.setFormatter(FORMAT)
-localSetup.logger.addHandler(logWarning)
-
-## Error Log handler
-errorLogFile = f"{baseLogPath}\\Error Log.txt"
-logError = logging.FileHandler(errorLogFile, mode='a')
-logError.setLevel(logging.ERROR)
-logError.setFormatter(FORMAT)
-localSetup.logger.addHandler(logError)
-
-## Setup the error handler
-errorHandler = errorEmail(scriptName, scriptPurpose, externalRequirements, localSetup)
-
 ## This function deletes an enrollment given its Canvas enrollment ID
-def deleteEnrollment(p1_header, p3_courseId, p1_enrollmentId):
+def deleteEnrollment(
+    localSetup: LocalSetup,
+    errorHandler: errorEmail,
+    courseId: str,
+    enrollmentId: str,
+) -> None:
     functionName = "deleteEnrollment"
     try:
+        deleteEnrollmentUrl = f"{coreCanvasApiUrl}courses/{courseId}/enrollments/{enrollmentId}"
+        response, _ = makeApiCall(
+            localSetup=localSetup,
+            p1_apiUrl=deleteEnrollmentUrl,
+            p1_apiCallType="delete",
+        )
 
-        ## Define the API URL for deleting the enrollment
-        deleteEnrollmentUrl = f"{coreCanvasApiUrl}courses/{p3_courseId}/enrollments/{p1_enrollmentId}"
-
-        ## Define the API URL for deleting the enrollment
-        response, _ = makeApiCall(localSetup, p1_header=p1_header, p1_apiUrl=deleteEnrollmentUrl, p1_apiCallType="delete")
-
-        ## Make the API call to delete the enrollment
         if response.status_code == 200:
-            localSetup.logger.info(f"Successfully deleted enrollment with ID: {p1_enrollmentId}")
+            localSetup.logInfoThreadSafe(f"Successfully deleted enrollment with ID: {enrollmentId}")
         else:
-            localSetup.logger.warning(f"Failed to delete enrollment with ID: {p1_enrollmentId}. Status code: {response.status_code}")
+            localSetup.logWarningThreadSafe(f"Failed to delete enrollment with ID: {enrollmentId}. Status code: {response.status_code}")
 
     except Exception as Error:
         errorHandler.sendError(functionName, Error)
 
 ## This function re-enrolls a user with a new role given the Canvas user ID, course ID, role ID, and base role type
-def reEnrollUser(p1_header, p1_userId, p2_courseId, p3_roleId, p4_baseRoleType):
+def reEnrollUser(
+    localSetup: LocalSetup,
+    errorHandler: errorEmail,
+    userId: str,
+    courseId: str,
+    roleId: str,
+    baseRoleType: str,
+) -> None:
     functionName = "reEnrollUser"
     try:
+        reEnrollUrl = f"{coreCanvasApiUrl}courses/{courseId}/enrollments"
+        payload = {
+            "enrollment[user_id]": userId,
+            "enrollment[type]": baseRoleType,
+            "enrollment[role_id]": roleId,
+            "enrollment[enrollment_state]": "active",
+        }
+        response, _ = makeApiCall(
+            localSetup=localSetup,
+            p1_apiUrl=reEnrollUrl,
+            p1_payload=payload,
+            p1_apiCallType="post",
+        )
 
-        ## Define the API URL for re-enrolling the user
-        reEnrollUrl = f"{coreCanvasApiUrl}courses/{p2_courseId}/enrollments"
-
-        ## Define the API URL for re-enrolling the user
-        payload = {"enrollment[user_id]": p1_userId
-                   , "enrollment[type]": p4_baseRoleType
-                   , "enrollment[role_id]": p3_roleId
-                   , "enrollment[enrollment_state]": "active"
-                   }
-
-        ## Define the payload
-        response, _ = makeApiCall(localSetup, p1_header=p1_header, p1_apiUrl=reEnrollUrl, p1_payload=payload, p1_apiCallType="post")
-
-        ## Make the API call to re-enroll the user
         if response.status_code == 200:
-            localSetup.logger.info(f"Successfully re-enrolled user with ID: {p1_userId} in course with ID: {p2_courseId} with role ID: {p3_roleId}")
+            localSetup.logInfoThreadSafe(f"Successfully re-enrolled user {userId} in course {courseId} with role {roleId}")
         else:
-            localSetup.logger.warning(f"Failed to re-enroll user with ID: {p1_userId} in course with ID: {p2_courseId}. Status code: {response.status_code}")
+            localSetup.logWarningThreadSafe(f"Failed to re-enroll user {userId} in course {courseId}. Status code: {response.status_code}")
 
     except Exception as Error:
         errorHandler.sendError(functionName, Error)
 
-## This function deletes the enrollment and re-enrolls the user with the new role
-def deleteAndReenroll(p1_header, p1_enrollmentId, p1_userId, p2_courseId, p3_roleId, p4_baseRoleType):
-    reEnrollUser(p1_header, p1_userId, p2_courseId, p3_roleId, p4_baseRoleType)
-    deleteEnrollment(p1_header, p2_courseId, p1_enrollmentId)
+## This function re-enrolls the user with the new role then deletes the old enrollment
+def deleteAndReenroll(
+    localSetup: LocalSetup,
+    errorHandler: errorEmail,
+    enrollmentId: str,
+    userId: str,
+    courseId: str,
+    roleId: str,
+    baseRoleType: str,
+) -> None:
+    reEnrollUser(localSetup, errorHandler, userId, courseId, roleId, baseRoleType)
+    deleteEnrollment(localSetup, errorHandler, courseId, enrollmentId)
 
 ## This function reads the CSV file, deletes the enrollment, and re-enrolls the user with the new role
-def changeListedEnrollmentsRole():
+def changeListedEnrollmentsRole(localSetup: LocalSetup, errorHandler: errorEmail) -> None:
     functionName = "changeListedEnrollmentsRole"
     try:
-        targetEnrollmentsCsvFilePath = f"{baseLocalInputPath}Target_Canvas_Enrollment_Ids.csv"
-        ## Define the CSV file path
-        header = {'Authorization': f"Bearer {canvasAccessToken}"}
-        ## Define the header
-
-        ## Define the necessary thread list
-        ongoingChangeRoleThreads = []
+        canvasResourcePath = localSetup.getInternalResourcePaths("Canvas")
+        targetEnrollmentsCsvFilePath = os.path.join(canvasResourcePath, "Target_Canvas_Enrollment_Ids.csv")
 
         ## Read the CSV file using pandas
         rawTargetEnrollmentsDf = pd.read_csv(targetEnrollmentsCsvFilePath)
@@ -183,49 +121,41 @@ def changeListedEnrollmentsRole():
         ## Retain only rows that have a value in canvas_enrollment_id
         targetEnrollmentsDf = rawTargetEnrollmentsDf[rawTargetEnrollmentsDf["canvas_enrollment_id"].notna()]
 
-                ## Iterate over each row in the DataFrame
-        for index, row in targetEnrollmentsDf.iterrows():
+        ## Process each enrollment in a thread pool
+        MAX_WORKERS = 25
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            for index, row in targetEnrollmentsDf.iterrows():
 
-            ## Get the enrollment id from the row
-            enrollmentId = str(row["canvas_enrollment_id"]).replace('.0', '')
+                ## Get the enrollment id from the row
+                enrollmentId = str(row["canvas_enrollment_id"]).replace('.0', '')
 
-            ## Get the user id from the row
-            userId = str(row["canvas_user_id"]).replace('.0', '')
-            
-            ## Get the course id from the row
-            courseId = str(row["canvas_course_id"]).replace('.0', '')
+                ## Get the user id from the row
+                userId = str(row["canvas_user_id"]).replace('.0', '')
 
-            ## Get the role id from the row
-            roleId = str(row["role_id"]).replace('.0', '')
+                ## Get the course id from the row
+                courseId = str(row["canvas_course_id"]).replace('.0', '')
 
-            ## Get the base role type from the row
-            baseRoleType = str(row["base_role_type"])
+                ## Get the role id from the row
+                roleId = str(row["role_id"]).replace('.0', '')
 
-            ## Create a thread to delete the enrollment and re-enroll the user
-            changeRoleThread = threading.Thread(target=deleteAndReenroll, args=(header, enrollmentId, userId, courseId, roleId, baseRoleType))
+                ## Get the base role type from the row
+                baseRoleType = str(row["base_role_type"])
 
-            ## Start the thread
-            changeRoleThread.start()
+                ## Submit the task to the thread pool
+                executor.submit(deleteAndReenroll, localSetup, errorHandler, enrollmentId, userId, courseId, roleId, baseRoleType)
 
-            ## Add the thread to the ongoing change role threads list
-            ongoingChangeRoleThreads.append(changeRoleThread)
-
-            ## Sleep for a short time to avoid overloading the server
-            time.sleep(0.2)
-
-        ## Check if all ongoing change role threads have completed
-        for thread in ongoingChangeRoleThreads:
-            thread.join()
+        localSetup.logInfoThreadSafe(f"{functionName} completed. Processed {len(targetEnrollmentsDf)} enrollments.")
 
     except Exception as Error:
         errorHandler.sendError(functionName, Error)
 
 if __name__ == "__main__":
-    ## Set working directory
-    os.chdir(os.path.dirname(__file__))
-    
-    ## Change the role for the listed enrollments
-    changeListedEnrollmentsRole()
+    ## Initialize shared LocalSetup (paths, logging)
+    localSetup = LocalSetup(datetime.now(), __file__)
 
-    ## Wait for user input to exit
+    ## Setup the error handler (sends one email per function error)
+    errorHandler = errorEmail(scriptName, scriptPurpose, externalRequirements, localSetup)
+
+    changeListedEnrollmentsRole(localSetup, errorHandler)
+
     input("Press enter to exit")
