@@ -6,9 +6,9 @@ from datetime import datetime
 from typing import Callable, Tuple, Type, Optional, Dict, Any, List
 
 try: ## If the module is run directly
-    from Local_Setup import LocalSetup
+    from Local_Setup import LocalSetup, logInfo as _logInfo, logWarning as _logWarning, logError as _logError
 except ImportError: ## Otherwise as a relative import if the module is imported
-    from .Local_Setup import LocalSetup
+    from .Local_Setup import LocalSetup, logInfo as _logInfo, logWarning as _logWarning, logError as _logError
 
 ## Define the script name, purpose, and external requirements for logging and error reporting purposes
 __scriptName = os.path.basename(__file__).replace(".py", "")
@@ -89,28 +89,6 @@ _canvasApiGate.set()  ## Start open
 
 _gateLock = threading.Lock()
 _gateReopenTime: float = 0.0  ## time.monotonic() when the gate should reopen
-_fallbackLogLock = threading.RLock()
-
-def _logInfo(localSetup, message):
-    if hasattr(localSetup, "logInfoThreadSafe"):
-        localSetup.logInfoThreadSafe(message)
-    elif getattr(localSetup, "logger", None):
-        with _fallbackLogLock:
-            localSetup.logger.info(message)
-
-def _logWarning(localSetup, message):
-    if hasattr(localSetup, "logWarningThreadSafe"):
-        localSetup.logWarningThreadSafe(message)
-    elif getattr(localSetup, "logger", None):
-        with _fallbackLogLock:
-            localSetup.logger.warning(message)
-
-def _logError(localSetup, message):
-    if hasattr(localSetup, "logErrorThreadSafe"):
-        localSetup.logErrorThreadSafe(message)
-    elif getattr(localSetup, "logger", None):
-        with _fallbackLogLock:
-            localSetup.logger.error(message)
 
 
 ## -------------------------

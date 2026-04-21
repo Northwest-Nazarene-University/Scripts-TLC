@@ -559,3 +559,39 @@ class LocalSetup:
             startMonth = termMonthRanges[term][0]
             termCodes.update(self.getTermCodes(startMonth, decadeForTerm))
         return termCodes
+
+
+## ─────────────────────────────────────────────────────────────────────────────
+## Module-level thread-safe logging helpers
+##
+## These are the single canonical implementations.  Both TLC_Common and
+## Api_Caller import them from here instead of defining their own copies.
+##
+## Priority:  LocalSetup wrapper methods  >  direct logger call (with lock)
+## ─────────────────────────────────────────────────────────────────────────────
+
+_fallbackLogLock = threading.RLock()
+
+def logInfo(localSetup, message):
+    """Thread-safe info log.  Prefers localSetup.logInfoThreadSafe; falls back with lock."""
+    if hasattr(localSetup, "logInfoThreadSafe"):
+        localSetup.logInfoThreadSafe(message)
+    elif getattr(localSetup, "logger", None):
+        with _fallbackLogLock:
+            localSetup.logger.info(message)
+
+def logWarning(localSetup, message):
+    """Thread-safe warning log.  Prefers localSetup.logWarningThreadSafe; falls back with lock."""
+    if hasattr(localSetup, "logWarningThreadSafe"):
+        localSetup.logWarningThreadSafe(message)
+    elif getattr(localSetup, "logger", None):
+        with _fallbackLogLock:
+            localSetup.logger.warning(message)
+
+def logError(localSetup, message):
+    """Thread-safe error log.  Prefers localSetup.logErrorThreadSafe; falls back with lock."""
+    if hasattr(localSetup, "logErrorThreadSafe"):
+        localSetup.logErrorThreadSafe(message)
+    elif getattr(localSetup, "logger", None):
+        with _fallbackLogLock:
+            localSetup.logger.error(message)

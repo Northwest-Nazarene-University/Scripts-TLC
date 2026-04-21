@@ -2,15 +2,14 @@
 ## Last Updated by: Bryce Miller
 
 import os, sys, zipfile, requests, pandas as pd
-import threading
 from datetime import datetime
 from dotenv import load_dotenv
 
 try: ## If the module is run directly
-    from Local_Setup import LocalSetup
+    from Local_Setup import LocalSetup, logInfo as _logInfo, logWarning as _logWarning, logError as _logError
     from Api_Caller import retry, RateLimitExceeded, makeApiCall
 except ImportError: ## Otherwise as a relative import if the module is imported
-    from .Local_Setup import LocalSetup
+    from .Local_Setup import LocalSetup, logInfo as _logInfo, logWarning as _logWarning, logError as _logError
     from .Api_Caller import retry, RateLimitExceeded, makeApiCall
 
 ## Define the script name, purpose, and external requirements for logging and error reporting purposes
@@ -30,29 +29,6 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "..", "Configs"))
 
 
 ## Return Encryption Key Function
-_fallbackLogLock = threading.RLock()
-
-def _logInfo(localSetup, message):
-    if hasattr(localSetup, "logInfoThreadSafe"):
-        localSetup.logInfoThreadSafe(message)
-    elif getattr(localSetup, "logger", None):
-        with _fallbackLogLock:
-            localSetup.logger.info(message)
-
-def _logWarning(localSetup, message):
-    if hasattr(localSetup, "logWarningThreadSafe"):
-        localSetup.logWarningThreadSafe(message)
-    elif getattr(localSetup, "logger", None):
-        with _fallbackLogLock:
-            localSetup.logger.warning(message)
-
-def _logError(localSetup, message):
-    if hasattr(localSetup, "logErrorThreadSafe"):
-        localSetup.logErrorThreadSafe(message)
-    elif getattr(localSetup, "logger", None):
-        with _fallbackLogLock:
-            localSetup.logger.error(message)
-
 def getEncryptionKey(localSetup: LocalSetup):
     ## Load .env from configPath
     envPath = os.path.join(localSetup.configPath, ".env")
