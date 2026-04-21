@@ -65,7 +65,7 @@ def termOutcomeExporter(p1_inputTerm, p1_targetDesignator):
         if isMissing(completeActiveCanvasCoursesDF):
 
             ## Log the fact that there are no active courses
-            localSetup.logger.info(f"\nNo {p1_targetDesignator} active courses within {p1_inputTerm}")
+            localSetup.logInfoThreadSafe(f"\nNo {p1_targetDesignator} active courses within {p1_inputTerm}")
 
             ## Return
             return

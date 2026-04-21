@@ -2,7 +2,7 @@
 ## Last Updated by: Bryce Miller
 
 ## External libraries
-import os, sys, csv, json, os.path, shutil
+import os, sys, csv, json, os.path, shutil, threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 import pandas as pd
@@ -34,6 +34,7 @@ To function properly, this script requires that the static Syllabus Addendum lin
 
 ## Setup the error handler
 errorHandler = errorEmail(scriptName, scriptPurpose, externalRequirements, localSetup)
+_sharedDataLock = threading.Lock()
 
 
 """ 
@@ -360,11 +361,12 @@ def outcomeAttachmentReport(row, p1_rawOutcomesDF, p1_outcomeCoursesMissingAttac
             instructorEmailsString = ", ".join(instructorEmails)
             
             ## Add the course's information to the dictionary of courses missing outcomes
-            p1_outcomeCoursesMissingAttachmentsDataDict["Course_name"].append(courseName)
-            p1_outcomeCoursesMissingAttachmentsDataDict["Required Outcome"].append(missingOutcomesString)
-            p1_outcomeCoursesMissingAttachmentsDataDict["Issue"].append("The Associated Outcome/s is/are not attached to a published assignment")
-            p1_outcomeCoursesMissingAttachmentsDataDict["Instructor Name"].append(instructorNamesString)
-            p1_outcomeCoursesMissingAttachmentsDataDict["Instructor Email"].append(instructorEmailsString)
+            with _sharedDataLock:
+                p1_outcomeCoursesMissingAttachmentsDataDict["Course_name"].append(courseName)
+                p1_outcomeCoursesMissingAttachmentsDataDict["Required Outcome"].append(missingOutcomesString)
+                p1_outcomeCoursesMissingAttachmentsDataDict["Issue"].append("The Associated Outcome/s is/are not attached to a published assignment")
+                p1_outcomeCoursesMissingAttachmentsDataDict["Instructor Name"].append(instructorNamesString)
+                p1_outcomeCoursesMissingAttachmentsDataDict["Instructor Email"].append(instructorEmailsString)
 
     except Exception as Error:
         errorHandler.sendError (functionName, Error)

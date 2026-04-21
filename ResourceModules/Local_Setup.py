@@ -2,7 +2,7 @@
 ## Last Updated by: Bryce Miller
 
 ## Import Generic Modules
-import os, json, sys, logging, calendar, re, requests
+import os, json, sys, logging, calendar, re, requests, threading
 from datetime import datetime
 from requests.adapters import HTTPAdapter
 ## Add the config path
@@ -66,6 +66,7 @@ class LocalSetup:
         ## Setup paths and logging
         self.absolutePath, self.baseLogPath, self.configPath = self._setupCommonPaths()
         self.logger = self._setupLogger()
+        self._threadSafeLogLock = threading.RLock()
         ## Path Storage
         self.internalResourcePathDict = {}
         self.externalResourcePaths = externalResourcePathsDict
@@ -118,45 +119,41 @@ class LocalSetup:
         FORMAT = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
         logging.basicConfig(format="%(asctime)s %(levelname)s %(message)s", encoding='utf-8', filemode="a", level=logging.INFO)
 
-        ## Lazy file handler: defers file creation until the first record is emitted,
-        ## preventing empty log files from being created on every script run.
-        class _LazyFileHandler(logging.FileHandler):
-            def __init__(self, filename, level, formatter):
-                ## Store params without opening the file yet
-                self._filename = filename
-                self._level = level
-                self._formatter = formatter
-                self._opened = False
-                logging.Handler.__init__(self)
-                self.setLevel(level)
-                self.setFormatter(formatter)
-            def _open_if_needed(self):
-                if not self._opened:
-                    super().__init__(self._filename, mode='a')
-                    self._opened = True
-            def emit(self, record):
-                self._open_if_needed()
-                super().emit(record)
-            def close(self):
-                if self._opened:
-                    super().close()
-
         ## Info Log
         infoLogFile = os.path.join(self.baseLogPath, "Info Log.txt")
-        logInfo = _LazyFileHandler(infoLogFile, logging.INFO, FORMAT)
+        logInfo = logging.FileHandler(infoLogFile, mode='a', delay=True)
+        logInfo.setLevel(logging.INFO)
+        logInfo.setFormatter(FORMAT)
         logger.addHandler(logInfo)
 
         ## Warning Log
         warningLogFile = os.path.join(self.baseLogPath, "Warning Log.txt")
-        logWarning = _LazyFileHandler(warningLogFile, logging.WARNING, FORMAT)
+        logWarning = logging.FileHandler(warningLogFile, mode='a', delay=True)
+        logWarning.setLevel(logging.WARNING)
+        logWarning.setFormatter(FORMAT)
         logger.addHandler(logWarning)
 
         ## Error Log
         errorLogFile = os.path.join(self.baseLogPath, "Error Log.txt")
-        logError = _LazyFileHandler(errorLogFile, logging.ERROR, FORMAT)
+        logError = logging.FileHandler(errorLogFile, mode='a', delay=True)
+        logError.setLevel(logging.ERROR)
+        logError.setFormatter(FORMAT)
         logger.addHandler(logError)
 
         return logger
+
+    def logThreadSafe(self, level, msg):
+        with self._threadSafeLogLock:
+            self.logger.log(level, msg)
+
+    def logInfoThreadSafe(self, msg):
+        self.logThreadSafe(logging.INFO, msg)
+
+    def logWarningThreadSafe(self, msg):
+        self.logThreadSafe(logging.WARNING, msg)
+
+    def logErrorThreadSafe(self, msg):
+        self.logThreadSafe(logging.ERROR, msg)
     
     ## Validate term input
     def _validateTerm(self, term: str):
@@ -562,3 +559,39 @@ class LocalSetup:
             startMonth = termMonthRanges[term][0]
             termCodes.update(self.getTermCodes(startMonth, decadeForTerm))
         return termCodes
+
+
+## ─────────────────────────────────────────────────────────────────────────────
+## Module-level thread-safe logging helpers
+##
+## These are the single canonical implementations.  Both TLC_Common and
+## Api_Caller import them from here instead of defining their own copies.
+##
+## Priority:  LocalSetup wrapper methods  >  direct logger call (with lock)
+## ─────────────────────────────────────────────────────────────────────────────
+
+_fallbackLogLock = threading.RLock()
+
+def logInfo(localSetup, message):
+    """Thread-safe info log.  Prefers localSetup.logInfoThreadSafe; falls back with lock."""
+    if hasattr(localSetup, "logInfoThreadSafe"):
+        localSetup.logInfoThreadSafe(message)
+    elif getattr(localSetup, "logger", None):
+        with _fallbackLogLock:
+            localSetup.logger.info(message)
+
+def logWarning(localSetup, message):
+    """Thread-safe warning log.  Prefers localSetup.logWarningThreadSafe; falls back with lock."""
+    if hasattr(localSetup, "logWarningThreadSafe"):
+        localSetup.logWarningThreadSafe(message)
+    elif getattr(localSetup, "logger", None):
+        with _fallbackLogLock:
+            localSetup.logger.warning(message)
+
+def logError(localSetup, message):
+    """Thread-safe error log.  Prefers localSetup.logErrorThreadSafe; falls back with lock."""
+    if hasattr(localSetup, "logErrorThreadSafe"):
+        localSetup.logErrorThreadSafe(message)
+    elif getattr(localSetup, "logger", None):
+        with _fallbackLogLock:
+            localSetup.logger.error(message)

@@ -150,7 +150,7 @@ def termCreateOutcomeComplianceReport(
 
                         ## Skip this account if the department path could not be resolved
                         if len(courseDepartmentPathSeperated) < 2 or courseDepartmentPathSeperated[0] == "":
-                            localSetup.logger.warning(f"Could not resolve department path for account {courseInfoDict['Canvas_Account_id']} -- skipping")
+                            localSetup.logWarningThreadSafe(f"Could not resolve department path for account {courseInfoDict['Canvas_Account_id']} -- skipping")
                             continue
 
                         ## The course college (## e.g. College of Business) is always the 0th element of the section 
@@ -398,7 +398,7 @@ def termCompileCourseOutcomesScores (p1_CourseDict
         ## If the outcome result report df is empty there is no instructor/college/department
         ## metadata for this course (e.g. account could not be resolved), so skip it
         if isMissing(p1_targetOutcomeResultReportDf):
-            localSetup.logger.warning(
+            localSetup.logWarningThreadSafe(
                 f"{functionName}: No outcome result report row found for course "
                 f"'{p1_CourseDict.get('Course_sis_id', 'unknown')}' -- skipping"
             )
@@ -598,7 +598,7 @@ def termCompileCourseOutcomesScores (p1_CourseDict
                 p1_outcomeResultsDashboardDataDictList.append(outcomeDashboardDataDf)
 
                 ## localSetup.logger.info the current length of the outcomeResultsDashboardDataDictList
-                localSetup.logger.info(len(p1_outcomeResultsDashboardDataDictList))
+                localSetup.logInfoThreadSafe(len(p1_outcomeResultsDashboardDataDictList))
             
         ## End the function
         return
@@ -662,7 +662,7 @@ def targetDesignatorProcessOutcomeResults(
             else:
                 
                 ## Log that there are no outcome results to report on
-                localSetup.logger.info("No Outcome Results to Report on. Exiting function")
+                localSetup.logInfoThreadSafe("No Outcome Results to Report on. Exiting function")
                 
                 ## Exit the function
                 return
@@ -948,7 +948,7 @@ def termProcessOutcomeResults(p1_inputTerm
                 uniqueOutcomesWithoutVendorGuidList.append(uniqueOutcome)
 
                 ## Log that the outcome was not found in the outcomes csv and handle the error
-                localSetup.logger.warning(f"Outcome {uniqueOutcome} was not found in the Canvas outcomes csv. Skipping it.")
+                localSetup.logWarningThreadSafe(f"Outcome {uniqueOutcome} was not found in the Canvas outcomes csv. Skipping it.")
                 errorHandler.sendError (functionName, f"Outcome {uniqueOutcome} was not found in the Canvas outcomes csv. Skipping it.")
 
                 ## Skip the value
@@ -1153,7 +1153,7 @@ def termProcessOutcomeResults(p1_inputTerm
                     if targetUniqueOutcomeInfoDict is None:
 
                         ## Log a warning and continue
-                        localSetup.logger.warning(f"Could not find unique outcome info dict for outcome id {row['learning outcome id']}. Skipping row.")
+                        localSetup.logWarningThreadSafe(f"Could not find unique outcome info dict for outcome id {row['learning outcome id']}. Skipping row.")
                         continue
 
                     ## Set the name of the outcome to the title paired with the id in the unique outcome info dict
