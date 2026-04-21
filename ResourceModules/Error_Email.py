@@ -2,12 +2,14 @@
 ## Last Updated by: Bryce Miller
 
 ## Import Generic Modules
-import traceback, logging, os, sys
+import traceback, logging, os, sys, threading
 
 try: ## If the module is run directly
     from Core_Microsoft_Api import sendOutlookEmail
+    from Local_Setup import logError as _logError
 except ImportError: ## Otherwise as a relative import if the module is imported
     from .Core_Microsoft_Api import sendOutlookEmail
+    from .Local_Setup import logError as _logError
 
 ## Import Config Variables
 from Common_Configs import scriptLibrary, serviceEmailAccount, authorContactInformation
@@ -34,6 +36,7 @@ class errorEmail:
         self.externalRequirements = externalRequirements
         self.localSetup = p1_localSetup
         self.sentErrors = set()
+        self._sendErrorLock = threading.RLock()
 
     ## This class method creates a formatted error email
     def _createErrorEmailBody(self, p1_functionName, p1_errorInfo):
@@ -60,72 +63,72 @@ Error Description/Code: {p1_errorInfo}
     ## This method sends an error email for a specific function
     def sendError(self, p1_functionName, p1_errorInfo):
         functionName = "Send Error"
-        
-        ## Log the error
-        self.localSetup.logger.error(f"\nA script error occurred while running {p1_functionName}. Error: {str(p1_errorInfo)}")
+        with self._sendErrorLock:
+            ## Log the error
+            _logError(self.localSetup, f"\nA script error occurred while running {p1_functionName}. Error: {str(p1_errorInfo)}")
 
-        ## If the function has already triggered an error email, skip sending again
-        if p1_functionName in self.sentErrors:
-            self.localSetup.logger.error(f"\nError email already sent for {p1_functionName}")
-            return
+            ## If the function has already triggered an error email, skip sending again
+            if p1_functionName in self.sentErrors:
+                _logError(self.localSetup, f"\nError email already sent for {p1_functionName}")
+                return
 
-        ## ---- Sensitive-keyword list (lowercase) ----
-        _SENSITIVE_KEYS = {"password", "passwd", "secret", "token", "api_key",
-                           "apikey", "access_token", "refresh_token", "credential",
-                           "client_secret", "authorization", "auth"}
+            ## ---- Sensitive-keyword list (lowercase) ----
+            _SENSITIVE_KEYS = {"password", "passwd", "secret", "token", "api_key",
+                            "apikey", "access_token", "refresh_token", "credential",
+                            "client_secret", "authorization", "auth"}
 
-        
-        # Try to get the actual exception object
-        exc = p1_errorInfo if isinstance(p1_errorInfo, BaseException) else None
+            
+            # Try to get the actual exception object
+            exc = p1_errorInfo if isinstance(p1_errorInfo, BaseException) else None
 
-        if exc is None:
-            # Fall back to the currently handled exception (if any)
-            excType, excValue, excTb = sys.exc_info()
-            if excValue is not None:
-                exc = excValue
+            if exc is None:
+                # Fall back to the currently handled exception (if any)
+                excType, excValue, excTb = sys.exc_info()
+                if excValue is not None:
+                    exc = excValue
 
-        if exc is not None:
-            # Build traceback WITH locals for the full log file
-            tbExcFull = traceback.TracebackException.from_exception(exc, capture_locals=True)
-            traceWithLocals = ''.join(tbExcFull.format())
+            if exc is not None:
+                # Build traceback WITH locals for the full log file
+                tbExcFull = traceback.TracebackException.from_exception(exc, capture_locals=True)
+                traceWithLocals = ''.join(tbExcFull.format())
 
-            # Build a sanitized version for the email (no locals)
-            tbExcSafe = traceback.TracebackException.from_exception(exc, capture_locals=False)
-            traceSafe = ''.join(tbExcSafe.format())
-        else:
-            # Fallback: no specific exception object
-            traceWithLocals = traceback.format_exc()
-            traceSafe = traceWithLocals
+                # Build a sanitized version for the email (no locals)
+                tbExcSafe = traceback.TracebackException.from_exception(exc, capture_locals=False)
+                traceSafe = ''.join(tbExcSafe.format())
+            else:
+                # Fallback: no specific exception object
+                traceWithLocals = traceback.format_exc()
+                traceSafe = traceWithLocals
 
 
-        ## ---- Redact sensitive values from the safe trace ----
-        for line in traceSafe.splitlines():
-            for key in _SENSITIVE_KEYS:
-                if key in line.lower():
-                    traceSafe = traceSafe.replace(line, f"  {key}=<REDACTED>")
-                    break
+            ## ---- Redact sensitive values from the safe trace ----
+            for line in traceSafe.splitlines():
+                for key in _SENSITIVE_KEYS:
+                    if key in line.lower():
+                        traceSafe = traceSafe.replace(line, f"  {key}=<REDACTED>")
+                        break
 
-        ## Full info for the LOCAL log only (includes locals for debugging)
-        fullErrorInfo = f"{p1_errorInfo}: \n\n{traceWithLocals}"
+            ## Full info for the LOCAL log only (includes locals for debugging)
+            fullErrorInfo = f"{p1_errorInfo}: \n\n{traceWithLocals}"
 
-        ## Log the full (unsanitized) error info locally
-        self.localSetup.logger.error(f"\nFull Error Info:\n{fullErrorInfo}")
+            ## Log the full (unsanitized) error info locally
+            _logError(self.localSetup, f"\nFull Error Info:\n{fullErrorInfo}")
 
-        ## Save the sanitized error info for the email (no locals, sensitive info redacted)
-        safeErrorInfo = f"{p1_errorInfo}: \n\n{traceSafe}"
+            ## Save the sanitized error info for the email (no locals, sensitive info redacted)
+            safeErrorInfo = f"{p1_errorInfo}: \n\n{traceSafe}"
 
-        ## Create the formatted email body
-        emailBody = self._createErrorEmailBody(p1_functionName, safeErrorInfo)
+            ## Create the formatted email body
+            emailBody = self._createErrorEmailBody(p1_functionName, safeErrorInfo)
 
-        ## Send the error alert email
-        sendOutlookEmail(
-            p1_microsoftUserName=serviceEmailAccount,
-            p1_subject=f"{self.scriptName}: Error in \"{p1_functionName}\"",
-            p1_body=emailBody,
-            p1_recipientEmailList=f"{scriptLibrary}@nnu.edu",
-            p1_shared_mailbox=f"{scriptLibrary}@nnu.edu"
-        )
+            ## Send the error alert email
+            sendOutlookEmail(
+                p1_microsoftUserName=serviceEmailAccount,
+                p1_subject=f"{self.scriptName}: Error in \"{p1_functionName}\"",
+                p1_body=emailBody,
+                p1_recipientEmailList=f"{scriptLibrary}@nnu.edu",
+                p1_shared_mailbox=f"{scriptLibrary}@nnu.edu"
+            )
 
-        ## Track that an error email has been sent for this function
-        self.sentErrors.add(p1_functionName)
-        self.localSetup.logger.error(f"\nError Email Sent for {p1_functionName}")
+            ## Track that an error email has been sent for this function
+            self.sentErrors.add(p1_functionName)
+            _logError(self.localSetup, f"\nError Email Sent for {p1_functionName}")

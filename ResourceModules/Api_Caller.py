@@ -6,9 +6,9 @@ from datetime import datetime
 from typing import Callable, Tuple, Type, Optional, Dict, Any, List
 
 try: ## If the module is run directly
-    from Local_Setup import LocalSetup
+    from Local_Setup import LocalSetup, logInfo as _logInfo, logWarning as _logWarning, logError as _logError
 except ImportError: ## Otherwise as a relative import if the module is imported
-    from .Local_Setup import LocalSetup
+    from .Local_Setup import LocalSetup, logInfo as _logInfo, logWarning as _logWarning, logError as _logError
 
 ## Define the script name, purpose, and external requirements for logging and error reporting purposes
 __scriptName = os.path.basename(__file__).replace(".py", "")
@@ -148,7 +148,7 @@ def retry(
                     throttleRetries += 1
 
                     if getattr(localSetup, "logger", None):
-                        localSetup.logger.warning(
+                        _logWarning(localSetup, 
                             f"Rate limit hit for {func.__name__} "
                             f"(throttle retry {throttleRetries}/{max_throttle_retries}). "
                             f"Global cooldown triggered — waiting for gate to reopen..."
@@ -156,7 +156,7 @@ def retry(
 
                     if throttleRetries >= max_throttle_retries:
                         if getattr(localSetup, "logger", None):
-                            localSetup.logger.error(
+                            _logError(localSetup, 
                                 f"{func.__name__} exceeded max throttle retries ({max_throttle_retries})."
                             )
                         raise
@@ -170,14 +170,14 @@ def retry(
                     attempts += 1
 
                     if getattr(localSetup, "logger", None):
-                        localSetup.logger.warning(
+                        _logWarning(localSetup, 
                             f"Attempt {attempts} failed for {func.__name__}: {error}. "
                             f"Retrying in {currentDelaySeconds:.1f} seconds..."
                         )
 
                     if attempts == max_attempts:
                         if getattr(localSetup, "logger", None):
-                            localSetup.logger.error(f"{func.__name__} failed after {attempts} attempts.")
+                            _logError(localSetup, f"{func.__name__} failed after {attempts} attempts.")
                         raise
 
                     time.sleep(currentDelaySeconds)
@@ -218,10 +218,10 @@ def _sendTimeoutEmail(localSetup, apiUrl: str, timeoutSeconds: float, error: Exc
                 return
             except Exception as emailError:
                 if getattr(localSetup, "logger", None):
-                    localSetup.logger.error(f"Failed sending timeout email via {methodName}: {emailError}")
+                    _logError(localSetup, f"Failed sending timeout email via {methodName}: {emailError}")
 
     if getattr(localSetup, "logger", None):
-        localSetup.logger.error(f"No email method found on LocalSetup. Timeout email not sent.\n{subject}\n{body}")
+        _logError(localSetup, f"No email method found on LocalSetup. Timeout email not sent.\n{subject}\n{body}")
 
 
 ## -------------------------
@@ -261,7 +261,7 @@ def _preemptiveRateLimitPauseIfNeeded(localSetup, apiUrl: str) -> None:
         pauseSeconds = basePreemptivePauseSeconds + jitterSeconds
 
         if getattr(localSetup, "logger", None):
-            localSetup.logger.info(
+            _logInfo(localSetup, 
                 f"Rate-limit remaining low ({currentRemaining:.1f} <= {rateLimitPauseThreshold:.1f}). "
                 f"Preemptive pause {pauseSeconds:.2f}s before {apiUrl}."
             )
@@ -295,7 +295,7 @@ def _triggerGlobalCooldown(waitSeconds: float, localSetup=None) -> None:
         _canvasApiGate.clear()  ## Block all threads
 
     if localSetup and getattr(localSetup, "logger", None):
-        localSetup.logger.warning(
+        _logWarning(localSetup, 
             f"Global rate-limit cooldown: blocking all Canvas API threads for {waitSeconds:.1f}s"
         )
 
@@ -307,7 +307,7 @@ def _triggerGlobalCooldown(waitSeconds: float, localSetup=None) -> None:
         if time.monotonic() >= _gateReopenTime:
             _canvasApiGate.set()
             if localSetup and getattr(localSetup, "logger", None):
-                localSetup.logger.info("Global rate-limit cooldown expired. Resuming API calls.")
+                _logInfo(localSetup, "Global rate-limit cooldown expired. Resuming API calls.")
 
 
 ## -------------------------
@@ -463,7 +463,7 @@ class ApiCaller:
         except requests.exceptions.Timeout as timeoutError:
             ## Log, send best-effort email, then raise so @retry can retry
             if getattr(self.localSetup, "logger", None):
-                self.localSetup.logger.error(
+                _logError(self.localSetup,
                     f"Timeout after {requestTimeoutSeconds:.0f}s calling {p1_apiUrl}: {timeoutError}"
                 )
             _sendTimeoutEmail(self.localSetup, p1_apiUrl, requestTimeoutSeconds, timeoutError)
@@ -524,7 +524,7 @@ class ApiCaller:
                 ## Canvas-only: 409 Conflict handling for report generation (PUT/POST/PATCH)
                 if isCanvas and statusCode == 409 and p1_apiCallType.lower() in ["put", "patch", "post"]:
                     if getattr(self.localSetup, "logger", None):
-                        self.localSetup.logger.warning(
+                        _logWarning(self.localSetup,
                             f"Received 409 Conflict for {p1_apiCallType.upper()} {p1_apiUrl}. "
                             f"Checking for active existing item..."
                         )
@@ -558,7 +558,7 @@ class ApiCaller:
 
                     if matchingReport:
                         if getattr(self.localSetup, "logger", None):
-                            self.localSetup.logger.info(
+                            _logInfo(self.localSetup,
                                 "Found active report with matching parameters. Returning its status response."
                             )
 
@@ -573,7 +573,7 @@ class ApiCaller:
 
                     else:
                         if getattr(self.localSetup, "logger", None):
-                            self.localSetup.logger.info(
+                            _logInfo(self.localSetup,
                                 f"409 received but no matching active report with parameters: {requestedParams}. "
                                 f"Retrying normally."
                             )
@@ -582,7 +582,7 @@ class ApiCaller:
                     responseObject.close()
                 except Exception as closeError:
                     if getattr(self.localSetup, "logger", None):
-                        self.localSetup.logger.warning(
+                        _logWarning(self.localSetup,
                             f"Failed to close API response before retry: {closeError}"
                         )
 
@@ -590,7 +590,7 @@ class ApiCaller:
                     raise Exception(f"Failed API call to {p1_apiUrl}: HTTP {statusCode}")
                 else:
                     if getattr(self.localSetup, "logger", None):
-                        self.localSetup.logger.warning(
+                        _logWarning(self.localSetup,
                             f"Failed to delete resource at {p1_apiUrl}: HTTP {statusCode}"
                         )
                     return responseObject, []

@@ -745,7 +745,7 @@ def addOutcomeToCourse (p1_localSetup
             targetCourseSisId = targetCourseDataDict['course_id']
 
         ## Log the start of the process
-        p1_localSetup.logger.info("\n     Course:" + targetCourseDataDict['course_id'])
+        p1_localSetup.logInfoThreadSafe("\n     Course:" + targetCourseDataDict['course_id'])
 
         ## Create the base course API urls
         baseCourseApiUrl = f"{coreCanvasApiUrl}courses/sis_course_id:{targetCourseSisId}"
@@ -774,9 +774,9 @@ def addOutcomeToCourse (p1_localSetup
 
             ## If the API status code is anything other than 200 it is an error, so log it and skip
             if (courseOutcomeGroupsObject.status_code != 200):
-                p1_localSetup.logger.error("\nCourse Error: " + str(courseOutcomeGroupsObject.status_code))
-                p1_localSetup.logger.error(courseOutcomeGroupsApiUrl)
-                p1_localSetup.logger.error(courseOutcomeGroupsObject.url)
+                p1_localSetup.logErrorThreadSafe("\nCourse Error: " + str(courseOutcomeGroupsObject.status_code))
+                p1_localSetup.logErrorThreadSafe(courseOutcomeGroupsApiUrl)
+                p1_localSetup.logErrorThreadSafe(courseOutcomeGroupsObject.url)
                 continue
 
             ## Define a variable to hold the whether the course already has the outcome group and another to hold its canvas id
@@ -812,9 +812,9 @@ def addOutcomeToCourse (p1_localSetup
                 rootOutcomeGroupObject, _ = makeApiCall(p1_localSetup, p1_apiUrl=rootOutcomeGroupApiUrl)
 
                 if (rootOutcomeGroupObject.status_code != 200):
-                    p1_localSetup.logger.error("\nCourse Error: " + str(rootOutcomeGroupObject.status_code))
-                    p1_localSetup.logger.error(rootOutcomeGroupApiUrl)
-                    p1_localSetup.logger.error(rootOutcomeGroupObject.url)
+                    p1_localSetup.logErrorThreadSafe("\nCourse Error: " + str(rootOutcomeGroupObject.status_code))
+                    p1_localSetup.logErrorThreadSafe(rootOutcomeGroupApiUrl)
+                    p1_localSetup.logErrorThreadSafe(rootOutcomeGroupObject.url)
                     continue
 
                 courseOutcomeGroupCanvasId = rootOutcomeGroupObject.json()['id']
@@ -840,13 +840,13 @@ def addOutcomeToCourse (p1_localSetup
 
                 ## If the API status code is anything other than 200 it is an error, so log it and skip
                 if (addOutcomeGroupToCourseObject.status_code != 200):
-                    p1_localSetup.logger.error("\nCourse Error: " + str(addOutcomeGroupToCourseObject.status_code))
-                    p1_localSetup.logger.error(addOutcomeGroupToCourseApiUrl)
-                    p1_localSetup.logger.error(addOutcomeGroupToCourseObject.url)
+                    p1_localSetup.logErrorThreadSafe("\nCourse Error: " + str(addOutcomeGroupToCourseObject.status_code))
+                    p1_localSetup.logErrorThreadSafe(addOutcomeGroupToCourseApiUrl)
+                    p1_localSetup.logErrorThreadSafe(addOutcomeGroupToCourseObject.url)
                     continue
 
                 ## Log the fact that the outcome group has been added to the course
-                p1_localSetup.logger.info(f"\n {targetCourseSisId} has been added outcome group {outcomeCanvasData['Outcome Group Title']}")
+                p1_localSetup.logInfoThreadSafe(f"\n {targetCourseSisId} has been added outcome group {outcomeCanvasData['Outcome Group Title']}")
 
                 ## Retrieve the ooutcomeGroupCanvasIdInCourse from the API call response
                 outcomeGroupCanvasIdInCourse = addOutcomeGroupToCourseObject.json()['id']
@@ -859,13 +859,13 @@ def addOutcomeToCourse (p1_localSetup
 
             ## If the API status code is anything other than 200 it is an error, so log it and skip
             if (addOutcomeToCourseObject.status_code != 200):
-                p1_localSetup.logger.error("\nCourse Error: " + str(addOutcomeToCourseObject.status_code))
-                p1_localSetup.logger.error(addOutcomeToCourseApiUrl)
-                p1_localSetup.logger.error(addOutcomeToCourseObject.url)
+                p1_localSetup.logErrorThreadSafe("\nCourse Error: " + str(addOutcomeToCourseObject.status_code))
+                p1_localSetup.logErrorThreadSafe(addOutcomeToCourseApiUrl)
+                p1_localSetup.logErrorThreadSafe(addOutcomeToCourseObject.url)
                 continue
 
             ## Log the fact that the outcome has been added to the course
-            p1_localSetup.logger.info(f"\n {targetCourseSisId} has had outcome {targetCourseActiveOutcomeCourseDataDict[outcome]} added")
+            p1_localSetup.logInfoThreadSafe(f"\n {targetCourseSisId} has had outcome {targetCourseActiveOutcomeCourseDataDict[outcome]} added")
 
     except Exception as Error:
         p1_errorHandler.sendError (functionName, Error)
@@ -1111,4 +1111,3 @@ def getUniqueOutcomesAndOutcomeCoursesDict (p1_localSetup, p1_errorHandler, p3_i
     except Exception as Error:
         p1_errorHandler.sendError (functionName, Error)
         return [], {}
-

@@ -6,6 +6,7 @@ import os, sys, re, pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from dateutil import parser as dateutil_parser
+import threading
 
 ## Import necessary functions from local modules
 ## Add Script repository to syspath
@@ -50,6 +51,7 @@ To function properly, this script requires:
 
 ## Setup the error handler
 errorHandler = errorEmail(scriptName, scriptPurpose, externalRequirements, localSetup)
+_summaryLock = threading.Lock()
 
 ## ─────────────────────────────────────────────────────────────────────────────
 ## Helper: Parse a date string safely, returning None on failure
@@ -93,7 +95,7 @@ def buildTermDateLookup():
                     "end_date":   _safeParseDatetime(row.get("end_date")),
                 }
 
-        localSetup.logger.info(f"Built term date lookup with {len(termDateDict)} terms")
+        localSetup.logInfoThreadSafe(f"Built term date lookup with {len(termDateDict)} terms")
         return termDateDict
 
     except Exception as Error:
@@ -126,7 +128,7 @@ def buildSisDateIntervals(sisCoursesDf, canvasTermDateDict):
                     endDt = termDates.get("end_date")
             if startDt is not None and endDt is not None:
                 intervals.add((startDt, endDt))
-        localSetup.logger.info(
+        localSetup.logInfoThreadSafe(
             f"Built {len(intervals)} unique SIS date pair(s) from {len(sisCoursesDf)} SIS course rows"
         )
         return intervals
@@ -225,7 +227,7 @@ def processOrphanedCourse(courseRow, activeEnrollmentsDf, summary):
 
         ## ── Step B: Course HAS grades → notify, skip ─────────────────────────
         if hasGrades:
-            localSetup.logger.warning(
+            localSetup.logWarningThreadSafe(
                 f"Orphaned course {courseId} (canvas_course_id={canvasCourseId}) has "
                 f"{scoredCount} scored submission(s) -- skipping deletion, sending email"
             )
@@ -253,7 +255,8 @@ def processOrphanedCourse(courseRow, activeEnrollmentsDf, summary):
                 p1_shared_mailbox=f"{scriptLibrary}@nnu.edu",
             )
 
-            summary["skipped_grades"].append(courseId)
+            with _summaryLock:
+                summary["skipped_grades"].append(courseId)
             return
 
         ## ── Step C: Course has NO grades ─────────────────────────────────────
@@ -276,13 +279,13 @@ def processOrphanedCourse(courseRow, activeEnrollmentsDf, summary):
                 )
                 response, _ = apiResult if apiResult is not None else (None, None)
                 if response and response.status_code == 200:
-                    localSetup.logger.info(
+                    localSetup.logInfoThreadSafe(
                         f"Deleted enrollment {enrollmentId} (user={enrollRow.get('user_id', '')}) "
                         f"from orphaned course {courseId}"
                     )
                 else:
                     statusCode = response.status_code if response else "N/A"
-                    localSetup.logger.warning(
+                    localSetup.logWarningThreadSafe(
                         f"Failed to delete enrollment {enrollmentId} from orphaned course {courseId}. "
                         f"Status: {statusCode}"
                     )
@@ -298,13 +301,13 @@ def processOrphanedCourse(courseRow, activeEnrollmentsDf, summary):
             response, _ = apiResult if apiResult is not None else (None, None)
 
             if response and response.status_code == 200:
-                localSetup.logger.info(
+                localSetup.logInfoThreadSafe(
                     f"Deleted orphaned course {courseId} (canvas_course_id={canvasCourseId}) "
                     f"after removing {enrollmentCount} enrollment(s)"
                 )
             else:
                 statusCode = response.status_code if response else "N/A"
-                localSetup.logger.warning(
+                localSetup.logWarningThreadSafe(
                     f"Failed to delete orphaned course {courseId}. Status: {statusCode}"
                 )
 
@@ -332,7 +335,8 @@ def processOrphanedCourse(courseRow, activeEnrollmentsDf, summary):
                 p1_shared_mailbox=f"{scriptLibrary}@nnu.edu",
             )
 
-            summary["deleted_with_enrollments"].append(courseId)
+            with _summaryLock:
+                summary["deleted_with_enrollments"].append(courseId)
 
         else:
             ## No enrollments, no grades — delete silently
@@ -346,17 +350,18 @@ def processOrphanedCourse(courseRow, activeEnrollmentsDf, summary):
             response, _ = apiResult if apiResult is not None else (None, None)
 
             if response and response.status_code == 200:
-                localSetup.logger.info(
+                localSetup.logInfoThreadSafe(
                     f"Silently deleted orphaned course {courseId} (canvas_course_id={canvasCourseId}) -- "
                     f"no enrollments, no grades"
                 )
             else:
                 statusCode = response.status_code if response else "N/A"
-                localSetup.logger.warning(
+                localSetup.logWarningThreadSafe(
                     f"Failed to silently delete orphaned course {courseId}. Status: {statusCode}"
                 )
 
-            summary["deleted_silently"].append(courseId)
+            with _summaryLock:
+                summary["deleted_silently"].append(courseId)
 
     except Exception as Error:
         errorHandler.sendError(functionName, Error)
@@ -384,14 +389,15 @@ def processOrphanedEnrollment(enrollRow, summary):
         response, _ = apiResult if apiResult is not None else (None, None)
 
         if response and response.status_code == 200:
-            localSetup.logger.info(
+            localSetup.logInfoThreadSafe(
                 f"Deleted orphaned enrollment {enrollmentId} "
                 f"(user={userId}, course={courseId})"
             )
-            summary["orphaned_enrollments_deleted"].append(enrollmentId)
+            with _summaryLock:
+                summary["orphaned_enrollments_deleted"].append(enrollmentId)
         else:
             statusCode = response.status_code if response else "N/A"
-            localSetup.logger.warning(
+            localSetup.logWarningThreadSafe(
                 f"Failed to delete orphaned enrollment {enrollmentId} "
                 f"(user={userId}, course={courseId}). Status: {statusCode}"
             )
@@ -433,7 +439,7 @@ def removeOrphanedSisItems():
         ## If the SIS has a course at all, it will manage its own deletion; this script
         ## only removes courses that are completely absent from the SIS feed.
         activeSisCourseIds = set(sisCoursesDf["course_id"].dropna())
-        localSetup.logger.info(f"SIS feed: {len(activeSisCourseIds)} known course IDs (all statuses)")
+        localSetup.logInfoThreadSafe(f"SIS feed: {len(activeSisCourseIds)} known course IDs (all statuses)")
 
         ## Build the set of all known SIS enrollment keys (any status)
         ## If the SIS has an enrollment at all, it will manage its own deletion; this script
@@ -445,7 +451,7 @@ def removeOrphanedSisItems():
                 sisEnrollDf["role"].str.lower().str.strip(),
             )
         )
-        localSetup.logger.info(f"SIS feed: {len(activeEnrollKeys)} known enrollment keys (all statuses)")
+        localSetup.logInfoThreadSafe(f"SIS feed: {len(activeEnrollKeys)} known enrollment keys (all statuses)")
 
         ## Derive a broad span from the SIS date pairs purely to limit which Canvas
         ## term provisioning reports we need to pull.  The actual per-course date
@@ -454,12 +460,12 @@ def removeOrphanedSisItems():
             windowStart = min(s for s, e in sisDateIntervals)
             windowEnd   = max(e for s, e in sisDateIntervals)
         else:
-            localSetup.logger.warning(
+            localSetup.logWarningThreadSafe(
                 "No resolvable SIS date intervals found -- no Canvas terms will be queried"
             )
             return
 
-        localSetup.logger.info(
+        localSetup.logInfoThreadSafe(
             f"SIS date span for term pre-filter: {windowStart.date()} → {windowEnd.date()} "
             f"({len(sisDateIntervals)} unique SIS date pair(s))"
         )
@@ -485,11 +491,11 @@ def removeOrphanedSisItems():
                 relevantTermIds.append(termId)
 
         if skippedTermIds:
-            localSetup.logger.info(
+            localSetup.logInfoThreadSafe(
                 f"Skipped {len(skippedTermIds)} non-standard Canvas term(s): {', '.join(skippedTermIds)}"
             )
 
-        localSetup.logger.info(
+        localSetup.logInfoThreadSafe(
             f"Identified {len(relevantTermIds)} Canvas term(s) overlapping the SIS date window"
         )
 
@@ -518,10 +524,10 @@ def removeOrphanedSisItems():
         canvasSectionsDf = pd.concat(allSectionsDfs, ignore_index=True) if allSectionsDfs else pd.DataFrame()
 
         if isMissing(canvasCoursesDf):
-            localSetup.logger.info("No Canvas courses found across relevant terms -- nothing to do")
+            localSetup.logInfoThreadSafe("No Canvas courses found across relevant terms -- nothing to do")
             return
         if isMissing(canvasEnrollDf):
-            localSetup.logger.info("No Canvas enrollments found across relevant terms")
+            localSetup.logInfoThreadSafe("No Canvas enrollments found across relevant terms")
 
         ## ══════════════════════════════════════════════════════════════════════
         ## Step 3.5: Build crosslist mapping from sections
@@ -572,7 +578,7 @@ def removeOrphanedSisItems():
                     crosslistOrigToParent[origSisId.lower()] = parentSisId.lower()
                     crosslistedAwayCourseIds.add(origSisId)
 
-            localSetup.logger.info(
+            localSetup.logInfoThreadSafe(
                 f"Built crosslist mapping: {len(crosslistOrigToParent)} original→parent course mappings, "
                 f"{len(crosslistedAwayCourseIds)} courses with sections crosslisted away"
             )
@@ -587,7 +593,7 @@ def removeOrphanedSisItems():
                     crosslistExpandedKeys.add((parentCourseId, userId, role))
 
             activeEnrollKeys.update(crosslistExpandedKeys)
-            localSetup.logger.info(
+            localSetup.logInfoThreadSafe(
                 f"After crosslist expansion: {len(activeEnrollKeys)} active enrollment keys "
                 f"(added {len(crosslistExpandedKeys)} crosslisted variants)"
             )
@@ -599,7 +605,7 @@ def removeOrphanedSisItems():
         if isPresent(canvasEnrollDf):
             canvasEnrollDf = canvasEnrollDf[canvasEnrollDf["status"].astype(str).str.lower() == "active"].copy()
 
-        localSetup.logger.info(
+        localSetup.logInfoThreadSafe(
             f"After active-status filter: {len(canvasCoursesDf)} active courses, "
             f"{len(canvasEnrollDf)} active enrollments"
         )
@@ -621,7 +627,7 @@ def removeOrphanedSisItems():
                 inWindowMask.append((startDt, endDt) in sisDateIntervals)
 
         canvasCoursesDf = canvasCoursesDf[inWindowMask].copy()
-        localSetup.logger.info(
+        localSetup.logInfoThreadSafe(
             f"After SIS exact-date filter: {len(canvasCoursesDf)} active courses with matching SIS date pair"
         )
 
@@ -635,7 +641,7 @@ def removeOrphanedSisItems():
             if endDt is None or endDt >= now:
                 enrollmentScopeCanvasIds.add(row["canvas_course_id"])
 
-        localSetup.logger.info(
+        localSetup.logInfoThreadSafe(
             f"Enrollment orphan scope: {len(enrollmentScopeCanvasIds)} course(s) in non-ended terms "
             f"(excluded {len(canvasCoursesDf) - len(enrollmentScopeCanvasIds)} ended-term course(s))"
         )
@@ -650,7 +656,7 @@ def removeOrphanedSisItems():
             & (~canvasCoursesDf["course_id"].isin(crosslistedAwayCourseIds))  ## NEW: exclude crosslisted courses
         ].copy()
 
-        localSetup.logger.info(f"Identified {len(orphanedCoursesDf)} orphaned course(s)")
+        localSetup.logInfoThreadSafe(f"Identified {len(orphanedCoursesDf)} orphaned course(s)")
 
         ## Build a set of orphaned course canvas IDs for exclusion in enrollment step
         orphanedCanvasCourseIds = set(orphanedCoursesDf["canvas_course_id"])
@@ -682,7 +688,7 @@ def removeOrphanedSisItems():
                 if enrollKey not in activeEnrollKeys:
                     orphanedEnrollRows.append(eRow)
 
-        localSetup.logger.info(
+        localSetup.logInfoThreadSafe(
             f"Identified {len(orphanedEnrollRows)} orphaned enrollment(s) in still-active courses"
         )
         ## save the orpahned enroll rows to a csv file for reference
@@ -712,8 +718,8 @@ def removeOrphanedSisItems():
             ]
             for i, future in enumerate(as_completed(futures), 1):
                 if i % MAX_WORKERS == 0:
-                    localSetup.logger.info(f"Orphaned courses: {i} threads completed")
-            localSetup.logger.info(f"Orphaned courses: all {len(futures)} threads completed")
+                    localSetup.logInfoThreadSafe(f"Orphaned courses: {i} threads completed")
+            localSetup.logInfoThreadSafe(f"Orphaned courses: all {len(futures)} threads completed")
 
         ## ── Orphaned enrollments ─────────────────────────────────────────────
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
@@ -723,32 +729,32 @@ def removeOrphanedSisItems():
             ]
             for i, future in enumerate(as_completed(futures), 1):
                 if i % MAX_WORKERS == 0:
-                    localSetup.logger.info(f"Orphaned enrollments: {i} threads completed")
-            localSetup.logger.info(f"Orphaned enrollments: all {len(futures)} threads completed")
+                    localSetup.logInfoThreadSafe(f"Orphaned enrollments: {i} threads completed")
+            localSetup.logInfoThreadSafe(f"Orphaned enrollments: all {len(futures)} threads completed")
 
         ## ════════════════════════════════════════════════════════════════��═════
         ## Step 10: Final summary log
         ## ══════════════════════════════════════════════════════════════════════
-        localSetup.logger.info("===============================================")
-        localSetup.logger.info("        Remove Orphaned SIS Items -- Summary")
-        localSetup.logger.info("===============================================")
-        localSetup.logger.info(
+        localSetup.logInfoThreadSafe("===============================================")
+        localSetup.logInfoThreadSafe("        Remove Orphaned SIS Items -- Summary")
+        localSetup.logInfoThreadSafe("===============================================")
+        localSetup.logInfoThreadSafe(
             f"  Courses deleted silently (no enrollments, no grades): "
             f"{len(summary['deleted_silently'])}"
         )
-        localSetup.logger.info(
+        localSetup.logInfoThreadSafe(
             f"  Courses deleted after enrollment cleanup (email sent): "
             f"{len(summary['deleted_with_enrollments'])}"
         )
-        localSetup.logger.info(
+        localSetup.logInfoThreadSafe(
             f"  Courses skipped -- grades found (email sent): "
             f"{len(summary['skipped_grades'])}"
         )
-        localSetup.logger.info(
+        localSetup.logInfoThreadSafe(
             f"  Orphaned enrollments deleted (in still-active courses): "
             f"{len(summary['orphaned_enrollments_deleted'])}"
         )
-        localSetup.logger.info("===============================================")
+        localSetup.logInfoThreadSafe("===============================================")
 
         ## Send a summary email if anything was actually deleted
         totalDeleted = (
@@ -785,7 +791,7 @@ def removeOrphanedSisItems():
                 p1_recipientEmailList=f"{scriptLibrary}@nnu.edu",
                 p1_shared_mailbox=f"{scriptLibrary}@nnu.edu",
             )
-            localSetup.logger.info("Summary email sent")
+            localSetup.logInfoThreadSafe("Summary email sent")
 
     except Exception as Error:
         errorHandler.sendError(functionName, Error)
