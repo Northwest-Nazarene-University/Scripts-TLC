@@ -121,7 +121,7 @@ def updateCourseEndDate(courseId, newEndDate):
             f"Failed to retrieve course {courseId} before updating end date. "
             f"Status Code: {courseObject.status_code}, Message: {courseObject.text}"
         )
-        return None, None
+        return "", courseObject
 
     ## Parse the current course data
     courseData = json.loads(courseObject.text)
@@ -181,7 +181,7 @@ def getEnrollmentApiObject(enrollmentId, courseId, parentCourseId, stuId, enroll
                 if sectionResponse.status_code != 200:
                     localSetup.logger.warning(f"Failed to retrieve sections for parent course {parentCourseId}")
                     ErrorHandler.sendError(functionName, f"Section retrieval failed for parent course {parentCourseId}")
-                    return None, None
+                    return False, ""
 
                 sectionData = json.loads(sectionResponse.text)
                 sectionResponse.close()
@@ -236,7 +236,7 @@ def getEnrollmentApiObject(enrollmentId, courseId, parentCourseId, stuId, enroll
 
     except Exception as Error:
         ErrorHandler.sendError(functionName, Error)
-        return None, None
+        return False, ""
 
 ## This function retrieves assignment analytics for a student and returns:
 ## - last submission date
@@ -353,12 +353,13 @@ def handleEnrollmentDeletion(stuId, enrollmentId, courseId, originalEndDate=""):
         ## Restore original end date if provided
         if originalEndDate:
             _, restoreResponse = updateCourseEndDate(f"sis_course_id:{courseId}", originalEndDate)
-            if restoreResponse.status_code == 200:
+            if restoreResponse and restoreResponse.status_code == 200:
                 localSetup.logger.info(f"Successfully restored original end date for course {courseId} to {originalEndDate}")
             else:
                 localSetup.logger.warning(
                     f"Failed to restore original end date for course {courseId}. "
-                    f"Status Code: {restoreResponse.status_code}, Message: {restoreResponse.text}"
+                    f"Status Code: {restoreResponse.status_code if restoreResponse else 'No response'}, "
+                    f"Message: {restoreResponse.text if restoreResponse else ''}"
                 )
 
         ## If deletion is successful
