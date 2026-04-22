@@ -680,56 +680,56 @@ def targetDesignatorProcessOutcomeResults(
             ## If the courseDict's course_sis_id has 3400 in it
             ##if "COMM1210" in courseDict["Course_sis_id"]:
 
-                ## Define a target course variables
-                targetCourseSisId = courseDict["Course_sis_id"]
-                targetCourseName = courseDict["Course_name"]
-                targetSectionId = courseDict["Section_id"]
+            ## Define a target course variables
+            targetCourseSisId = courseDict["Course_sis_id"]
+            targetCourseName = courseDict["Course_name"]
+            targetSectionId = courseDict["Section_id"]
 
-                ## If there is a non nan Parent_Course_sis_id
-                if not pd.isna(courseDict["Parent_Course_sis_id"]) and courseDict["Parent_Course_sis_id"] not in ["", None]:
+            ## If there is a non nan Parent_Course_sis_id
+            if not pd.isna(courseDict["Parent_Course_sis_id"]) and courseDict["Parent_Course_sis_id"] not in ["", None]:
 
-                    ## Set the target course sis id to the Parent_Course_sis_id
-                    targetCourseSisId = courseDict["Parent_Course_sis_id"]
+                ## Set the target course sis id to the Parent_Course_sis_id
+                targetCourseSisId = courseDict["Parent_Course_sis_id"]
 
-                    ## Find the index of the Parent_Course_sis_id in the activeCanvasOutcomeCoursesDf
-                    parentCourseIndex = p1_activeCanvasOutcomeCoursesDf[p1_activeCanvasOutcomeCoursesDf["Course_sis_id"] == targetCourseSisId].index[0]
+                ## Find the index of the Parent_Course_sis_id in the activeCanvasOutcomeCoursesDf
+                parentCourseIndex = p1_activeCanvasOutcomeCoursesDf[p1_activeCanvasOutcomeCoursesDf["Course_sis_id"] == targetCourseSisId].index[0]
 
-                    ## Set the target course name to the Parent_Course_sis_id's course name
-                    targetCourseName = p1_activeCanvasOutcomeCoursesDf.at[parentCourseIndex, "Course_name"]
+                ## Set the target course name to the Parent_Course_sis_id's course name
+                targetCourseName = p1_activeCanvasOutcomeCoursesDf.at[parentCourseIndex, "Course_name"]
 
-                ## Make a filtered p1_termEnrollmentDf for the target course using the target course sis id and the canvas_section_id
-                targetTermEnrollmentDf = p1_termEnrollmentDf[
-                    (p1_termEnrollmentDf["course_id"] == targetCourseSisId)
-                    & (p1_termEnrollmentDf["canvas_section_id"] == targetSectionId)
-                    ]
+            ## Make a filtered p1_termEnrollmentDf for the target course using the target course sis id and the canvas_section_id
+            targetTermEnrollmentDf = p1_termEnrollmentDf[
+                (p1_termEnrollmentDf["course_id"] == targetCourseSisId)
+                & (p1_termEnrollmentDf["canvas_section_id"] == targetSectionId)
+                ]
 
-                ## Make a filtered p1_outcomeResultDF for the current course using the target course sis id amd section id
-                targetOutcomeResultsDf = p1_outcomeResultDF[
-                    (p1_outcomeResultDF["course sis id"] == targetCourseSisId)
-                    & (p1_outcomeResultDF["section id"] == targetSectionId)
-                    ]
+            ## Make a filtered p1_outcomeResultDF for the current course using the target course sis id amd section id
+            targetOutcomeResultsDf = p1_outcomeResultDF[
+                (p1_outcomeResultDF["course sis id"] == targetCourseSisId)
+                & (p1_outcomeResultDF["section id"] == targetSectionId)
+                ]
 
-                ## Make a filtered outcomeResultReportDF for the current course
-                targetOutcomeResultReportDf = outcomeResultReportDF[outcomeResultReportDF["Course_name"] == targetCourseName]
+            ## Make a filtered outcomeResultReportDF for the current course
+            targetOutcomeResultReportDf = outcomeResultReportDF[outcomeResultReportDF["Course_name"] == targetCourseName]
 
-                ## test without threading
-                # termCompileCourseOutcomesScores(
-                #     courseDict
-                #     , targetTermEnrollmentDf
-                #     , targetOutcomeResultsDf
-                #     , targetOutcomeResultReportDf
-                #     , outcomeResultsDashboardDataDictList
-                #     , p1_uniqueOutcomeInfoDictOfDicts
-                # )
+            ## test without threading
+            # termCompileCourseOutcomesScores(
+            #     courseDict
+            #     , targetTermEnrollmentDf
+            #     , targetOutcomeResultsDf
+            #     , targetOutcomeResultReportDf
+            #     , outcomeResultsDashboardDataDictList
+            #     , p1_uniqueOutcomeInfoDictOfDicts
+            # )
 
-                termCompileCourseOutcomesScores(
-                    courseDict,
-                    targetTermEnrollmentDf,
-                    targetOutcomeResultsDf,
-                    targetOutcomeResultReportDf,
-                    outcomeResultsDashboardDataDictList,
-                    p1_uniqueOutcomeInfoDictOfDicts,
-                )
+            termCompileCourseOutcomesScores(
+                courseDict,
+                targetTermEnrollmentDf,
+                targetOutcomeResultsDf,
+                targetOutcomeResultReportDf,
+                outcomeResultsDashboardDataDictList,
+                p1_uniqueOutcomeInfoDictOfDicts,
+            )
 
         runThreadedRows(p1_activeCanvasOutcomeCoursesDf, _worker)
             
