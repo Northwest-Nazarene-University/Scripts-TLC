@@ -223,8 +223,8 @@ def getEnrollmentApiObject(enrollmentId, courseId, parentCourseId, stuId, enroll
                     ## Return enrollment object and original end date
                     return enrollmentObject, originalEndDate
 
-            ## Return enrollment object and None if no end date update was needed
-            return enrollmentObject, None
+            ## Return enrollment object and blank end date if no end date update was needed
+            return enrollmentObject, ""
 
         ## If enrollment is not deleted, retrieve it normally
         else:
@@ -232,7 +232,7 @@ def getEnrollmentApiObject(enrollmentId, courseId, parentCourseId, stuId, enroll
             enrollmentObject, _ = makeApiCall(localSetup, 
                 p1_apiUrl=enrollmentApiUrl,
             )
-            return enrollmentObject, None
+            return enrollmentObject, ""
 
     except Exception as Error:
         ErrorHandler.sendError(functionName, Error)
