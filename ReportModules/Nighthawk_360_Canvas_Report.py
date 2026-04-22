@@ -115,13 +115,13 @@ def updateCourseEndDate(courseId, newEndDate):
     ## Make the API call to retrieve the current course object
     courseObject, _ = makeApiCall(localSetup, p1_apiUrl=f"{coreCanvasApiUrl}/courses/{courseId}")
 
-    ## If retrieval fails, log and return None
+    ## If retrieval fails, log and return blank values
     if courseObject.status_code != 200:
         localSetup.logger.warning(
             f"Failed to retrieve course {courseId} before updating end date. "
             f"Status Code: {courseObject.status_code}, Message: {courseObject.text}"
         )
-        return "", courseObject
+        return "", ""
 
     ## Parse the current course data
     courseData = json.loads(courseObject.text)
@@ -353,13 +353,13 @@ def handleEnrollmentDeletion(stuId, enrollmentId, courseId, originalEndDate=""):
         ## Restore original end date if provided
         if originalEndDate:
             _, restoreResponse = updateCourseEndDate(f"sis_course_id:{courseId}", originalEndDate)
-            if restoreResponse and restoreResponse.status_code == 200:
+            if hasattr(restoreResponse, "status_code") and restoreResponse.status_code == 200:
                 localSetup.logger.info(f"Successfully restored original end date for course {courseId} to {originalEndDate}")
             else:
                 localSetup.logger.warning(
                     f"Failed to restore original end date for course {courseId}. "
-                    f"Status Code: {restoreResponse.status_code if restoreResponse else 'No response'}, "
-                    f"Message: {restoreResponse.text if restoreResponse else ''}"
+                    f"Status Code: {getattr(restoreResponse, 'status_code', 'No response')}, "
+                    f"Message: {getattr(restoreResponse, 'text', '')}"
                 )
 
         ## If deletion is successful
