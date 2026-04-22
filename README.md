@@ -98,7 +98,7 @@ Scripts-TLC/
 │   ├── Change_Long_Name_For_Listed_Courses.py    # Bulk course name updates
 │   ├── Change_Role_For_Listed_Enrollments.py     # Bulk enrollment role changes
 │   ├── Change_Term_For_Listed_Courses.py         # Bulk course term changes
-│   ├── Update_Grading_Standard_For_Listed_Courses.py # Bulk grading standard updates
+│   ├── Update_Grading_Standard_For_Listed_Courses.py # DEPRECATED — delegates to Change_Grading_Scheme_For_Listed_Courses.py
 │   ├── Delete_Listed_Courses.py          #   Bulk course deletion
 │   ├── Count_Respondus_Quizzes_and_Users.py      # Respondus LockDown Browser usage report
 │   ├── Turn_Off_Disallow_Threaded_Replies_In_Discussions.py # Discussion settings fix
@@ -220,7 +220,7 @@ Scripts that perform write operations against Canvas and external systems:
 | **`Enroll_TUG_Students_In_SGA.py`** | Auto-enrolls TUG (Traditional Undergraduate) students in the SGA course |
 | **`Remove_Orphaned_SIS_Items.py`** | Identifies and removes Canvas courses/enrollments no longer in the SIS feed; flags scored courses for manual review |
 | **`CX_Data_Sync.py`** | Synchronizes data with the CX platform |
-| **Bulk Operation Scripts** | `Change_Account_For_Listed_Courses.py`, `Change_Grading_Scheme_For_Listed_Courses.py`, `Change_Long_Name_For_Listed_Courses.py`, `Change_Role_For_Listed_Enrollments.py`, `Change_Term_For_Listed_Courses.py`, `Update_Grading_Standard_For_Listed_Courses.py`, `Delete_Listed_Courses.py` — CSV-driven bulk Canvas operations |
+| **Bulk Operation Scripts** | `Change_Account_For_Listed_Courses.py`, `Change_Grading_Scheme_For_Listed_Courses.py`, `Change_Long_Name_For_Listed_Courses.py`, `Change_Role_For_Listed_Enrollments.py`, `Change_Term_For_Listed_Courses.py`, `Delete_Listed_Courses.py` — CSV-driven bulk Canvas operations. (`Update_Grading_Standard_For_Listed_Courses.py` is deprecated; use `Change_Grading_Scheme_For_Listed_Courses.py` instead.) |
 | **`Count_Respondus_Quizzes_and_Users.py`** | Counts Respondus LockDown Browser quiz usage and unique student submissions |
 | **`Turn_Off_Disallow_Threaded_Replies_In_Discussions.py`** | Fixes discussion threading settings across courses |
 

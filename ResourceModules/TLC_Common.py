@@ -2,6 +2,7 @@
 ## Last Updated by: Bryce Miller
 
 import os, sys, zipfile, requests, pandas as pd
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from dotenv import load_dotenv
 
@@ -238,3 +239,79 @@ def isMissing(value):
 def isPresent(value):
     """Inverse helper for convenience."""
     return not isMissing(value)
+
+
+## ══════════════════════════════════════════════════════════════════════════════
+## Threading Helpers
+## Generic concurrency utilities shared by both ActionModules and ReportModules.
+## ══════════════════════════════════════════════════════════════════════════════
+
+## Read a target CSV file and return a filtered DataFrame
+def readTargetCsv(
+    localSetup,
+    errorHandler,
+    csvPath: str,
+    requiredColumns: list = None,
+) -> pd.DataFrame:
+    """
+    Read a CSV file and return a filtered DataFrame.
+
+    Raises FileNotFoundError if the file does not exist and KeyError if a
+    required column is absent.  Returns a DataFrame filtered to rows where
+    the first required column is non-null, or the full DataFrame when no
+    required columns are specified.
+
+    Args:
+        localSetup:      LocalSetup instance for logging.
+        errorHandler:    errorEmail instance for error reporting.
+        csvPath:         Absolute path to the CSV file.
+        requiredColumns: List of column names that must be present.
+
+    Returns:
+        Filtered DataFrame, or an empty DataFrame on failure.
+    """
+    functionName = "readTargetCsv"
+    try:
+        if not os.path.exists(csvPath):
+            raise FileNotFoundError(f"Target CSV not found: {csvPath}")
+
+        df = pd.read_csv(csvPath)
+
+        if requiredColumns:
+            for col in requiredColumns:
+                if col not in df.columns:
+                    raise KeyError(f"Required column '{col}' not found in {csvPath}")
+            ## Filter out rows where the first required column is null
+            df = df[df[requiredColumns[0]].notna()].copy()
+
+        localSetup.logInfoThreadSafe(f"Loaded {len(df)} row(s) from {csvPath}")
+        return df
+
+    except Exception as Error:
+        errorHandler.sendError(functionName, Error)
+        return pd.DataFrame()
+
+
+## Run a worker function over each row of a DataFrame using a thread pool
+def runThreadedRows(
+    df: pd.DataFrame,
+    workerFn,
+    maxWorkers: int = 25,
+) -> None:
+    """
+    Submit workerFn(row) for every row in df via a ThreadPoolExecutor and wait
+    for all futures to complete.
+
+    Exceptions raised inside workerFn should be handled there (e.g. via
+    try/except + errorHandler.sendError) to avoid aborting the whole batch.
+
+    Args:
+        df:          DataFrame whose rows are processed.
+        workerFn:    Callable that accepts one argument: a pandas Series (one row).
+        maxWorkers:  Thread-pool size; defaults to 25.
+    """
+    with ThreadPoolExecutor(max_workers=maxWorkers) as executor:
+        futures = [executor.submit(workerFn, row) for _, row in df.iterrows()]
+        for future in as_completed(futures):
+            ## Re-raise unhandled exceptions so callers see failures
+            future.result()
