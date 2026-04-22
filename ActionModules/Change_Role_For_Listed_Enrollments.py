@@ -12,12 +12,14 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules")
 try:
     from Local_Setup import LocalSetup
     from Error_Email import errorEmail
-    from TLC_Action import deleteEnrollment, enrollUser, readTargetCsv, runThreadedRows
+    from TLC_Action import deleteEnrollment, enrollUser
+    from TLC_Common import readTargetCsv, runThreadedRows
     from Common_Configs import coreCanvasApiUrl, canvasAccessToken
 except ImportError:  ## When imported as a package/module
     from .Local_Setup import LocalSetup
     from .Error_Email import errorEmail
-    from .TLC_Action import deleteEnrollment, enrollUser, readTargetCsv, runThreadedRows
+    from .TLC_Action import deleteEnrollment, enrollUser
+    from .TLC_Common import readTargetCsv, runThreadedRows
     from .Common_Configs import coreCanvasApiUrl, canvasAccessToken
 
 ## Define the script name, purpose, and external requirements for logging and error reporting purposes

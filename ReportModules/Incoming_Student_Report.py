@@ -11,7 +11,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules")
 
 ## New resource modules
 from Local_Setup import LocalSetup
-from TLC_Common import makeApiCall, isPresent
+from TLC_Common import makeApiCall, isPresent, runThreadedRows
 from Canvas_Report import CanvasReport
 from Common_Configs import coreCanvasApiUrl, canvasAccessToken, undgTermsCodesToWordsDict, gradTermsCodesToWordsDict
 from Error_Email import errorEmail
@@ -587,36 +587,25 @@ def studentTypeGetIncomingStudentsInfo(p1_targetOrientation, p1_slateFile, p1_in
         ## Open up the enrollment data activity file
         enrollmentDataActivityDF = pd.read_csv(f"{localSetup.getExternalResourcePath('SIS')}output\\pharos\\Enrollment_Data_Activity.csv", delimiter='|')
  
-        ongoingStudentThreads = []
-
-        ## Define input threading objects
-        for index, row in slateDataDF.iterrows():
-
-            ##if row['StudentID'] == 190996:
-
-                newThread = threading.Thread(target=getTargetIncomingStudentInfo
-                                             , args=(row
-                                                     , index
-                                                     , p1_inputTerm
-                                                     , p1_targetOrientation
-                                                     , p1_targetOrientationStudents
-                                                     , p1_targetOrientationSections
-                                                     , p1_targetOrientationFinalQuizSubmissionDatesAndIds
-                                                     , orientationCourseApiUrl
-                                                     , header
-                                                     , slateDataDF
-                                                     , sisFeedCourseDf
-                                                     , sisFeedEnrollmentDf
-                                                     , enrollmentDataActivityDF
-                                                     )
-                                             )
-                newThread.start()
-                ongoingStudentThreads.append(newThread)
-                time.sleep(1)
- 
-        ## Check if all ongoing input threads have completed
-        for thread in ongoingStudentThreads:
-            thread.join()
+        ## Process each student row concurrently
+        runThreadedRows(
+            slateDataDF,
+            lambda row: getTargetIncomingStudentInfo(
+                row,
+                row.name,
+                p1_inputTerm,
+                p1_targetOrientation,
+                p1_targetOrientationStudents,
+                p1_targetOrientationSections,
+                p1_targetOrientationFinalQuizSubmissionDatesAndIds,
+                orientationCourseApiUrl,
+                header,
+                slateDataDF,
+                sisFeedCourseDf,
+                sisFeedEnrollmentDf,
+                enrollmentDataActivityDF,
+            ),
+        )
 
         ## Save the updated slate undergrad data DF
         slateDataDF.to_csv(updatedSlateFilePathWithName, index=False)

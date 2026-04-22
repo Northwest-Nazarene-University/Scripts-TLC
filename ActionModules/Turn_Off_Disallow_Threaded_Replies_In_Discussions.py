@@ -11,15 +11,13 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules")
 ## Try direct imports if run as main, else relative for package usage
 try:
     from Local_Setup import LocalSetup
-    from TLC_Common import makeApiCall
+    from TLC_Common import makeApiCall, runThreadedRows
     from Error_Email import errorEmail
-    from TLC_Action import runThreadedRows
     from Common_Configs import coreCanvasApiUrl, canvasAccessToken
 except ImportError:  ## When imported as a package/module
     from .Local_Setup import LocalSetup
-    from .TLC_Common import makeApiCall
+    from .TLC_Common import makeApiCall, runThreadedRows
     from .Error_Email import errorEmail
-    from .TLC_Action import runThreadedRows
     from .Common_Configs import coreCanvasApiUrl, canvasAccessToken
 
 ## Define the script name, purpose, and external requirements for logging and error reporting purposes

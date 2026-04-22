@@ -3,7 +3,6 @@
 
 ## External libraries
 import os, sys, csv, json, os.path, shutil, threading
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 import pandas as pd
 
@@ -12,7 +11,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules")
 
 ## New resource modules
 from Local_Setup import LocalSetup
-from TLC_Common import makeApiCall, isFileRecent, isPresent
+from TLC_Common import makeApiCall, isFileRecent, isPresent, runThreadedRows
 from Canvas_Report import CanvasReport
 from Common_Configs import coreCanvasApiUrl, termSchoolYearLogic
 from Error_Email import errorEmail
@@ -441,23 +440,17 @@ def termOutcomeAttachmentReport (p1_inputTerm
             , "Instructor Email": []
             }
         
-        ## Process each course in a thread pool
-        MAX_WORKERS = 25
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        ## Process each course concurrently
+        def _worker(row):
+            ## Target a specific course for testing if needed
+            # if row['Course_sis_id'] == "SP2026_EDUC3090_1L":
+            #     outcomeAttachmentReport(row, rawOutcomesDF, outcomeCoursesMissingAttachments)
 
-            ## For each row in the termActiveOutcomeCoursesDF
-            for index, row in termActiveOutcomeCoursesDF.iterrows():
+            ## If the row is not a nan
+            if not isPresent(row["Course_sis_id"]):
+                outcomeAttachmentReport(row, rawOutcomesDF, outcomeCoursesMissingAttachments)
 
-                    ## Target a specific course for testing if needed
-                    # if row['Course_sis_id'] == "SP2026_EDUC3090_1L":
-
-                    #     outcomeAttachmentReport (row, rawOutcomesDF, outcomeCoursesMissingAttachments)
-
-                    # If the row is not a nan
-                    if not isPresent(row["Course_sis_id"]):
-
-                        ## Submit the task to the thread pool
-                        executor.submit(outcomeAttachmentReport, row, rawOutcomesDF, outcomeCoursesMissingAttachments)
+        runThreadedRows(termActiveOutcomeCoursesDF, _worker)
             
         # If any of the lists in the outcomeCoursesMissingAttachments dict are not empty
         if any([len(outcomeCoursesMissingAttachments[key]) > 0 for key in outcomeCoursesMissingAttachments.keys()]):

@@ -26,9 +26,8 @@ try: ## Irregular try clause, do not comment out in testing
     from TLC_Action import (
         retrieveDataForRelevantCommunication,
         addOutcomeToCourse,
-        runThreadedRows,
     )
-    from TLC_Common import isMissing
+    from TLC_Common import isMissing, runThreadedRows
 
 except ImportError:
     from ResourceModules.Local_Setup import LocalSetup
@@ -36,9 +35,8 @@ except ImportError:
     from ResourceModules.TLC_Action import (
         retrieveDataForRelevantCommunication,
         addOutcomeToCourse,
-        runThreadedRows,
     )
-    from ResourceModules.TLC_Common import isMissing
+    from ResourceModules.TLC_Common import isMissing, runThreadedRows
 
 # Create LocalSetup and localSetup.logger
 localSetup = LocalSetup(datetime.now(), __file__)

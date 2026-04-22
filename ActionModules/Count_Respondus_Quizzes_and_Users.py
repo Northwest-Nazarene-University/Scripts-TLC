@@ -10,14 +10,12 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules")
 try:  # Irregular try clause, do not comment out in testing
     from Local_Setup import LocalSetup
     from Error_Email import errorEmail
-    from TLC_Common import makeApiCall
-    from TLC_Action import runThreadedRows
+    from TLC_Common import makeApiCall, runThreadedRows
 except ImportError:
     # Fallback to relative imports if package layout differs
     from ResourceModules.Local_Setup import LocalSetup
     from ResourceModules.Error_Email import errorEmail
-    from ResourceModules.TLC_Common import makeApiCall
-    from ResourceModules.TLC_Action import runThreadedRows
+    from ResourceModules.TLC_Common import makeApiCall, runThreadedRows
 
 #
 # Define the script name, purpose, and external requirements for logging and error reporting purposes
