@@ -358,7 +358,7 @@ def handleEnrollmentDeletion(stuId, enrollmentId, courseId, originalEndDate=""):
             else:
                 localSetup.logger.warning(
                     f"Failed to restore original end date for course {courseId}. "
-                    f"Status Code: {getattr(restoreResponse, 'status_code', 'No response')}, "
+                    f"Status Code: {getattr(restoreResponse, 'status_code', -1)}, "
                     f"Message: {getattr(restoreResponse, 'text', '')}"
                 )
 
