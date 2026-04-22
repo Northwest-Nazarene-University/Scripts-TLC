@@ -415,9 +415,9 @@ def removeOrphanedSisItems():
 
     try:
 
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
         ## 1. Read the SIS feed files
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
         sisResourcePath = localSetup.getExternalResourcePath("SIS")
 
         sisCoursesDf = pd.read_csv(
@@ -429,9 +429,9 @@ def removeOrphanedSisItems():
             dtype=str,
         )
 
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
         ## 2. Build Canvas term date lookup (all terms, including legacy)
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
         termDateDict     = buildTermDateLookup()
         sisDateIntervals = buildSisDateIntervals(sisCoursesDf, termDateDict)
 
@@ -499,9 +499,9 @@ def removeOrphanedSisItems():
             f"Identified {len(relevantTermIds)} Canvas term(s) overlapping the SIS date window"
         )
 
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
         ## 3. Retrieve Canvas courses, enrollments, and sections across relevant terms
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
         allCoursesDfs     = []
         allEnrollmentsDfs = []
         allSectionsDfs    = []
@@ -529,9 +529,9 @@ def removeOrphanedSisItems():
         if isMissing(canvasEnrollDf):
             localSetup.logInfoThreadSafe("No Canvas enrollments found across relevant terms")
 
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
         ## Step 3.5: Build crosslist mapping from sections
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
         ## Maps original_course_id → set of parent_course_ids
         ## so we can recognize crosslisted enrollments
 
@@ -598,9 +598,9 @@ def removeOrphanedSisItems():
                 f"(added {len(crosslistExpandedKeys)} crosslisted variants)"
             )
 
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
         ## Step 4: Active‑status pre‑filter
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
         canvasCoursesDf = canvasCoursesDf[canvasCoursesDf["status"].astype(str).str.lower() == "active"].copy()
         if isPresent(canvasEnrollDf):
             canvasEnrollDf = canvasEnrollDf[canvasEnrollDf["status"].astype(str).str.lower() == "active"].copy()
@@ -610,9 +610,9 @@ def removeOrphanedSisItems():
             f"{len(canvasEnrollDf)} active enrollments"
         )
 
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
         ## Step 5: SIS exact-date filter on courses
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
         ## A Canvas course is in scope only if its resolved (start, end) date pair
         ## exactly matches one of the date pairs present in the SIS feed.  This
         ## avoids treating courses that legitimately ended mid-window (e.g. Quad 1)
@@ -646,9 +646,9 @@ def removeOrphanedSisItems():
             f"(excluded {len(canvasCoursesDf) - len(enrollmentScopeCanvasIds)} ended-term course(s))"
         )
 
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
         ## Step 6: Identify orphaned courses
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
         orphanedCoursesDf = canvasCoursesDf[
             (canvasCoursesDf["created_by_sis"].astype(str).str.lower() == "true")
             & (canvasCoursesDf["status"].astype(str).str.lower() == "active")
@@ -661,9 +661,9 @@ def removeOrphanedSisItems():
         ## Build a set of orphaned course canvas IDs for exclusion in enrollment step
         orphanedCanvasCourseIds = set(orphanedCoursesDf["canvas_course_id"])
 
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
         ## Step 7: Identify orphaned enrollments in still‑active courses
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
         orphanedEnrollRows = []
         if isPresent(canvasEnrollDf):
             for _, eRow in canvasEnrollDf.iterrows():
@@ -697,9 +697,9 @@ def removeOrphanedSisItems():
         pd.DataFrame(orphanedEnrollRows).to_csv(orphanEnrollmentsOutputPath, index=False)
 
 
-        ## ═══════════════════════════════════════════════���══════════════════════
+        ## ===============================================���======================
         ## Step 8 & 9: Process orphaned courses and enrollments in batches
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
         ## Thread‑safe summary (lists are append‑safe in CPython)
         summary = {
             "deleted_silently":             [],
@@ -732,9 +732,9 @@ def removeOrphanedSisItems():
                     localSetup.logInfoThreadSafe(f"Orphaned enrollments: {i} threads completed")
             localSetup.logInfoThreadSafe(f"Orphaned enrollments: all {len(futures)} threads completed")
 
-        ## ════════════════════════════════════════════════════════════════��═════
+        ## ================================================================��=====
         ## Step 10: Final summary log
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
         localSetup.logInfoThreadSafe("===============================================")
         localSetup.logInfoThreadSafe("        Remove Orphaned SIS Items -- Summary")
         localSetup.logInfoThreadSafe("===============================================")

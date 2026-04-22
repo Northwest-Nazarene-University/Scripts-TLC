@@ -3,7 +3,6 @@
 
 ## Import Generic Moduels
 from datetime import datetime
-from math import e
 import os, sys, threading, time
 import pandas as pd
 

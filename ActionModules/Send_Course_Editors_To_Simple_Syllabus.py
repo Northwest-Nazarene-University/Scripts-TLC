@@ -61,9 +61,9 @@ localSetup = LocalSetup(datetime.now(), __file__)
 errorHandler = errorEmail(scriptName, scriptPurpose, externalRequirements, localSetup)
 
 
-## ══════════════════════════════════════════════════════════════════════════════
+## ==============================================================================
 ## Course Editor Input Discovery and Normalization
-## ══════════════════════════════════════════════════════════════════════════════
+## ==============================================================================
 
 def _findCourseEditorFiles(p1_searchDir: str) -> list:
     """
@@ -194,9 +194,9 @@ def _normalizeCourseEditorDf(p1_rawDf: pd.DataFrame, p1_sourcePath: str) -> pd.D
     return outputDf
 
 
-## ══════════════════════════════════════════════════════════════════════════════
+## ==============================================================================
 ## Course Editor File Builder
-## ══════════════════════════════════════════════════════════════════════════════
+## ==============================================================================
 
 def buildCourseEditorFile(p1_combinedEditorInputDf: pd.DataFrame, p1_courseExtractPath: str, p1_outputPath: str) -> str:
     """
@@ -322,9 +322,9 @@ def buildCourseEditorFile(p1_combinedEditorInputDf: pd.DataFrame, p1_courseExtra
         raise
 
 
-## ══════════════════════════════���═══════════════════════════════════════════════
+## ==============================���===============================================
 ## Main Process Function
-## ══════════════════════════════════════════════════════════════════════════════
+## ==============================================================================
 
 def processCourseEditorsAndUploadToSimpleSyllabus():
     """
@@ -487,9 +487,9 @@ def processCourseEditorsAndUploadToSimpleSyllabus():
         raise
 
 
-## ══════════════════════════════════════════════════════════════════════════════
+## ==============================================================================
 ## Script Entry Point
-## ══════════════════════════════════════════════════════════════════════════════
+## ==============================================================================
 
 ## If the script is being run directly, execute the main function
 if __name__ == "__main__":

@@ -58,9 +58,9 @@ localSetup = LocalSetup(datetime.now(), __file__)
 errorHandler = errorEmail(scriptName, scriptPurpose, externalRequirements, localSetup)
 
 
-## ══════════════════════════════════════════════════════════════════════════════
+## ==============================================================================
 ## CSV Helpers (script-specific)
-## ══════════════════════════════════════════════════════════════════════════════
+## ==============================================================================
 
 ## This function normalizes spacing and delimiters in prerequisite/corequisite strings from the catalog
 def _normalizeRequisiteSpacing(text: str) -> str:
@@ -167,9 +167,9 @@ def formatCombinedCatalogForSimpleSyllabus(p1_combinedCatalogDf: pd.DataFrame, p
             result = re.sub(r'\.\s*\.', '.', result)
             return result
 
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
         ## STEP 1: Determine term codes for the catalog school year
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
 
         currentSchoolYear = localSetup.getCurrentSchoolYear()
         currentStartYear = int(currentSchoolYear.split("-")[0])
@@ -192,9 +192,9 @@ def formatCombinedCatalogForSimpleSyllabus(p1_combinedCatalogDf: pd.DataFrame, p
                                f"current school year={currentSchoolYear}, "
                                f"target term codes={targetTermCodes}")
 
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
         ## STEP 2: Retrieve the Canvas terms DataFrame and build lookup
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
 
         termsDf = CanvasReport.getTermsDf(localSetup)
         termCodeToNameDict = {}
@@ -210,10 +210,10 @@ def formatCombinedCatalogForSimpleSyllabus(p1_combinedCatalogDf: pd.DataFrame, p
         undgTermCodes = [tc for tc in targetTermCodes if tc[:2] in undgTermsCodesToWordsDict]
         gradTermCodes = [tc for tc in targetTermCodes if tc[:2] in gradTermsCodesToWordsDict]
 
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
         ## STEP 3: Load Simple Syllabus Organizations and Canvas Accounts
         ##         hierarchy to build the Parent Organization lookup
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
 
         simpleSyllabusOrgsPath = os.path.join(localSetup.configPath, "Simple Syllabus Organizations.csv")
         simpleSyllabusOrgsDf = readCsvWithEncoding(simpleSyllabusOrgsPath)
@@ -258,9 +258,9 @@ def formatCombinedCatalogForSimpleSyllabus(p1_combinedCatalogDf: pd.DataFrame, p
                 currentId = parentId
             return ""
 
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
         ## STEP 4: Retrieve Canvas courses for each target term
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
 
         canvasCourseInfoByTerm = {}
         for termCode in targetTermCodes:
@@ -283,9 +283,9 @@ def formatCombinedCatalogForSimpleSyllabus(p1_combinedCatalogDf: pd.DataFrame, p
                 localSetup.logger.warning(f"{functionName}: Could not retrieve courses for term {termCode}: {termError}")
                 canvasCourseInfoByTerm[termCode] = {}
 
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
         ## STEP 4.5: Expand rows where Title contains multiple codes via "/"
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
 
         expandedRows = []
         for _, row in p1_combinedCatalogDf.iterrows():
@@ -302,10 +302,10 @@ def formatCombinedCatalogForSimpleSyllabus(p1_combinedCatalogDf: pd.DataFrame, p
         p1_combinedCatalogDf = pd.DataFrame(expandedRows).reset_index(drop=True)
         localSetup.logger.info(f"{functionName}: After expanding multi-code rows: {len(p1_combinedCatalogDf)} rows")
 
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
         ## STEP 5: Process each catalog row — build prerequisites/corequisites,
         ##         expand into per-term rows, and filter by Canvas presence
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
 
         extractRows = []
 
@@ -423,9 +423,9 @@ def formatCombinedCatalogForSimpleSyllabus(p1_combinedCatalogDf: pd.DataFrame, p
                     "Corequisites": finalCorequisites,
                 })
 
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
         ## STEP 6: Build the output DataFrame and save
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
 
         courseExtractDf = pd.DataFrame(extractRows, columns=[
             "Term", "Subject", "Course Number", "Title", "Parent Organization",

@@ -39,9 +39,9 @@ Requires access to the config path for SSH key files and encrypted password stor
 """
 
 
-## ══════════════════════════════════════════════════════════════════════════════
+## ==============================================================================
 ## CSV Helpers
-## ══════════════════════════════════════════════════════════════════════════════
+## ==============================================================================
 
 ## Helper function to read CSV with encoding fallback
 def readCsvWithEncoding(filePath: str, **kwargs) -> pd.DataFrame:
@@ -89,9 +89,9 @@ def sanitizeCsvHeaders(p1_filePath: str, p1_localSetup: LocalSetup):
     p1_localSetup.logger.info(f"{functionName}: Sanitized CSV headers and re-saved to {p1_filePath}")
 
 
-## ══════════════════════════════════════════════════════════════════════════════
+## ==============================================================================
 ## SFTP Private Key Password Management
-## ══════════════════════════════════════════════════════════════════════════════
+## ==============================================================================
 
 ## This function retrieves the Simple Syllabus SFTP private key password.
 ## On first run it reads the plaintext password from SSPrivKP.txt, encrypts it
@@ -148,9 +148,9 @@ def getSimpleSyllabusPrivateKeyPassword(p1_localSetup: LocalSetup):
     return None
 
 
-## ══════════════════════════════════════════════════════════════════════════════
+## ==============================================================================
 ## SFTP Upload Function
-## ══════════════════════════════════════════════════════════════════════════════
+## ==============================================================================
 
 ## This function uploads a CSV file to Simple Syllabus via SFTP
 def uploadToSimpleSyllabus(p1_filePath: str, p1_localSetup: LocalSetup, p1_errorHandler=None, p1_writeSuccessTag: bool = True):
@@ -307,9 +307,9 @@ def uploadToSimpleSyllabus(p1_filePath: str, p1_localSetup: LocalSetup, p1_error
         raise
 
 
-## ══════════════════════════════════════════════════════════════════════════════
+## ==============================================================================
 ## Change Detection Helpers
-## ══════════════════════════════════════════════════════════════════════════════
+## ==============================================================================
 
 def hasChangedSinceLastUpload(p1_newDf: pd.DataFrame, p1_previousCsvPath: str, p1_successTagPath: str, p1_localSetup: LocalSetup) -> bool:
     """
@@ -386,9 +386,9 @@ def removeStaleSuccessTag(p1_successTagPath: str, p1_localSetup: LocalSetup):
         p1_localSetup.logger.info(f"{functionName}: Removed stale success tag at {p1_successTagPath}")
 
 
-## ══════════════════════════════════════════════════════════════════════════════
+## ==============================================================================
 ## Outcome Management Functions
-## ══════════════════════════════════════════════════════════════════════════════
+## ==============================================================================
 
 ## This function takes in a start date and end date and returns what course week the course is currently in and what week the final week is
 def determineCourseWeek (p1_startDate, p2_endDate, p1_referenceDate=None):      

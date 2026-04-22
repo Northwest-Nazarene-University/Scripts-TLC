@@ -118,24 +118,34 @@ class LocalSetup:
         logger = logging.getLogger(self.__scriptName)
         FORMAT = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
         logging.basicConfig(format="%(asctime)s %(levelname)s %(message)s", encoding='utf-8', filemode="a", level=logging.INFO)
+        logger.setLevel(logging.INFO)
+        logger.propagate = False
+
+        if logger.handlers:
+            for existingHandler in list(logger.handlers):
+                logger.removeHandler(existingHandler)
+                try:
+                    existingHandler.close()
+                except Exception:
+                    pass
 
         ## Info Log
         infoLogFile = os.path.join(self.baseLogPath, "Info Log.txt")
-        logInfo = logging.FileHandler(infoLogFile, mode='a', delay=True)
+        logInfo = logging.FileHandler(infoLogFile, mode='a')
         logInfo.setLevel(logging.INFO)
         logInfo.setFormatter(FORMAT)
         logger.addHandler(logInfo)
 
         ## Warning Log
         warningLogFile = os.path.join(self.baseLogPath, "Warning Log.txt")
-        logWarning = logging.FileHandler(warningLogFile, mode='a', delay=True)
+        logWarning = logging.FileHandler(warningLogFile, mode='a')
         logWarning.setLevel(logging.WARNING)
         logWarning.setFormatter(FORMAT)
         logger.addHandler(logWarning)
 
         ## Error Log
         errorLogFile = os.path.join(self.baseLogPath, "Error Log.txt")
-        logError = logging.FileHandler(errorLogFile, mode='a', delay=True)
+        logError = logging.FileHandler(errorLogFile, mode='a')
         logError.setLevel(logging.ERROR)
         logError.setFormatter(FORMAT)
         logger.addHandler(logError)
