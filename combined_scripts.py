@@ -6634,7 +6634,7 @@ def concludeEnrollments():
                         inactiveCourseIndexList.append(index)
         
         ## Create a inactive enrollment DF by dropping the enrollments for active users
-        inactiveEnrollmentsDF = moddedEnrollmentsDF.loc[inactiveCourseIndexList]
+        inactiveEnrollmentsDF = moddedEnrollmentsDF.loc[inactiveCourseIndexList].copy()
 
         ## Set the status of all inactive enrollments to completed (concluded)
         inactiveEnrollmentsDF["status"] = "Completed"
@@ -8264,7 +8264,7 @@ def getNighthawk360Data(p1_oldEnrollmentDataDf):
                 sisEnrollmentsDf["course_id"].str.contains(currentTerms[0]) |
                 sisEnrollmentsDf["course_id"].str.contains(currentTerms[1])
             )
-        ].drop_duplicates(subset=["course_id", "user_id"])
+        ].drop_duplicates(subset=["course_id", "user_id"]).copy()
 
         ## Set the user_id to string type to avoid mismatches
         filteredSisEnrollmentsDf["user_id"] = filteredSisEnrollmentsDf["user_id"].astype(str)
@@ -15763,7 +15763,7 @@ def retrieveDataForRelevantCommunication (p1_localSetup
 
         ## Keep only the courses that are active and created_by_sis
         activeCanvasCoursesDF = rawTermCanvasCoursesDF[(rawTermCanvasCoursesDF["status"] != "deleted") 
-                                                       & (rawTermCanvasCoursesDF["created_by_sis"] == True)]
+                                                       & (rawTermCanvasCoursesDF["created_by_sis"] == True)].copy()
 
         ## Add a Parent_Course_sis_id column to the completeActiveCanvasCoursesDF
         activeCanvasCoursesDF["Parent_Course_sis_id"] = ""
@@ -16610,5 +16610,4 @@ def isPresent(value):
 ## ===========================================================================
 ## FILE: __init__.py
 ## ===========================================================================
-
 

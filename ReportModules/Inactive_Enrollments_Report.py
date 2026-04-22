@@ -266,7 +266,7 @@ def concludeEnrollments():
                         inactiveCourseIndexList.append(index)
         
         ## Create a inactive enrollment DF by dropping the enrollments for active users
-        inactiveEnrollmentsDF = moddedEnrollmentsDF.loc[inactiveCourseIndexList]
+        inactiveEnrollmentsDF = moddedEnrollmentsDF.loc[inactiveCourseIndexList].copy()
 
         ## Set the status of all inactive enrollments to completed (concluded)
         inactiveEnrollmentsDF["status"] = "Completed"
