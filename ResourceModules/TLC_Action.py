@@ -523,7 +523,7 @@ def retrieveDataForRelevantCommunication (p1_localSetup
 
         ## Keep only the courses that are active and created_by_sis
         activeCanvasCoursesDF = rawTermCanvasCoursesDF[(rawTermCanvasCoursesDF["status"] != "deleted") 
-                                                       & (rawTermCanvasCoursesDF["created_by_sis"] == True)]
+                                                       & (rawTermCanvasCoursesDF["created_by_sis"] == True)].copy()
 
         ## Add a Parent_Course_sis_id column to the completeActiveCanvasCoursesDF
         activeCanvasCoursesDF["Parent_Course_sis_id"] = ""

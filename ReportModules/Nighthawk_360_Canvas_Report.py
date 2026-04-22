@@ -752,7 +752,7 @@ def getNighthawk360Data(p1_oldEnrollmentDataDf):
                 sisEnrollmentsDf["course_id"].str.contains(currentTerms[0]) |
                 sisEnrollmentsDf["course_id"].str.contains(currentTerms[1])
             )
-        ].drop_duplicates(subset=["course_id", "user_id"])
+        ].drop_duplicates(subset=["course_id", "user_id"]).copy()
 
         ## Set the user_id to string type to avoid mismatches
         filteredSisEnrollmentsDf["user_id"] = filteredSisEnrollmentsDf["user_id"].astype(str)
