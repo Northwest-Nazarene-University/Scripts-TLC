@@ -3,7 +3,8 @@
 
 ## Import Generic Moduels
 
-import os, sys, threading, asyncio
+import os, sys, asyncio
+from concurrent.futures import ThreadPoolExecutor
 import pandas as pd
 from datetime import datetime
 
@@ -376,10 +377,11 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
             )
                 
         ## Define a list to hold the communication threads
-        actionThreads = []
+        ## Process all per-row actions concurrently using a thread pool
+        with ThreadPoolExecutor(max_workers=25) as executor:
         
         ## For each row in the complete active canvas courses df
-        for index, row in completeActiveCanvasCoursesDF.iterrows():
+            for index, row in completeActiveCanvasCoursesDF.iterrows():
             
             ## If ENGR4250 in row long_name
             #if "WELL1000" in row["long_name"]:
@@ -435,21 +437,8 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
                         uniqueOutcomes = auxiliaryDfDict["Unique Outcomes"]
                         outcomeCourseDict = auxiliaryDfDict["Outcome Canvas Data Dict"]
                     
-                        ## Start a thread to make sure the outcome has been added to the course
-                        addOutcomeThread = threading.Thread(
-                            target=addOutcomeToCourse
-                            , args=(localSetup
-                                    , errorHandler
-                                    , row
-                                    , auxiliaryDfDict
-                                    )
-                            )
-
-                        ## Start the thread
-                        addOutcomeThread.start()
-
-                        ## Add the thread to the list of communication threads
-                        actionThreads.append(addOutcomeThread)
+                        ## Submit a task to make sure the outcome has been added to the course
+                        executor.submit(addOutcomeToCourse, localSetup, errorHandler, row, auxiliaryDfDict)
         
                 ## If it is the Monday of week 0
                 if (row['Course Week'] == 0
@@ -528,27 +517,10 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
                     #         , auxiliaryDfDict
                     #         )
                     
-                    ## Create a thread to send the relevant outcome email
-                    communicationThread = threading.Thread(
-                        target=craftAndSendRelevantEmail
-                        , args=(p1_inputTerm
-                                , relevantEmail
-                                , targetRow
-                                , auxiliaryDfDict
-                                )
-                        )
-                
-                    ## Start the thread
-                    communicationThread.start()
-                
-                    ## Add the thread to the list of communication threads
-                    actionThreads.append(communicationThread)
+                    ## Submit a task to send the relevant outcome email
+                    executor.submit(craftAndSendRelevantEmail, p1_inputTerm, relevantEmail, targetRow, auxiliaryDfDict)
 
-        ## For each thread in the list of communication threads
-        for thread in actionThreads:
-            
-            ## Wait for the thread to finish
-            thread.join()
+        ## ThreadPoolExecutor context manager waits for all submitted tasks before exiting
 
     except Exception as Error:
         errorHandler.sendError(functionName, Error)

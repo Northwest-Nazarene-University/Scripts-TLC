@@ -3,7 +3,6 @@
 
 ## Import Generic Moduels
 import os, sys
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 import pandas as pd
 
@@ -28,7 +27,7 @@ try: ## Irregular try clause, do not comment out in testing
         retrieveDataForRelevantCommunication,
         addOutcomeToCourse,
     )
-    from TLC_Common import isMissing
+    from TLC_Common import isMissing, runThreadedRows
 
 except ImportError:
     from ResourceModules.Local_Setup import LocalSetup
@@ -37,7 +36,7 @@ except ImportError:
         retrieveDataForRelevantCommunication,
         addOutcomeToCourse,
     )
-    from ResourceModules.TLC_Common import isMissing
+    from ResourceModules.TLC_Common import isMissing, runThreadedRows
 
 # Create LocalSetup and localSetup.logger
 localSetup = LocalSetup(datetime.now(), __file__)
@@ -70,13 +69,11 @@ def termOutcomeExporter(p1_inputTerm, p1_targetDesignator):
             ## Return
             return
 
-        ## Process each course in a thread pool
-        MAX_WORKERS = 25
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            for index, row in completeActiveCanvasCoursesDF.iterrows():
-
-                ## Submit the add outcome task to the thread pool
-                executor.submit(addOutcomeToCourse, localSetup, errorHandler, row, auxillaryDFDict)
+        ## Process each course concurrently
+        runThreadedRows(
+            completeActiveCanvasCoursesDF,
+            lambda row: addOutcomeToCourse(localSetup, errorHandler, row, auxillaryDFDict),
+        )
 
     except Exception as Error:
         errorHandler.sendError (functionName, Error)

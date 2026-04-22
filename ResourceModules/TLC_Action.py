@@ -3,16 +3,17 @@
 
 ## Import Generic Modules
 import os, sys, re, time, math, pandas as pd, paramiko
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from dateutil import parser
 
 try: ## If the module is run directly
     from Local_Setup import LocalSetup
-    from TLC_Common import getEncryptionKey, makeApiCall, flattenApiObjectToJsonList, isPresent, isMissing, isFileRecent
+    from TLC_Common import getEncryptionKey, makeApiCall, flattenApiObjectToJsonList, isPresent, isMissing, isFileRecent, readTargetCsv, runThreadedRows
     from Canvas_Report import CanvasReport
 except ImportError: ## Otherwise as a relative import if the module is imported
     from .Local_Setup import LocalSetup
-    from .TLC_Common import getEncryptionKey, makeApiCall, flattenApiObjectToJsonList, isPresent, isMissing, isFileRecent
+    from .TLC_Common import getEncryptionKey, makeApiCall, flattenApiObjectToJsonList, isPresent, isMissing, isFileRecent, readTargetCsv, runThreadedRows
     from .Canvas_Report import CanvasReport
 
 ## Add the config path
@@ -1111,3 +1112,203 @@ def getUniqueOutcomesAndOutcomeCoursesDict (p1_localSetup, p1_errorHandler, p3_i
     except Exception as Error:
         p1_errorHandler.sendError (functionName, Error)
         return [], {}
+
+
+## ══════════════════════════════════════════════════════════════════════════════
+## Canvas Action Helpers
+## Shared primitives used by multiple ActionModule scripts so the
+## per-script duplicates can be removed.
+## ══════════════════════════════════════════════════════════════════════════════
+
+## Update a single field on a Canvas course via the Courses API
+def updateCourseField(
+    localSetup: LocalSetup,
+    errorHandler,
+    courseId: str,
+    fieldName: str,
+    fieldValue,
+) -> bool:
+    """
+    Set one field on a Canvas course with PUT /api/v1/courses/:id.
+
+    Args:
+        localSetup:   LocalSetup instance for logging and API auth.
+        errorHandler: errorEmail instance for error reporting.
+        courseId:     Canvas numeric course ID (string).
+        fieldName:    Course field key (e.g. "name", "account_id", "enrollment_term_id").
+        fieldValue:   Value to assign; caller is responsible for the correct Python type.
+
+    Returns:
+        True on HTTP 200, False otherwise.
+    """
+    functionName = "updateCourseField"
+    try:
+        updateUrl = f"{coreCanvasApiUrl}courses/{courseId}"
+        payload = {"course": {fieldName: fieldValue}}
+        response, _ = makeApiCall(
+            localSetup=localSetup,
+            p1_apiUrl=updateUrl,
+            p1_payload=payload,
+            p1_apiCallType="put",
+        )
+        statusCode = getattr(response, "status_code", None)
+        if statusCode == 200:
+            localSetup.logInfoThreadSafe(
+                f"Successfully set {fieldName}={fieldValue!r} for course {courseId}"
+            )
+            return True
+        localSetup.logWarningThreadSafe(
+            f"Failed to set {fieldName} for course {courseId}. Status code: {statusCode}"
+        )
+        return False
+    except Exception as Error:
+        errorHandler.sendError(functionName, Error)
+        return False
+
+
+## Delete a Canvas course via the Courses API
+def deleteCourse(
+    localSetup: LocalSetup,
+    errorHandler,
+    courseId: str,
+) -> bool:
+    """
+    Delete a Canvas course with DELETE /api/v1/courses/:id.
+
+    Args:
+        localSetup:   LocalSetup instance for logging and API auth.
+        errorHandler: errorEmail instance for error reporting.
+        courseId:     Canvas numeric course ID (string).
+
+    Returns:
+        True on HTTP 200, False otherwise.
+    """
+    functionName = "deleteCourse"
+    try:
+        deleteUrl = f"{coreCanvasApiUrl}courses/{courseId}"
+        payload = {"event": "delete"}
+        response, _ = makeApiCall(
+            localSetup=localSetup,
+            p1_apiUrl=deleteUrl,
+            p1_payload=payload,
+            p1_apiCallType="delete",
+        )
+        statusCode = getattr(response, "status_code", None)
+        if statusCode == 200:
+            localSetup.logInfoThreadSafe(f"Successfully deleted course {courseId}")
+            return True
+        localSetup.logWarningThreadSafe(
+            f"Failed to delete course {courseId}. Status code: {statusCode}"
+        )
+        return False
+    except Exception as Error:
+        errorHandler.sendError(functionName, Error)
+        return False
+
+
+## Delete a Canvas enrollment via the Enrollments API
+def deleteEnrollment(
+    localSetup: LocalSetup,
+    errorHandler,
+    courseId: str,
+    enrollmentId: str,
+) -> bool:
+    """
+    Delete a Canvas enrollment with DELETE /api/v1/courses/:course_id/enrollments/:id.
+
+    Args:
+        localSetup:    LocalSetup instance for logging and API auth.
+        errorHandler:  errorEmail instance for error reporting.
+        courseId:      Canvas numeric course ID (string).
+        enrollmentId:  Canvas numeric enrollment ID (string).
+
+    Returns:
+        True on HTTP 200, False otherwise.
+    """
+    functionName = "deleteEnrollment"
+    try:
+        deleteUrl = f"{coreCanvasApiUrl}courses/{courseId}/enrollments/{enrollmentId}"
+        response, _ = makeApiCall(
+            localSetup=localSetup,
+            p1_apiUrl=deleteUrl,
+            p1_apiCallType="delete",
+        )
+        statusCode = getattr(response, "status_code", None)
+        if statusCode == 200:
+            localSetup.logInfoThreadSafe(
+                f"Successfully deleted enrollment {enrollmentId} from course {courseId}"
+            )
+            return True
+        localSetup.logWarningThreadSafe(
+            f"Failed to delete enrollment {enrollmentId} from course {courseId}. "
+            f"Status code: {statusCode}"
+        )
+        return False
+    except Exception as Error:
+        errorHandler.sendError(functionName, Error)
+        return False
+
+
+## Enroll a user in a Canvas course via the Enrollments API
+def enrollUser(
+    localSetup: LocalSetup,
+    errorHandler,
+    courseId: str,
+    userId: str,
+    enrollmentType: str,
+    roleId: str = None,
+    enrollmentState: str = "active",
+) -> bool:
+    """
+    Enroll a user in a Canvas course with POST /api/v1/courses/:id/enrollments.
+
+    Args:
+        localSetup:      LocalSetup instance for logging and API auth.
+        errorHandler:    errorEmail instance for error reporting.
+        courseId:        Canvas numeric course ID (string).
+        userId:          Canvas numeric user ID (string).
+        enrollmentType:  Base role type (e.g. "StudentEnrollment", "TeacherEnrollment").
+        roleId:          Optional Canvas role ID for a custom role override.
+        enrollmentState: Enrollment state; defaults to "active".
+
+    Returns:
+        True on HTTP 200, False otherwise.
+    """
+    functionName = "enrollUser"
+    try:
+        enrollUrl = f"{coreCanvasApiUrl}courses/{courseId}/enrollments"
+        payload = {
+            "enrollment[user_id]": userId,
+            "enrollment[type]": enrollmentType,
+            "enrollment[enrollment_state]": enrollmentState,
+        }
+        if roleId:
+            payload["enrollment[role_id]"] = roleId
+        response, _ = makeApiCall(
+            localSetup=localSetup,
+            p1_apiUrl=enrollUrl,
+            p1_payload=payload,
+            p1_apiCallType="post",
+        )
+        statusCode = getattr(response, "status_code", None)
+        if statusCode == 200:
+            localSetup.logInfoThreadSafe(
+                f"Successfully enrolled user {userId} in course {courseId} as {enrollmentType}"
+            )
+            return True
+        localSetup.logWarningThreadSafe(
+            f"Failed to enroll user {userId} in course {courseId}. Status code: {statusCode}"
+        )
+        return False
+    except Exception as Error:
+        errorHandler.sendError(functionName, Error)
+        return False
+
+
+## Read a target CSV and validate that required columns are present
+## ══════════════════════════════════════════════════════════════════════════════
+## Threading / CSV helpers — canonical definitions live in TLC_Common.
+## Re-exported here for backward compatibility with existing action-module imports.
+## ══════════════════════════════════════════════════════════════════════════════
+## readTargetCsv and runThreadedRows are imported from TLC_Common above and are
+## available on this module for any code that imports them from TLC_Action.
