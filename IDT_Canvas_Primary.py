@@ -55,7 +55,7 @@ decade = localSetup.dateDict["decade"]
 
 ## Testing variables
 ## currentDay = 1 ## First week of the month testing value make sure to comment out the target terms variable
-## currentWeekDay = 2 ## Day of the week testing value 
+## currentWeekDay = 4 ## Day of the week testing value 
 ## currentHour = 1 ## First run of the day testing value
 ## currentHour = 16 ## Last run of the day testing value
 
@@ -280,10 +280,18 @@ def determineTargetTerms():
 
         ## If today is Friday
         if currentWeekDay == 4:
-            ## Add current school year, most recent completed terms, and next terms
-            targetTermSet.update(localSetup.getCurrentSchoolYearTermCodes())
-            targetTermSet.update(localSetup.getMostRecentCompletedTermCodes())
-            targetTermSet.update(localSetup.getNextTermCodes())
+            ## Add current school year and most recent completed terms
+            currentSchoolYearTerms = localSetup.getCurrentSchoolYearTermCodes()
+            targetTermSet.update(currentSchoolYearTerms)
+            targetTermSet.update(localSetup.getPreviousTermCodes())
+
+            ## Add next terms only if they are not already in the current school year
+            nextTerms = localSetup.getNextTermCodes()
+            targetTermSet.update(nextTerms - currentSchoolYearTerms)
+
+            ## Add previous terms only if they are not already in the current school year
+            previousTerms = localSetup.getPreviousTermCodes()
+            targetTermSet.update(previousTerms)
 
             ## If this is the first or third Friday of the month
             if (1 <= currentDay <= 7) or (15 <= currentDay <= 21):
@@ -436,7 +444,7 @@ def oneTimeDaily (p1_currentTerm, p1_relaventTerms):
 
         ## Get the current, most recent completed, and next term codes
         currentTermCodes = localSetup.getCurrentTermCodes()
-        mostRecentCompletedTermCodes = localSetup.getMostRecentCompletedTermCodes()
+        mostRecentCompletedTermCodes = localSetup.getPreviousTermCodes()
         nextTermCodes = localSetup.getNextTermCodes()
 
         ## Define a variable to hold the outcome target terms

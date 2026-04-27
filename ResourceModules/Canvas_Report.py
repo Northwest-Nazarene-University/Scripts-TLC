@@ -34,7 +34,7 @@ To function properly this module requires:
 
 class CanvasReport:
     def __init__(self, localSetup : LocalSetup, reportType, apiUrl = None, header = None, termCode=None, accountName="NNU",
-                 outputRoot=None, includeDeleted=False, filename=None, payload=None, 
+                 outputRoot=None, includeDeleted=None, filename=None, payload=None, 
                  endpoint="provisioning_csv", accountCanvasID=None):
         ## Receive LocalSetup from caller
         self.localSetup = localSetup
@@ -47,14 +47,34 @@ class CanvasReport:
         self.header = header or {'Authorization' : f"Bearer {canvasAccessToken}"}
         self.termCode = termCode
         self.accountName = accountName
-        self.includeDeleted = includeDeleted
-        self.filename = filename or self._generateFilename()  # Generate filename if not provided
+        self.hasIncludeDeletedOption = includeDeleted is not None
+        self.requestedIncludeDeleted = bool(includeDeleted) if self.hasIncludeDeletedOption else False
+        # If caller provided the includeDeleted option (True/False), always request the include-deleted
+        # version from Canvas so we can persist both unfiltered and filtered files.
+        self.includeDeleted = True if self.hasIncludeDeletedOption else False
+
+        # Prepare filenames for both versions
+        if filename:
+            base_name, ext = os.path.splitext(filename)
+            if base_name.endswith("_including_deleted"):
+                self.filenameIncludingDeleted = filename
+                self.filenameFiltered = base_name[:-len("_including_deleted")] + ext
+            else:
+                self.filenameFiltered = filename
+                self.filenameIncludingDeleted = f"{base_name}_including_deleted{ext}"
+        else:
+            self.filenameFiltered = self._generateFilename(includeDeleted=False)
+            self.filenameIncludingDeleted = self._generateFilename(includeDeleted=True)
         self.payload = payload or self._buildDefaultPayload()  # Use provided payload or build default
         self.endpoint = endpoint
         self.accountsDf = pd.DataFrame() if self.reportType == "accounts" else self.getAccountsDf(self.localSetup)
         self.accountCanvasID = accountCanvasID if accountCanvasID else self._resolveAccountId()
         self.outputPath = self._buildOutputPath()  # Build directory path for output
-        self.filePath = os.path.join(self.outputPath, self.filename)  # Full path to the output file
+        # Always download the include-deleted file (when hasIncludeDeletedOption True) so use that path
+        self.filteredFilePath = os.path.join(self.outputPath, self.filenameFiltered)
+        self.includingDeletedFilePath = os.path.join(self.outputPath, self.filenameIncludingDeleted)
+        # filePath is the actual download target used by getOrCreateReport
+        self.filePath = self.includingDeletedFilePath if self.hasIncludeDeletedOption else self.filteredFilePath
         self.statusUrl = None
         os.makedirs(self.outputPath, exist_ok=True)  # Ensure output directory exists
         ## Log initialization
@@ -71,9 +91,9 @@ class CanvasReport:
         return payload
 
     ## Generate a filename for the report
-    def _generateFilename(self):
+    def _generateFilename(self, includeDeleted=False):
         suffix = self.reportType.replace(" ", "_").capitalize()
-        if self.includeDeleted:
+        if includeDeleted:
             suffix += "_including_deleted"
         return f"{self.termCode or 'All'}_{suffix}.csv"
 
@@ -176,7 +196,19 @@ class CanvasReport:
             except EmptyDataError:
                 time.sleep(3)
             attempt += 1
-        return targetDf if targetDf is not None else pd.DataFrame()
+        if targetDf is None:
+            return pd.DataFrame()
+
+        if self.hasIncludeDeletedOption:
+            filteredDf = targetDf
+            if "status" in targetDf.columns:
+                filteredDf = targetDf[targetDf["status"].isin(["active", "concluded"])].copy()
+            filteredFilePath = self.filePath.replace("_including_deleted.csv", ".csv")
+            if filteredFilePath != self.filePath:
+                filteredDf.to_csv(filteredFilePath, index=False)
+            return targetDf if self.requestedIncludeDeleted else filteredDf
+
+        return targetDf
 
 
     
@@ -1090,15 +1122,17 @@ class CanvasReport:
             if courseAccountId == 1:
                 return "NNU\\"
 
-            # Use the org structure helper to get the hierarchy
-            hierarchy = cls.getAccountOrgStructure(localSetup, courseAccountId)
-            if not hierarchy:
+            accountStructure = cls.determineCollegeDepartmentDiscipline(localSetup, courseAccountId)
+            pathComponents = accountStructure.get("Path_Components", [])
+
+            if not pathComponents:
                 return ""
 
-            # Build the backslash-delimited path from the hierarchy
-            accountSavePath = "\\".join(hierarchy) + "\\"
+            # Build the backslash-delimited path from the hierarchy derived by
+            # determineCollegeDepartmentDiscipline.
+            accountSavePath = "\\".join(pathComponents) + "\\"
 
-            # Clean up path formatting for department/college names
+            # Keep existing formatting cleanup behavior for backwards compatibility.
             if len(accountSavePath.rsplit("\\")) > 3:
                 departmentName = accountSavePath.rsplit("\\")[1]
                 accountSavePath = accountSavePath.replace(f" {departmentName}", "").replace(
@@ -1124,6 +1158,83 @@ class CanvasReport:
                 )
 
             return accountSavePath
+
+        except Exception as Error:
+            localSetup.logger.error(f"Error in {methodName}: {Error}")
+            return ""  # Return empty string on error
+
+    @classmethod
+    def determineCollegeDepartmentDiscipline(cls, localSetup, courseAccountId, accountsDf=None):
+        """
+    Determine the academic structure for a Canvas account.
+
+    Rules:
+    - College: account whose parent canvas account id is 1.
+    - Department: account directly under the college.
+    - Discpline: optional account directly under department
+      (often Undergraduate, Graduate, or Other).
+
+    Returns:
+        dict: {
+            "College": str,
+            "Department": str,
+            "Discpline": str,
+            "Path_Components": list[str]
+        }
+        """
+        methodName = "determineCollegeDepartmentDiscipline"
+
+        structureDict = {
+            "College": "",
+            "Department": "",
+            "Discpline": "",
+            "Path_Components": []
+        }
+
+        try:
+            if courseAccountId == 1:
+                structureDict["College"] = "NNU"
+                structureDict["Department"] = "NNU"
+                structureDict["Path_Components"] = ["NNU"]
+                return structureDict
+
+            if accountsDf is None or accountsDf.empty:
+                accountsDf = cls.getAccountsDf(localSetup)
+
+            if isMissing(accountsDf):
+                return structureDict
+
+            hierarchy = cls.getAccountOrgStructure(localSetup, courseAccountId, accountsDf=accountsDf)
+            hierarchy = [str(item).strip() for item in hierarchy if isPresent(str(item).strip())]
+
+            if not hierarchy:
+                return structureDict
+
+            structureDict["Path_Components"] = hierarchy
+
+            # College is always the first level below root account (id=1)
+            structureDict["College"] = hierarchy[0]
+
+            # Department is directly under college when available
+            if len(hierarchy) > 1:
+                structureDict["Department"] = hierarchy[1]
+            else:
+                structureDict["Department"] = hierarchy[0]
+
+            # Discpline is directly under department when available
+            if len(hierarchy) > 2:
+                rawDiscipline = hierarchy[2]
+                lowerDiscipline = rawDiscipline.lower()
+                if lowerDiscipline.startswith("undergraduate"):
+                    structureDict["Discpline"] = "Undergraduate"
+                elif lowerDiscipline.startswith("graduate"):
+                    structureDict["Discpline"] = "Graduate"
+                elif "other" in lowerDiscipline:
+                    structureDict["Discpline"] = "Other"
+                else:
+                    structureDict["Discpline"] = rawDiscipline
+
+            return structureDict
 
         except Exception as Error:
             localSetup.logger.error(f"Error in {methodName}: {Error}")

@@ -322,8 +322,21 @@ def craftAndSendRelevantEmail(
                             p1_auxiliaryDfDict["Outcome Courses Without Attachments DF"]["Course_name"] == p2_row["Course_name"]
                         ]
 
-                        ## If the outcome is not in the missing-attachment report's Required Outcome column, skip it
-                        if isMissing(filteredWithoutAttachmentsDF) or datapoint not in filteredWithoutAttachmentsDF["Required Outcome"].values:
+                        ## If there are no missing-attachment rows for this course, skip
+                        if isMissing(filteredWithoutAttachmentsDF):
+                            continue
+
+                        ## Build a set of atomic required outcomes for this course
+                        requiredOutcomesSet = set(
+                            filteredWithoutAttachmentsDF["Required Outcome"]
+                            .dropna()
+                            .astype(str)
+                            .str.strip()
+                            .tolist()
+                        )
+
+                        ## If this course outcome is not missing an attachment, skip it
+                        if str(datapoint).strip() not in requiredOutcomesSet:
                             continue
 
                     ## If the key does not already exist in the email details
@@ -337,6 +350,11 @@ def craftAndSendRelevantEmail(
             
                         ## Add the outcome to the list of outcomes as an li element
                         emailDetails["Outcome Or Outcomes String"] += f"<li>{datapoint}</li>"
+                        
+            ## If there are no instructor emails, return from the function without sending an email and log a warning
+            if isMissing(emailDetails.get("Instructor Email Or Emails String")):
+                localSetup.logger.warning(f"No instructor email found for course {p2_row['Course_name']} in term {p3_inputTerm} for relevant email {p2_relevantEmail}. Email not sent.")
+                return
 
             ## Create the formated email contents
             emailDetails['Outcome Email Body'] = createOutcomeEmailBody(p3_relevantEmail = p2_relevantEmail
@@ -349,11 +367,11 @@ def craftAndSendRelevantEmail(
                                                           )
 
             ## Send the Outcome Email
-            sendOutlookEmail(p1_subject = emailDetails['Relevant Email']
-                             , p1_body = emailDetails['Outcome Email Body']
-                             , p1_recipientEmailList = emailDetails['Instructor Email Or Emails String']
-                             , p1_shared_mailbox = emailDetails['Client Send/Recieve Email']
-                             )
+            # sendOutlookEmail(p1_subject = emailDetails['Relevant Email']
+            #                  , p1_body = emailDetails['Outcome Email Body']
+            #                  , p1_recipientEmailList = emailDetails['Instructor Email Or Emails String']
+            #                  , p1_shared_mailbox = emailDetails['Client Send/Recieve Email']
+            #                  )
             ## info log the test
             localSetup.logger.info(f"Crafted and sent email with subject: {emailDetails['Relevant Email']} to {emailDetails['Instructor Email Or Emails String']} with body: {emailDetails['Outcome Email Body']}")
 

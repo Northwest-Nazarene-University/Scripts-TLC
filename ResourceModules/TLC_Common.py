@@ -7,10 +7,10 @@ from datetime import datetime
 from dotenv import load_dotenv
 
 try: ## If the module is run directly
-    from Local_Setup import LocalSetup, logInfo as _logInfo, logWarning as _logWarning, logError as _logError
+    from Local_Setup import LocalSetup, logInfo as _logInfo, logWarning as _logWarning, logError
     from Api_Caller import retry, RateLimitExceeded, makeApiCall
 except ImportError: ## Otherwise as a relative import if the module is imported
-    from .Local_Setup import LocalSetup, logInfo as _logInfo, logWarning as _logWarning, logError as _logError
+    from .Local_Setup import LocalSetup, logInfo as _logInfo, logWarning as _logWarning, logError
     from .Api_Caller import retry, RateLimitExceeded, makeApiCall
 
 ## Define the script name, purpose, and external requirements for logging and error reporting purposes
@@ -40,7 +40,7 @@ def getEncryptionKey(localSetup: LocalSetup):
     
     ## If the encryption key is not found, raise an error
     if not encryptionKey:
-        _logError(localSetup, "ENCRYPTION_KEY not found in environment variables.")
+        logError(localSetup, "ENCRYPTION_KEY not found in environment variables.")
         raise ValueError("ENCRYPTION_KEY not found in environment variables.")
 
     return encryptionKey
@@ -88,12 +88,12 @@ def downloadFile(localSetup: LocalSetup, fileLink, filePathWithName, mode = 'w')
                     _logInfo(localSetup, f"File repaired")
                     return finalFilePathWithName
                 except Exception as e:
-                    _logError(localSetup, f"Repair failed: {e}")
+                    logError(localSetup, f"Repair failed: {e}")
                     raise
         ## If valid or not Excel, return original path
         return finalFilePathWithName
     except Exception as e:
-        _logError(localSetup, f"Validation/repair step failed: {e}")
+        logError(localSetup, f"Validation/repair step failed: {e}")
     return finalFilePathWithName
 
 ## This function normalizes a Canvas API response (or list of responses) into a single list of JSON objects.
@@ -117,7 +117,7 @@ def flattenApiObjectToJsonList(localSetup, apiObjectList, apiUrl):
 
     except Exception as error:
         ## Log the error here; the calling function can decide whether to send an error email
-        _logError(localSetup,
+        logError(localSetup,
             f"{functionName}: Error while flattening API responses for URL {apiUrl}: {error}"
         )
         raise
@@ -149,7 +149,7 @@ def isFileRecent(localSetup: LocalSetup, filePath, maxAgeHours=3.5):
     except Exception as error:
         ## Log any unexpected errors
         if localSetup.logger:
-            _logError(localSetup, f"Couldn't determine file age. Error: {error}")
+            logError(localSetup, f"Couldn't determine file age. Error: {error}")
         return False
 
 ## Load Excel File with Multiple Strategies
@@ -315,3 +315,18 @@ def runThreadedRows(
         for future in as_completed(futures):
             ## Re-raise unhandled exceptions so callers see failures
             future.result()
+
+## Run a worker function over each row of a DataFrame sequentially (unthreaded)
+def runUnthreadedRows(
+    df: pd.DataFrame,
+    workerFn,
+) -> None:
+    """
+    Run workerFn(row) for every row in df in a simple for loop.
+
+    Args:
+        df:        DataFrame whose rows are processed.
+        workerFn:  Callable that accepts one argument: a pandas Series (one row).
+    """
+    for _, row in df.iterrows():
+        workerFn(row)

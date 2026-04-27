@@ -11,7 +11,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules")
 
 ## New resource modules
 from Local_Setup import LocalSetup
-from TLC_Common import makeApiCall, isFileRecent, flattenApiObjectToJsonList, isPresent, isMissing, runThreadedRows
+from TLC_Common import makeApiCall, isFileRecent, flattenApiObjectToJsonList, isPresent, isMissing, runThreadedRows, runUnthreadedRows
 from Canvas_Report import CanvasReport
 from Common_Configs import coreCanvasApiUrl
 from Error_Email import errorEmail
@@ -140,58 +140,28 @@ def termCreateOutcomeComplianceReport(
                     ## If the account id is not already in the dict
                     if courseInfoDict["Canvas_Account_id"] not in p1_targetAccountDataDict.keys():
 
-                        ## Determine what the save path for the department would be (which is determined by the parent 
-                        ## accounts for the particular sub account)
-                        courseDepartmentPath = CanvasReport.determineDepartmentSavePath (localSetup, courseInfoDict["Canvas_Account_id"])
+                        ## Determine the college/department/discpline directly from account hierarchy
+                        accountStructureDict = CanvasReport.determineCollegeDepartmentDiscipline(
+                            localSetup,
+                            courseInfoDict["Canvas_Account_id"]
+                        )
 
-                        ## Split the path by \\ to seperate the college, department, and sub department where applicable
-                        courseDepartmentPathSeperated = courseDepartmentPath.split("\\")
-
-                        ## Skip this account if the department path could not be resolved
-                        if len(courseDepartmentPathSeperated) < 2 or courseDepartmentPathSeperated[0] == "":
-                            localSetup.logWarningThreadSafe(f"Could not resolve department path for account {courseInfoDict['Canvas_Account_id']} -- skipping")
+                        ## Skip this account if the structure could not be resolved
+                        if accountStructureDict.get("College", "") == "":
+                            localSetup.logWarningThreadSafe(f"Could not resolve account structure for account {courseInfoDict['Canvas_Account_id']} -- skipping")
                             continue
 
-                        ## The course college (## e.g. College of Business) is always the 0th element of the section 
-                        courseInfoDict["College"] = courseDepartmentPathSeperated[0].replace("College of ", "")
+                        ## Populate course structure metadata
+                        courseInfoDict["College"] = accountStructureDict.get("College", "").replace("College of ", "")
+                        courseInfoDict['Discpline'] = accountStructureDict.get("Discpline", "")
+                        courseInfoDict["Department"] = accountStructureDict.get("Department", "")
 
-                        ## Append the college name to the p1_targetAccountDataDict[courseInfoDict["Canvas_Account_id"]] list as the 0th element
-                        p1_targetAccountDataDict[courseInfoDict["Canvas_Account_id"]] = [courseInfoDict["College"]]
-
-                        ## The length of the seperated sections list tells whether the college is made of multiple disciplines
-                        ## or if it is all one. This changes where the department name is placed in the section list
-                        courseDepartmentPathNumberOfSections = len(courseDepartmentPathSeperated)
-
-                        ## If the length of the section list == 4, the college contains multiple disciplines
-                        if courseDepartmentPathNumberOfSections == 4:
-
-                            ## The discpline names (## e.g. Music) for college's with multiple disciplines is the 2nd element
-                            ## of the section list. Append the discpline name to the p1_targetAccountDataDict[courseInfoDict["Canvas_Account_id"]] list as the 1st element
-                            courseInfoDict['Discpline'] = courseDepartmentPathSeperated[1]
-                            p1_targetAccountDataDict[courseInfoDict["Canvas_Account_id"]].append(courseInfoDict['Discpline'])
-
-                            ## The department (## e.g. Undergraduate Music, Undergraduate_NNUO Music) is made by combining the
-                            ## 2nd element in the list and the course discpline
-                            courseInfoDict["Department"] = f"{courseDepartmentPathSeperated[2]} {courseInfoDict['Discpline']}"
-
-                            ## Append the department name to the p1_targetAccountDataDict[courseInfoDict["Canvas_Account_id"]] list as the 2nd element
-                            p1_targetAccountDataDict[courseInfoDict["Canvas_Account_id"]].append(courseInfoDict["Department"])
-
-                        ## If the length of the section list isn't 4
-                        else:
-                            ## The college name and discipline name is the same
-                            courseInfoDict['Discpline'] = courseInfoDict["College"]
-
-                            ## Append the discpline name to the p1_targetAccountDataDict[courseInfoDict["Canvas_Account_id"]] list as the 1st element
-                            p1_targetAccountDataDict[courseInfoDict["Canvas_Account_id"]].append(courseInfoDict['Discpline'])
-
-                            ## The department (## e.g. Undergraduate Nursing, Undergraduate RN-BSN Nursing) for single
-                            ## discipline colleges is made of up the secondary department component (## e.g. Undergraduate, Undergraduate RN-BSN)
-                            ## and the College discipline (## e.g. Nursing). 
-                            courseInfoDict["Department"] = f"{courseDepartmentPathSeperated[1]} {courseInfoDict['Discpline']}"
-
-                            ## Append the department name to the p1_targetAccountDataDict[courseInfoDict["Canvas_Account_id"]] list
-                            p1_targetAccountDataDict[courseInfoDict["Canvas_Account_id"]].append(courseInfoDict["Department"])
+                        ## Cache values for reuse by account id
+                        p1_targetAccountDataDict[courseInfoDict["Canvas_Account_id"]] = [
+                            courseInfoDict["College"],
+                            courseInfoDict['Discpline'],
+                            courseInfoDict["Department"],
+                        ]
                         
                     ## If the account id is already in the dict
                     else:
@@ -514,7 +484,7 @@ def termCompileCourseOutcomesScores (p1_CourseDict
                     and not targetStudentOutcomeResults['student name'].isnull().all()
                     and not targetStudentOutcomeResults['learning outcome rating'].isnull().all()
                     ):
-                        
+
                     ## Find the row of p1_targetOutcomeResultReportDf that has the highest rating points
                     highestRatingPointsEntry = targetStudentOutcomeResults[
                         targetStudentOutcomeResults[
@@ -523,14 +493,15 @@ def termCompileCourseOutcomesScores (p1_CourseDict
                                 "learning outcome rating points"
                                 ].max()
                         ]
-                    
-                    ## Add the highest rating date points to the outcomeDashboardDataDict
-                    outcomeDashboardDataDict.update({
-                        "Assignment_Type" : highestRatingPointsEntry["assessment type"].values[0]
-                        , "Outcome_Mastered" : highestRatingPointsEntry["learning outcome mastered"].values[0]
-                        , "Outcome_rating" : highestRatingPointsEntry["learning outcome rating"].values[0]
-                        , "Outcome_rating points" : highestRatingPointsEntry["learning outcome rating points"].values[0]
-                    })
+
+                    ## Add the highest rating date points to the outcomeDashboardDataDict if a valid entry was found
+                    if isPresent(highestRatingPointsEntry):
+                        outcomeDashboardDataDict.update({
+                            "Assignment_Type" : highestRatingPointsEntry["assessment type"].values[0]
+                            , "Outcome_Mastered" : highestRatingPointsEntry["learning outcome mastered"].values[0]
+                            , "Outcome_rating" : highestRatingPointsEntry["learning outcome rating"].values[0]
+                            , "Outcome_rating points" : highestRatingPointsEntry["learning outcome rating points"].values[0]
+                        })
                         
                     
                     
@@ -678,7 +649,8 @@ def targetDesignatorProcessOutcomeResults(
         ## Process each course concurrently
         def _worker(courseDict):
             ## If the courseDict's course_sis_id has 3400 in it
-            ##if "COMM1210" in courseDict["Course_sis_id"]:
+            # if "EDUC3410" not in courseDict["Course_sis_id"]:
+                # return
 
             ## Define a target course variables
             targetCourseSisId = courseDict["Course_sis_id"]
@@ -712,26 +684,21 @@ def targetDesignatorProcessOutcomeResults(
             ## Make a filtered outcomeResultReportDF for the current course
             targetOutcomeResultReportDf = outcomeResultReportDF[outcomeResultReportDF["Course_name"] == targetCourseName]
 
-            ## test without threading
-            # termCompileCourseOutcomesScores(
-            #     courseDict
-            #     , targetTermEnrollmentDf
-            #     , targetOutcomeResultsDf
-            #     , targetOutcomeResultReportDf
-            #     , outcomeResultsDashboardDataDictList
-            #     , p1_uniqueOutcomeInfoDictOfDicts
-            # )
-
+            ## Compile the Course outcome scores
             termCompileCourseOutcomesScores(
-                courseDict,
-                targetTermEnrollmentDf,
-                targetOutcomeResultsDf,
-                targetOutcomeResultReportDf,
-                outcomeResultsDashboardDataDictList,
-                p1_uniqueOutcomeInfoDictOfDicts,
+                courseDict
+                , targetTermEnrollmentDf
+                , targetOutcomeResultsDf
+                , targetOutcomeResultReportDf
+                , outcomeResultsDashboardDataDictList
+                , p1_uniqueOutcomeInfoDictOfDicts
             )
 
+        ## Default threaded run
         runThreadedRows(p1_activeCanvasOutcomeCoursesDf, _worker)
+
+        ## For testing, comment out runThreadedRows above and uncomment below
+        # runUnthreadedRows(p1_activeCanvasOutcomeCoursesDf, _worker)
             
 
         ## If there are any dashboard dicts in the outcomeResultsDashboardDataDictList
@@ -849,9 +816,8 @@ def termProcessOutcomeResults(p1_inputTerm
             else accountInfoDF.loc[accountInfoDF["name"] == targetAccountName, "canvas_account_id"].values[0]
             )
 
-        ## Use the targetCanvasAccountId to determine  and add the department specific path element
-        departmentSpecifcPathElement = CanvasReport.determineDepartmentSavePath(localSetup, targetCanvasAccountId)
-        termExternalOutputPath = os.path.join(localSetup.getExternalResourcePath("IE"), departmentSpecifcPathElement, schoolYear, p1_inputTerm)
+        ## Resolve structure metadata for the target account (used for reporting logic, not path parsing)
+        CanvasReport.determineCollegeDepartmentDiscipline(localSetup, targetCanvasAccountId)
 
         ## Create a Unique Outcome Title : Vendor guids dict
         uniqueOutcomeInfoDictOfDicts = {}
@@ -995,7 +961,10 @@ def termProcessOutcomeResults(p1_inputTerm
 
         ## Get the outcome results df for the target designator
         targetOutcomeResultsDf = CanvasReport.getOutcomeResultsDf(localSetup, p1_inputTerm, targetAccountName, p1_targetDesignator)
-        
+
+        ## Convert student sis id column to string to match enrollment dataframe types
+        targetOutcomeResultsDf["student sis id"] = targetOutcomeResultsDf["student sis id"].astype(str)
+
         ## Fill NA/NaN values with an empty string
         targetOutcomeResultsDf["learning outcome name"].fillna("", inplace=True)
 
@@ -1165,16 +1134,12 @@ def termProcessOutcomeResults(p1_inputTerm
         ## Filter the rawTermEnrollmentDf to only contain rows with student as the role 
         ## and active or concluded as the status
         termEnrollmentDf = rawTermEnrollmentDf[
-            (rawTermEnrollmentDf["role"] == "student") 
-            & (
-                (rawTermEnrollmentDf["status"] == "active")
-                | (rawTermEnrollmentDf["status"] == "concluded")
-                )
+            (rawTermEnrollmentDf["role"] == "student")
             ]
         ##termEnrollmentDf = rawTermEnrollmentDf[rawTermEnrollmentDf["role"] == "student"]
         
         ## Fill any na values of user id with -1
-        termEnrollmentDf.loc[:, "user_id"] = termEnrollmentDf["user_id"].fillna(-1)
+        termEnrollmentDf.loc[:, "user_id"] = termEnrollmentDf["user_id"].fillna(-1).astype(str)
 
         ## Create a thread for the current target designation
         targetDesignatorProcessOutcomeResults (

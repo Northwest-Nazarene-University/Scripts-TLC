@@ -57,9 +57,9 @@ def getNavigationTabs (p1_targetCourseSisId):
         navigationObject, _ = makeApiCall (localSetup, p1_apiUrl = navigationApiUrl)
         ## If the API status code is anything other than 200 it is an error, so log it and skip
         if (navigationObject.status_code != 200):
-            localSetup.logger.error("\nNavigation Error: " + str(navigationObject.status_code))
-            localSetup.logger.error(navigationApiUrl)
-            localSetup.logger.error(navigationObject.url)
+            localSetup.logErrorThreadSafe("\nNavigation Error: " + str(navigationObject.status_code))
+            localSetup.logErrorThreadSafe(navigationApiUrl)
+            localSetup.logErrorThreadSafe(navigationObject.url)
             return None
         ## If the API status code is 200, save the result as navigationTabs
         navigationTabs = navigationObject.json()
@@ -93,6 +93,11 @@ def updateCourseSyllabusTab (p1_targetCourseSisId):
             if tab['id'] == 'context_external_tool_4856':
                 simpleSyllabusTab = tab
 
+        ## If there is no syllabus tab, skip this course
+        if syllabusTab is None:
+            localSetup.logWarningThreadSafe(f"No syllabus tab found for course {p1_targetCourseSisId}")
+            return
+
         ## If the syllabus tab's visibility is public, or if its position is not equal to the length of the navigation tabs, hide the syllabus tab and move it to the end
         if syllabusTab['visibility'] == 'public' or syllabusTab['position'] != (len(navigationTabs) - 2):
             ## Create the base and specific course API urls
@@ -104,12 +109,12 @@ def updateCourseSyllabusTab (p1_targetCourseSisId):
             updateTabObject, _ = makeApiCall (localSetup, p1_apiUrl = updateTabApiUrl, p1_payload = payload, p1_apiCallType = "put")
             ## If the API status code is anything other than 200 it is an error, so log it and skip
             if (updateTabObject.status_code != 200):
-                localSetup.logger.error("\nUpdate Tab Error: " + str(updateTabObject.status_code))
-                localSetup.logger.error(updateTabApiUrl)
-                localSetup.logger.error(updateTabObject.url)
+                localSetup.logErrorThreadSafe("\nUpdate Tab Error: " + str(updateTabObject.status_code))
+                localSetup.logErrorThreadSafe(updateTabApiUrl)
+                localSetup.logErrorThreadSafe(updateTabObject.url)
                 return
             ## Log the fact that the tab was updated
-            localSetup.logger.info(f"\nSyllabus tab hidden for course {p1_targetCourseSisId}")
+            localSetup.logInfoThreadSafe(f"\nSyllabus tab hidden for course {p1_targetCourseSisId}")
 
         ## If there isn't a simple syllabus tab in the list or if it exists but it is not in position 2 tab is the simple syllabus tab
         if not simpleSyllabusTab or (simpleSyllabusTab.get('position') != 2 or simpleSyllabusTab.get('hidden') == True):
@@ -122,9 +127,9 @@ def updateCourseSyllabusTab (p1_targetCourseSisId):
             updateTabObject, _ = makeApiCall (localSetup, p1_apiUrl = updateTabApiUrl, p1_payload = payload, p1_apiCallType = "put")
             ## If the API status code is anything other than 200 it is an error, so log it and skip
             if (updateTabObject.status_code != 200):
-                localSetup.logger.error("\nUpdate Tab Error: " + str(updateTabObject.status_code))
-                localSetup.logger.error(updateTabApiUrl)
-                localSetup.logger.error(updateTabObject.url)
+                localSetup.logErrorThreadSafe("\nUpdate Tab Error: " + str(updateTabObject.status_code))
+                localSetup.logErrorThreadSafe(updateTabApiUrl)
+                localSetup.logErrorThreadSafe(updateTabObject.url)
                 return
             ## Log the fact that the tab was updated
             localSetup.logger.info(f"\nSimple Syllabus tab moved to position 2 for course {p1_targetCourseSisId}")

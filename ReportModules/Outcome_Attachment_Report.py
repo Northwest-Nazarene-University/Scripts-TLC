@@ -340,18 +340,6 @@ def outcomeAttachmentReport(row, p1_rawOutcomesDF, p1_outcomeCoursesMissingAttac
                 and not pd.isna(row[instructorColumn])
                 )
             ]
-            
-            ## Make a string of the missing outcomes
-            missingOutcomesString = ", ".join(missingOutcomes)
-
-            ## If there is more than one outcome in the missing outcomes list
-            if len(missingOutcomes) > 1:
-            
-                ## Get the last outcome in the missing outcomes list
-                lastMissingOutcome = missingOutcomes[-1]
-            
-                ## Replace the last outcome in the missing outcomes list with "and" + the last outcome
-                missingOutcomesString = missingOutcomesString.replace(lastMissingOutcome, f"and {lastMissingOutcome}")
 
             ## Make a string of the teacher names
             instructorNamesString = ", ".join(instructorNames)
@@ -359,13 +347,14 @@ def outcomeAttachmentReport(row, p1_rawOutcomesDF, p1_outcomeCoursesMissingAttac
             ## Make a string of the teacher emails
             instructorEmailsString = ", ".join(instructorEmails)
             
-            ## Add the course's information to the dictionary of courses missing outcomes
+            ## Add one dataframe row per missing outcome (atomic Required Outcome values).
             with _sharedDataLock:
-                p1_outcomeCoursesMissingAttachmentsDataDict["Course_name"].append(courseName)
-                p1_outcomeCoursesMissingAttachmentsDataDict["Required Outcome"].append(missingOutcomesString)
-                p1_outcomeCoursesMissingAttachmentsDataDict["Issue"].append("The Associated Outcome/s is/are not attached to a published assignment")
-                p1_outcomeCoursesMissingAttachmentsDataDict["Instructor Name"].append(instructorNamesString)
-                p1_outcomeCoursesMissingAttachmentsDataDict["Instructor Email"].append(instructorEmailsString)
+                for missingOutcome in missingOutcomes:
+                    p1_outcomeCoursesMissingAttachmentsDataDict["Course_name"].append(courseName)
+                    p1_outcomeCoursesMissingAttachmentsDataDict["Required Outcome"].append(str(missingOutcome).strip())
+                    p1_outcomeCoursesMissingAttachmentsDataDict["Issue"].append("The Associated Outcome is not attached to a published assignment")
+                    p1_outcomeCoursesMissingAttachmentsDataDict["Instructor Name"].append(instructorNamesString)
+                    p1_outcomeCoursesMissingAttachmentsDataDict["Instructor Email"].append(instructorEmailsString)
 
     except Exception as Error:
         errorHandler.sendError (functionName, Error)
@@ -446,8 +435,8 @@ def termOutcomeAttachmentReport (p1_inputTerm
             # if row['Course_sis_id'] == "SP2026_EDUC3090_1L":
             #     outcomeAttachmentReport(row, rawOutcomesDF, outcomeCoursesMissingAttachments)
 
-            ## If the row is not a nan
-            if not isPresent(row["Course_sis_id"]):
+            ## If the row exists
+            if isPresent(row["Course_sis_id"]):
                 outcomeAttachmentReport(row, rawOutcomesDF, outcomeCoursesMissingAttachments)
 
         runThreadedRows(termActiveOutcomeCoursesDF, _worker)

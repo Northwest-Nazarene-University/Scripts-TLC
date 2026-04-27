@@ -427,12 +427,12 @@ class LocalSetup:
         termCodes = set()
         for term, logic in termSchoolYearLogic.items():
             decadeForTerm = startDecade if logic == "current-next" else endDecade
-            startMonth = termMonthRanges[term][0]
-            termCodes.update(self.getTermCodes(startMonth, decadeForTerm))
+            midMonth = (termMonthRanges[term][0] + termMonthRanges[term][1]) / 2
+            termCodes.update(self.getTermCodes(midMonth, decadeForTerm))
         return termCodes
 
     ## Return the most recent completed terms
-    def getMostRecentCompletedTerms(self) -> set:
+    def getPreviousTerms(self) -> set:
         """
         Return the most recently completed full-year term codes based on the current date.
         ## e.g. ["SU2024", "SG2024"]
@@ -452,7 +452,7 @@ class LocalSetup:
         return self.getTerms(termMonthRanges[previousTerm][0], yearForPreviousTerm)
 
     ## Return the most recent completed term codes
-    def getMostRecentCompletedTermCodes(self) -> set:
+    def getPreviousTermCodes(self) -> set:
         """
         Return the most recently completed decade term codes based on the current date.
         ## e.g. ["SU24", "SG24"]
@@ -465,7 +465,8 @@ class LocalSetup:
         previousTermYear = currentYear - 1 if termSchoolYearLogic[previousTerm] == 'current-next' else currentYear
         startYear, endYear = self._getSchoolYearRange(previousTerm, previousTermYear)
         decadeForPreviousTerm = (startYear % 100) if termSchoolYearLogic[previousTerm] == "current-next" else (endYear % 100)
-        return self.getTermCodes(termMonthRanges[previousTerm][0], decadeForPreviousTerm)
+        previousTermMidMonth = (termMonthRanges[previousTerm][0] + termMonthRanges[previousTerm][1]) / 2
+        return self.getTermCodes(previousTermMidMonth, decadeForPreviousTerm)
 
     ## Return the most recent completed decade term codes        
     def getPreviousSchoolYearTerms(self) -> set:
@@ -504,8 +505,8 @@ class LocalSetup:
         termCodes = set()
         for term, logic in termSchoolYearLogic.items():
             decadeForTerm = prevStartDecade if logic == "current-next" else prevEndDecade
-            startMonth = termMonthRanges[term][0]
-            termCodes.update(self.getTermCodes(startMonth, decadeForTerm))
+            midMonth = (termMonthRanges[term][0] + termMonthRanges[term][1]) / 2
+            termCodes.update(self.getTermCodes(midMonth, decadeForTerm))
         return termCodes
 
     ## Return the next term
@@ -533,9 +534,10 @@ class LocalSetup:
         currentTerm = self._determineCurrentTerm(currentMonth)
         nextTerm = self._determineNextTerm(currentTerm)
         ## Determine the correct year for the next term
-        nextTermYear = currentYear if termSchoolYearLogic[nextTerm] == 'current-next' else currentYear + 1
+        nextTermYear = currentYear if currentTerm != "Fall" else currentYear + 1
         nextTermDecade = nextTermYear % 100
-        return self.getTermCodes(termMonthRanges[nextTerm][0], nextTermDecade)
+        nextTermMidMonth = (termMonthRanges[nextTerm][0] + termMonthRanges[nextTerm][1]) / 2
+        return self.getTermCodes(nextTermMidMonth, nextTermDecade)
 
 
     ## Return all terms for the next school year

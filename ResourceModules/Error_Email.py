@@ -6,10 +6,10 @@ import traceback, logging, os, sys, threading
 
 try: ## If the module is run directly
     from Core_Microsoft_Api import sendOutlookEmail
-    from Local_Setup import logError as _logError
+    from Local_Setup import logError
 except ImportError: ## Otherwise as a relative import if the module is imported
     from .Core_Microsoft_Api import sendOutlookEmail
-    from .Local_Setup import logError as _logError
+    from .Local_Setup import logError
 
 ## Import Config Variables
 from Common_Configs import scriptLibrary, serviceEmailAccount, authorContactInformation
@@ -65,11 +65,11 @@ Error Description/Code: {p1_errorInfo}
         functionName = "Send Error"
         with self._sendErrorLock:
             ## Log the error
-            _logError(self.localSetup, f"\nA script error occurred while running {p1_functionName}. Error: {str(p1_errorInfo)}")
+            logError(self.localSetup, f"\nA script error occurred while running {p1_functionName}. Error: {str(p1_errorInfo)}")
 
             ## If the function has already triggered an error email, skip sending again
             if p1_functionName in self.sentErrors:
-                _logError(self.localSetup, f"\nError email already sent for {p1_functionName}")
+                logError(self.localSetup, f"\nError email already sent for {p1_functionName}")
                 return
 
             ## ---- Sensitive-keyword list (lowercase) ----
@@ -112,7 +112,7 @@ Error Description/Code: {p1_errorInfo}
             fullErrorInfo = f"{p1_errorInfo}: \n\n{traceWithLocals}"
 
             ## Log the full (unsanitized) error info locally
-            _logError(self.localSetup, f"\nFull Error Info:\n{fullErrorInfo}")
+            logError(self.localSetup, f"\nFull Error Info:\n{fullErrorInfo}")
 
             ## Save the sanitized error info for the email (no locals, sensitive info redacted)
             safeErrorInfo = f"{p1_errorInfo}: \n\n{traceSafe}"
@@ -131,4 +131,4 @@ Error Description/Code: {p1_errorInfo}
 
             ## Track that an error email has been sent for this function
             self.sentErrors.add(p1_functionName)
-            _logError(self.localSetup, f"\nError Email Sent for {p1_functionName}")
+            logError(self.localSetup, f"\nError Email Sent for {p1_functionName}")

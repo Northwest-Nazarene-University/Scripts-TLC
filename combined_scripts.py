@@ -14,7 +14,6 @@
 
 ## Import Generic Moduels
 import os, sys
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 import pandas as pd
 
@@ -39,7 +38,7 @@ try: ## Irregular try clause, do not comment out in testing
         retrieveDataForRelevantCommunication,
         addOutcomeToCourse,
     )
-    from TLC_Common import isMissing
+    from TLC_Common import isMissing, runThreadedRows
 
 except ImportError:
     from ResourceModules.Local_Setup import LocalSetup
@@ -48,7 +47,7 @@ except ImportError:
         retrieveDataForRelevantCommunication,
         addOutcomeToCourse,
     )
-    from ResourceModules.TLC_Common import isMissing
+    from ResourceModules.TLC_Common import isMissing, runThreadedRows
 
 # Create LocalSetup and localSetup.logger
 localSetup = LocalSetup(datetime.now(), __file__)
@@ -76,18 +75,16 @@ def termOutcomeExporter(p1_inputTerm, p1_targetDesignator):
         if isMissing(completeActiveCanvasCoursesDF):
 
             ## Log the fact that there are no active courses
-            localSetup.logger.info(f"\nNo {p1_targetDesignator} active courses within {p1_inputTerm}")
+            localSetup.logInfoThreadSafe(f"\nNo {p1_targetDesignator} active courses within {p1_inputTerm}")
 
             ## Return
             return
 
-        ## Process each course in a thread pool
-        MAX_WORKERS = 25
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            for index, row in completeActiveCanvasCoursesDF.iterrows():
-
-                ## Submit the add outcome task to the thread pool
-                executor.submit(addOutcomeToCourse, localSetup, errorHandler, row, auxillaryDFDict)
+        ## Process each course concurrently
+        runThreadedRows(
+            completeActiveCanvasCoursesDF,
+            lambda row: addOutcomeToCourse(localSetup, errorHandler, row, auxillaryDFDict),
+        )
 
     except Exception as Error:
         errorHandler.sendError (functionName, Error)
@@ -344,26 +341,27 @@ if __name__ == "__main__":
 ## ===========================================================================
 
 ## Author: Bryce Miller - brycezmiller@nnu.edu
-## Last Updated by: Bryce Miller (refactored to use common TLC modules)
+## Last Updated by: Bryce Miller
 
-## Import Generic Moduels
-
-import os, sys, threading, time, pandas as pd
+## Import Generic Modules
+import os, sys, pandas as pd
 from datetime import datetime
 
 ## Add the resource modules path
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules"))
 
-# Try direct imports if run as main, else relative for package usage
+## Try direct imports if run as main, else relative for package usage
 try:
     from Local_Setup import LocalSetup
-    from TLC_Common import makeApiCall
     from Error_Email import errorEmail
+    from TLC_Action import updateCourseField
+    from TLC_Common import readTargetCsv, runThreadedRows
     from Common_Configs import coreCanvasApiUrl, canvasAccessToken, scriptLibrary
-except ImportError:  # When imported as a package/module
+except ImportError:  ## When imported as a package/module
     from .Local_Setup import LocalSetup
-    from .TLC_Common import makeApiCall
     from .Error_Email import errorEmail
+    from .TLC_Action import updateCourseField
+    from .TLC_Common import readTargetCsv, runThreadedRows
     from .Common_Configs import coreCanvasApiUrl, canvasAccessToken, scriptLibrary
 
 ## Define the script name, purpose, and external requirements for logging and error reporting purposes
@@ -376,142 +374,54 @@ externalRequirements = r"""
 To function properly, this script requires:
 - Valid Canvas API configuration in Common_Configs (coreCanvasApiUrl, canvasAccessToken).
 - A CSV file named "Target_Canvas_Course_Ids.csv" located in the Canvas internal
-  resources directory (LocalSetup.getInternalResourcePaths("Canvas")).
+  resources directory (LocalSetup.getInternalResourcePaths("Canvas")) with columns:
+    - canvas_course_id
+    - canvas_account_id
 """
 
-## Set the account for the given course ID
-def changeCourseAccount(
-    localSetup: LocalSetup,
-    errorHandler: errorEmail,
-    courseId: str,
-    accountId: str,
-) -> None:
-    """
-    Change the account for a Canvas course given its course ID and target account ID.
-    Uses TLC_Common.makeApiCall with retry behavior.
-    """
-    functionName = "changeCourseAccount"
-    try:
-        changeAccountUrl = f"{coreCanvasApiUrl}courses/{courseId}"
-        payload = {"course": {"account_id": accountId}}
-
-        response, _ = makeApiCall(
-            localSetup=localSetup,
-            p1_apiUrl=changeAccountUrl,
-            p1_payload=payload,
-            p1_apiCallType="put",
-        )
-
-        ## Get the status code
-        statusCode = getattr(response, "status_code", None)
-
-        if statusCode == 200:
-            localSetup.logger.info(
-                f"Successfully changed account for course with ID: {courseId} "
-                f"to account_id: {accountId}"
-            )
-        else:
-            localSetup.logger.warning(
-                f"Failed to change account for course with ID: {courseId}. "
-                f"Status code: {statusCode}"
-            )
-
-    except Exception as Error:
-        errorHandler.sendError(functionName, Error)
-
-
+## Read the CSV and change the Canvas account for each listed course
 def changeListedCoursesAccount(
     localSetup: LocalSetup,
     errorHandler: errorEmail,
     csvFileName: str = "Target_Canvas_Course_Ids.csv",
-    threadSleep: float = 0.1,
 ) -> None:
-    """
-    Read a CSV file of course/account IDs and change each course's account.
-
-    Expected columns in CSV:
-      - canvas_course_id
-      - canvas_account_id
-    """
     functionName = "changeListedCoursesAccount"
     try:
-        ## Canvas internal resources root
-        canvasResourcePath = localSetup.getInternalResourcePaths("Canvas")
-        targetCoursesCsvFilePath = os.path.join(canvasResourcePath, csvFileName)
-
-        ## Log start
-        localSetup.logger.info(
-            f"Starting {functionName}. Input file: {targetCoursesCsvFilePath}"
+        ## Step 1: Load and validate the target CSV
+        csvPath = os.path.join(localSetup.getInternalResourcePaths("Canvas"), csvFileName)
+        df = readTargetCsv(
+            localSetup, errorHandler, csvPath,
+            requiredColumns=["canvas_course_id", "canvas_account_id"],
         )
+        if df.empty:
+            return
 
-        ## Verify CSV file exists
-        if not os.path.exists(targetCoursesCsvFilePath):
-            raise FileNotFoundError(
-                f"Target courses CSV not found: {targetCoursesCsvFilePath}"
-            )
-
-        ## Thread tracking
-        ongoingThreads = []
-
-        ## Load CSV
-        rawTargetCoursesDf = pd.read_csv(targetCoursesCsvFilePath)
-
-        ## Filter out rows with null canvas_course_id
-        targetCoursesDf = rawTargetCoursesDf[
-            rawTargetCoursesDf["canvas_course_id"].notna()
-        ]
-
-        ## Iterate and spawn threads
-        for _, row in targetCoursesDf.iterrows():
-            courseId = str(row["canvas_course_id"]).replace(".0", "")
+        ## Step 2: Define the per-row worker
+        def _worker(row):
+            courseId  = str(row["canvas_course_id"]).replace(".0", "")
             accountId = str(row["canvas_account_id"]).replace(".0", "")
-
-            ## Skip if either is empty
-            if not courseId or not accountId:
-                localSetup.logger.warning(
+            if courseId and accountId:
+                updateCourseField(localSetup, errorHandler, courseId, "account_id", accountId)
+            else:
+                localSetup.logWarningThreadSafe(
                     f"Skipping row with courseId='{courseId}' accountId='{accountId}'"
                 )
-                continue
 
-            ## Start thread to change account and append it to the tracking list
-            changeAccountThread = threading.Thread(
-                target=changeCourseAccount,
-                args=(localSetup, errorHandler, courseId, accountId),
-                name=f"change_course_{courseId}",
-            )
-            changeAccountThread.start()
-            ongoingThreads.append(changeAccountThread)
-
-            # Throttle slightly to avoid hammering the API
-            time.sleep(threadSleep)
-
-        # Wait for all threads to complete
-        for thread in ongoingThreads:
-            thread.join()
-
-        ## Log completion
-        localSetup.logger.info(
-            f"{functionName} completed. Processed {len(targetCoursesDf)} courses."
-        )
+        ## Step 3: Process all rows concurrently
+        runThreadedRows(df, _worker)
+        localSetup.logInfoThreadSafe(f"{functionName} completed. Processed {len(df)} courses.")
 
     except Exception as Error:
         errorHandler.sendError(functionName, Error)
 
 if __name__ == "__main__":
-    # Initialize shared LocalSetup (paths, logging)
+    ## Initialize shared LocalSetup (paths, logging)
     localSetup = LocalSetup(datetime.now(), __file__)
 
-    # Setup the error handler (sends one email per function error)
-    errorHandler = errorEmail(
-        scriptName,
-        scriptPurpose,
-        externalRequirements,
-        localSetup,
-    )
+    ## Setup the error handler (sends one email per function error)
+    errorHandler = errorEmail(scriptName, scriptPurpose, externalRequirements, localSetup)
 
-    localSetup.logger.info(
-        f"Starting script: {scriptName} | Purpose: {scriptPurpose.strip()}"
-    )
+    localSetup.logger.info(f"Starting script: {scriptName} | Purpose: {scriptPurpose.strip()}")
 
     changeListedCoursesAccount(localSetup, errorHandler)
 
@@ -519,34 +429,37 @@ if __name__ == "__main__":
     input("Press Enter to exit...")
 
 
+
 ## ===========================================================================
 ## FILE: ActionModules\Change_Grading_Scheme_For_Listed_Courses.py
 ## ===========================================================================
 
+## Author: Bryce Miller - brycezmiller@nnu.edu
+## Last Updated by: Bryce Miller
 
-# Author: Bryce Miller - brycezmiller@nnu.edu
-# Last Updated by: Bryce Miller (refactored to update grading standards via Courses API)
-
-import os, threading, time, pandas as pd, sys
+## Import Generic Modules
+import os, sys, pandas as pd
 from datetime import datetime
 
-## Ensure ResourceModules are importable when running from ActionModules
+## Add the resource modules path
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules"))
 
-# Try direct imports if run as main, else relative for package usage
+## Try direct imports if run as main, else relative for package usage
 try:
     from Local_Setup import LocalSetup
-    from TLC_Common import makeApiCall
     from Error_Email import errorEmail
+    from TLC_Action import updateCourseField
+    from TLC_Common import readTargetCsv, runThreadedRows
     from Common_Configs import coreCanvasApiUrl, canvasAccessToken
-except ImportError:  # When imported as a package/module
+except ImportError:  ## When imported as a package/module
     from .Local_Setup import LocalSetup
-    from .TLC_Common import makeApiCall
     from .Error_Email import errorEmail
+    from .TLC_Action import updateCourseField
+    from .TLC_Common import readTargetCsv, runThreadedRows
     from .Common_Configs import coreCanvasApiUrl, canvasAccessToken
 
 ## Define the script name, purpose, and external requirements for logging and error reporting purposes
-scriptName = "Change_Grading_Standard_For_Listed_Courses"
+scriptName = os.path.basename(__file__).replace(".py", "")
 scriptPurpose = r"""
 This script reads a CSV file containing Canvas course IDs and grading standard IDs
 and updates the grading standard for each listed course using the Canvas Courses API
@@ -556,172 +469,70 @@ externalRequirements = r"""
 To function properly, this script requires:
 - Valid Canvas API configuration in Common_Configs (coreCanvasApiUrl, canvasAccessToken).
 - A CSV file located in the Canvas internal resources directory
-  (LocalSetup.getInternalResourcePaths("Canvas")) with:
+  (LocalSetup.getInternalResourcePaths("Canvas")) with columns:
     - canvas_course_id
     - grading_standard_id  (or grading_scheme_id)
 """
 
-## Change the grading standard for the given course ID
-def changeCourseGradingStandard(
-    localSetup: LocalSetup,
-    errorHandler: errorEmail,
-    header: dict,
-    courseId: str,
-    gradingStandardId: str,
-) -> None:
-    """
-    Change the grading standard for a Canvas course given its course ID and
-    target grading standard ID.
-
-    Uses the Courses "Update a course" endpoint:
-    PUT /api/v1/courses/:id
-    with course[grading_standard_id].
-    """
-    functionName = "changeCourseGradingStandard"
-    try:
-        updateCourseUrl = f"{coreCanvasApiUrl}courses/{courseId}"
-        # Build payload using nested course object, matching Rails-style parameters
-        payload = {
-            "course": {
-                "grading_standard_id": int(gradingStandardId)
-            }
-        }
-
-        response, _ = makeApiCall(
-            localSetup,
-            p1_apiUrl=updateCourseUrl,
-            p1_payload=payload,
-            p1_apiCallType="put"
-        )
-
-        # makeApiCall may return a Response or a list; handle the primary case.
-        statusCode = getattr(response, "status_code", None)
-
-        if statusCode == 200:
-            localSetup.logger.info(
-                f"Successfully changed grading_standard_id for course with ID: "
-                f"{courseId} to {gradingStandardId}"
-            )
-        else:
-            localSetup.logger.warning(
-                f"Failed to change grading_standard_id for course with ID: {courseId}. "
-                f"Status code: {statusCode}"
-            )
-
-    except Exception as Error:
-        errorHandler.sendError(functionName, Error)
-
-
-## Change grading standards for listed courses from CSV
+## Read the CSV and update the grading standard for each listed course
 def changeListedCoursesGradingStandard(
     localSetup: LocalSetup,
     errorHandler: errorEmail,
     csvFileName: str = "Target_Canvas_Course_Ids.csv",
-    threadSleep: float = 0.1,
 ) -> None:
-    """
-    Read a CSV file of course/grading standard IDs and change each course's grading standard.
-
-    Expected columns in CSV:
-      - canvas_course_id
-      - grading_standard_id  (preferred)
-        or grading_scheme_id (alias, will be treated as grading_standard_id)
-    """
     functionName = "changeListedCoursesGradingStandard"
     try:
-        # Canvas internal resources root
-        canvasResourcePath = localSetup.getInternalResourcePaths("Canvas")
-        targetCoursesCsvFilePath = os.path.join(canvasResourcePath, csvFileName)
-
-        localSetup.logger.info(
-            f"Starting {functionName}. Input file: {targetCoursesCsvFilePath}"
+        ## Step 1: Load and validate the target CSV
+        csvPath = os.path.join(localSetup.getInternalResourcePaths("Canvas"), csvFileName)
+        df = readTargetCsv(
+            localSetup, errorHandler, csvPath,
+            requiredColumns=["canvas_course_id"],
         )
+        if df.empty:
+            return
 
-        if not os.path.exists(targetCoursesCsvFilePath):
-            raise FileNotFoundError(
-                f"Target courses CSV not found: {targetCoursesCsvFilePath}"
-            )
-
-        header = {"Authorization": f"Bearer {canvasAccessToken}"}
-
-        # Thread tracking
-        ongoingThreads = []
-
-        # Load CSV
-        rawTargetCoursesDf = pd.read_csv(targetCoursesCsvFilePath)
-
-        # Keep rows that have a value in canvas_course_id
-        if "canvas_course_id" not in rawTargetCoursesDf.columns:
-            raise KeyError(
-                "Expected column 'canvas_course_id' not found in CSV."
-            )
-
-        # Support either grading_standard_id (Canvas term) or grading_scheme_id (your wording)
-        gradingColumnName = None
-        if "grading_standard_id" in rawTargetCoursesDf.columns:
-            gradingColumnName = "grading_standard_id"
-        elif "grading_scheme_id" in rawTargetCoursesDf.columns:
-            gradingColumnName = "grading_scheme_id"
+        ## Step 2: Resolve which column holds the grading standard ID
+        ## (Canvas API uses "grading_standard_id"; older CSVs may use "grading_scheme_id")
+        if "grading_standard_id" in df.columns:
+            gradingCol = "grading_standard_id"
+        elif "grading_scheme_id" in df.columns:
+            gradingCol = "grading_scheme_id"
         else:
             raise KeyError(
-                "Expected column 'grading_standard_id' or 'grading_scheme_id' "
-                "not found in CSV."
+                "Expected column 'grading_standard_id' or 'grading_scheme_id' not found in CSV."
             )
 
-        targetCoursesDf = rawTargetCoursesDf[
-            rawTargetCoursesDf["canvas_course_id"].notna()
-        ]
-
-        localSetup.logger.info(
-            f"Found {len(targetCoursesDf)} target course rows with non-null canvas_course_id."
-        )
-
-        # Iterate and spawn threads
-        for _, row in targetCoursesDf.iterrows():
-            courseId = str(row["canvas_course_id"]).replace(".0", "")
-            gradingStandardId = str(row[gradingColumnName]).replace(".0", "")
-
-            # Skip if either is empty
+        ## Step 3: Define the per-row worker
+        def _worker(row):
+            courseId          = str(row["canvas_course_id"]).replace(".0", "")
+            gradingStandardId = str(row[gradingCol]).replace(".0", "")
             if not courseId or not gradingStandardId:
-                localSetup.logger.warning(
-                    f"Skipping row with courseId='{courseId}' "
-                    f"{gradingColumnName}='{gradingStandardId}'"
+                localSetup.logWarningThreadSafe(
+                    f"Skipping row with courseId='{courseId}' {gradingCol}='{gradingStandardId}'"
                 )
-                continue
-
-            changeGradingThread = threading.Thread(
-                target=changeCourseGradingStandard,
-                args=(localSetup, errorHandler, header, courseId, gradingStandardId),
-                name=f"change_grading_standard_{courseId}",
-                daemon=True,
+                return
+            ## The API expects an integer for grading_standard_id
+            updateCourseField(
+                localSetup, errorHandler, courseId,
+                "grading_standard_id", int(gradingStandardId)
             )
-            changeGradingThread.start()
-            ongoingThreads.append(changeGradingThread)
 
-            # Sleep for a short time to avoid overloading the server
-            time.sleep(threadSleep)
-
-        # Check if all ongoing change grading standard threads have completed
-        for thread in ongoingThreads:
-            thread.join()
-
-        localSetup.logger.info(
-            f"{functionName} completed. Processed {len(targetCoursesDf)} courses."
-        )
+        ## Step 4: Process all rows concurrently
+        runThreadedRows(df, _worker)
+        localSetup.logInfoThreadSafe(f"{functionName} completed. Processed {len(df)} courses.")
 
     except Exception as Error:
         errorHandler.sendError(functionName, Error)
 
 if __name__ == "__main__":
-    ## Initialize the local setup object and error handler
+    ## Initialize shared LocalSetup (paths, logging)
     localSetup = LocalSetup(datetime.now(), __file__)
+
+    ## Setup the error handler (sends one email per function error)
     errorHandler = errorEmail(scriptName, scriptPurpose, externalRequirements, localSetup)
 
-    localSetup.logger.info(
-        f"Starting script: {scriptName} | Purpose: {scriptPurpose.strip()}"
-    )
+    localSetup.logger.info(f"Starting script: {scriptName} | Purpose: {scriptPurpose.strip()}")
 
-    # Change the grading standard for the listed courses
     changeListedCoursesGradingStandard(localSetup, errorHandler)
 
     localSetup.logger.info(f"Script {scriptName} completed.")
@@ -735,181 +546,80 @@ if __name__ == "__main__":
 ## Author: Bryce Miller - brycezmiller@nnu.edu
 ## Last Updated by: Bryce Miller
 
-import traceback, os, sys, logging, requests, threading, time, pandas as pd
+## Import Generic Modules
+import os, sys, pandas as pd
 from datetime import datetime
 
-## Define the script name, purpose, and external requirements for logging and error reporting purposes
-scriptName = "Change_Long_Name_For_Listed_Courses"
+## Add the resource modules path
+sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules"))
 
+## Try direct imports if run as main, else relative for package usage
+try:
+    from Local_Setup import LocalSetup
+    from Error_Email import errorEmail
+    from TLC_Action import updateCourseField
+    from TLC_Common import readTargetCsv, runThreadedRows
+    from Common_Configs import coreCanvasApiUrl, canvasAccessToken
+except ImportError:  ## When imported as a package/module
+    from .Local_Setup import LocalSetup
+    from .Error_Email import errorEmail
+    from .TLC_Action import updateCourseField
+    from .TLC_Common import readTargetCsv, runThreadedRows
+    from .Common_Configs import coreCanvasApiUrl, canvasAccessToken
+
+## Define the script name, purpose, and external requirements for logging and error reporting purposes
+scriptName = os.path.basename(__file__).replace(".py", "")
 scriptPurpose = r"""
 This script reads a CSV file containing Canvas course IDs and changes the long name for each course using the Canvas API.
 """
 externalRequirements = r"""
-To function properly, this script requires a valid access header and URL, and a CSV file named "Target_Canvas_Course_Ids.csv" located in the Canvas Resources directory.
+To function properly, this script requires:
+- Valid Canvas API configuration in Common_Configs (coreCanvasApiUrl, canvasAccessToken).
+- A CSV file named "Target_Canvas_Course_Ids.csv" located in the Canvas internal
+  resources directory (LocalSetup.getInternalResourcePaths("Canvas")) with columns:
+    - canvas_course_id
+    - long_name
 """
 
-## Date Variables
-currentDateTime = datetime.now()
-currentMonth = currentDateTime.month
-currentYear = currentDateTime.year
-
-## Set working directory
-os.chdir(os.path.dirname(__file__))
-
-## Relative Path (this changes depending on the working directory of the main script)
-PFRelativePath = r".\\"
-
-## If the Canvas directory is not in the folder the relative path points to
-## find the Canvas directory and set the relative path to its parent folder
-while "Scripts TLC" not in os.listdir(PFRelativePath):
-    PFRelativePath = f"..\\{PFRelativePath}"
-
-## Change the relative path to an absolute path
-absolutePath = f"{os.path.abspath(PFRelativePath)}\\"
-
-## Local Path Variables
-baseLogPath = f"{absolutePath}Logs\\{scriptName}\\"
-baseLocalInputPath = f"{absolutePath}Canvas Resources\\"
-configPath = f"{absolutePath}Configs TLC\\"
-
-## If the base log path doesn't already exist, create it
-if not os.path.exists(baseLogPath):
-    os.makedirs(baseLogPath, mode=0o777, exist_ok=False)
-
-## Add Input Modules to the sys path
-sys.path.append(f"{absolutePath}Scripts TLC\\ResourceModules")
-sys.path.append(f"{absolutePath}Scripts TLC\\ActionModules")
-
-## Import local modules
-from TLC_Common import makeApiCall  ## Import makeApiCall
-
-## Canvas Instance Url
-coreCanvasApiUrl = None
-## Open the Core_Canvas_Url.txt from the config path
-with open(f"{configPath}Core_Canvas_Url.txt", "r") as file:
-    coreCanvasApiUrl = file.readlines()[0]
-
-## If the script is run as main the folder with the access token is in the parent directory
-canvasAccessToken = ""
-
-## Open and retrieve the Canvas Access Token
-with open(f"{configPath}Canvas_Access_Token.txt", "r") as file:
-    canvasAccessToken = file.readlines()[0]
-
-## Log configurations
-logger = logging.getLogger(__name__)
-rootFormat = ("%(asctime)s %(levelname)s %(message)s")
-FORMAT = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-logging.basicConfig(format=rootFormat, filemode="a", level=logging.INFO)
-
-## Local setup shim for compatibility with shared modules
-class _LoggerShim:
-    def __init__(self, p_logger):
-        self.logger = p_logger
-localSetup = _LoggerShim(logger)
-setOfFunctionsWithErrors = set()
-
-## Info Log Handler
-infoLogFile = f"{baseLogPath}\\Info Log.txt"
-logInfo = logging.FileHandler(infoLogFile, mode='a')
-logInfo.setLevel(logging.INFO)
-logInfo.setFormatter(FORMAT)
-localSetup.logger.addHandler(logInfo)
-
-## Warning Log handler
-warningLogFile = f"{baseLogPath}\\Warning Log.txt"
-logWarning = logging.FileHandler(warningLogFile, mode='a')
-logWarning.setLevel(logging.WARNING)
-logWarning.setFormatter(FORMAT)
-localSetup.logger.addHandler(logWarning)
-
-## Error Log handler
-errorLogFile = f"{baseLogPath}\\Error Log.txt"
-logError = logging.FileHandler(errorLogFile, mode='a')
-logError.setLevel(logging.ERROR)
-logError.setFormatter(FORMAT)
-localSetup.logger.addHandler(logError)
-
-## This function handles function errors
-def errorHandler(p1_ErrorLocation, p1_errorInfo, sendOnce=True):
-    functionName = "errorHandler"
-    localSetup.logger.error(f"\nA script error occurred while running {p1_ErrorLocation}. Error: {str(p1_errorInfo)}")
-
-    ## Only log once per function
-    if p1_ErrorLocation not in setOfFunctionsWithErrors:
-        setOfFunctionsWithErrors.add(p1_ErrorLocation)
-        localSetup.logger.error(f"\nError logged for {p1_ErrorLocation}")
-    else:
-        localSetup.logger.error(f"\nError already logged for {p1_ErrorLocation}")
-
-## This function sets the long name for a course given its Canvas course ID and long name
-def setCourseLongName(p1_header, p1_courseId, p1_longName):
-    functionName = "setCourseLongName"
-    try:
-        setLongNameApiUrl = f"{coreCanvasApiUrl}courses/{p1_courseId}"
-        payload = {"course": {"name": p1_longName}}
-        response, _ = makeApiCall(localSetup, p1_header=p1_header, p1_apiUrl=setLongNameApiUrl, p1_payload=payload, p1_apiCallType="put")
-
-        if response.status_code == 200:
-            localSetup.logger.info(f"Successfully set long name for course with ID: {p1_courseId}")
-        else:
-            localSetup.logger.warning(f"Failed to set long name for course with ID: {p1_courseId}. Status code: {response.status_code}")
-
-    except Exception as Error:
-        errorHandler(functionName, Error)
-
-## This function reads the CSV file and sets the long name for the listed courses
-def setListedCoursesLongName():
+## Read the CSV and set the long name for each listed course
+def setListedCoursesLongName(localSetup: LocalSetup, errorHandler: errorEmail) -> None:
     functionName = "setListedCoursesLongName"
     try:
-        targetCoursesCsvFilePath = f"{baseLocalInputPath}Target_Canvas_Course_Ids.csv"
-        header = {'Authorization': f"Bearer {canvasAccessToken}"}
-        
-        ## Define the necessary thread list
-        ongoingSetLongNameThreads = []
+        ## Step 1: Load and validate the target CSV
+        csvPath = os.path.join(
+            localSetup.getInternalResourcePaths("Canvas"), "Target_Canvas_Course_Ids.csv"
+        )
+        df = readTargetCsv(
+            localSetup, errorHandler, csvPath,
+            requiredColumns=["canvas_course_id", "long_name"],
+        )
+        if df.empty:
+            return
 
-        ## Read the CSV file using pandas
-        rawTargetCoursesDf = pd.read_csv(targetCoursesCsvFilePath)
-
-        ## Retain only rows that have a value in canvas_course_id
-        targetCoursesDf = rawTargetCoursesDf[rawTargetCoursesDf["canvas_course_id"].notna()]
-
-        ## Iterate over each row in the DataFrame
-        for index, row in targetCoursesDf.iterrows():
-
-            ## Get the course id from the row
-            courseId = str(row["canvas_course_id"]).replace('.0', '')
-
-            ## Get the long name from the row
+        ## Step 2: Define the per-row worker
+        def _worker(row):
+            courseId = str(row["canvas_course_id"]).replace(".0", "")
             longName = str(row["long_name"])
+            updateCourseField(localSetup, errorHandler, courseId, "name", longName)
 
-            ## Create a thread to set the long name for the course
-            setLongNameThread = threading.Thread(target=setCourseLongName, args=(header, courseId, longName))
-
-            ## Start the thread
-            setLongNameThread.start()
-
-            ## Add the thread to the ongoing set long name threads list
-            ongoingSetLongNameThreads.append(setLongNameThread)
-
-            ## Sleep for a short time to avoid overloading the server
-            time.sleep(0.1)
-
-        ## Check if all ongoing set long name threads have completed
-        for thread in ongoingSetLongNameThreads:
-            thread.join()
+        ## Step 3: Process all rows concurrently
+        runThreadedRows(df, _worker)
+        localSetup.logInfoThreadSafe(f"{functionName} completed. Processed {len(df)} courses.")
 
     except Exception as Error:
-        errorHandler(functionName, Error)
+        errorHandler.sendError(functionName, Error)
 
 if __name__ == "__main__":
-    ## Set working directory
-    os.chdir(os.path.dirname(__file__))
+    ## Initialize shared LocalSetup (paths, logging)
+    localSetup = LocalSetup(datetime.now(), __file__)
 
-    ## Set the long name for the listed courses
-    setListedCoursesLongName()
+    ## Setup the error handler (sends one email per function error)
+    errorHandler = errorEmail(scriptName, scriptPurpose, externalRequirements, localSetup)
+
+    setListedCoursesLongName(localSetup, errorHandler)
 
     input("Press enter to exit")
+
 
 
 ## ===========================================================================
@@ -919,234 +629,88 @@ if __name__ == "__main__":
 ## Author: Bryce Miller - brycezmiller@nnu.edu
 ## Last Updated by: Bryce Miller
 
-## Import necessary modules
-import traceback, os, sys, logging, requests, csv, threading, time, pandas as pd
+## Import Generic Modules
+import os, sys, pandas as pd
 from datetime import datetime
 
-## Define the script name, purpose, and external requirements for logging and error reporting purposes
-scriptName = "Change_Role_For_Listed_Enrollments"
+## Add the resource modules path
+sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules"))
 
+## Try direct imports if run as main, else relative for package usage
+try:
+    from Local_Setup import LocalSetup
+    from Error_Email import errorEmail
+    from TLC_Action import deleteEnrollment, enrollUser
+    from TLC_Common import readTargetCsv, runThreadedRows
+    from Common_Configs import coreCanvasApiUrl, canvasAccessToken
+except ImportError:  ## When imported as a package/module
+    from .Local_Setup import LocalSetup
+    from .Error_Email import errorEmail
+    from .TLC_Action import deleteEnrollment, enrollUser
+    from .TLC_Common import readTargetCsv, runThreadedRows
+    from .Common_Configs import coreCanvasApiUrl, canvasAccessToken
+
+## Define the script name, purpose, and external requirements for logging and error reporting purposes
+scriptName = os.path.basename(__file__).replace(".py", "")
 scriptPurpose = r"""
 This script reads a CSV file containing Canvas enrollment IDs and changes the role for each enrollment using the Canvas API.
 """
 externalRequirements = r"""
-To function properly, this script requires a valid access header and URL, and a CSV file named "Target_Canvas_Enrollment_Ids.csv" located in the Canvas Resources directory.
+To function properly, this script requires:
+- Valid Canvas API configuration in Common_Configs (coreCanvasApiUrl, canvasAccessToken).
+- A CSV file named "Target_Canvas_Enrollment_Ids.csv" located in the Canvas internal
+  resources directory (LocalSetup.getInternalResourcePaths("Canvas")) with columns:
+    - canvas_enrollment_id
+    - canvas_user_id
+    - canvas_course_id
+    - role_id
+    - base_role_type
 """
 
-## Date Variables
-currentDateTime = datetime.now()
-## Get the current date and time
-currentMonth = currentDateTime.month
-## Get the current month
-currentYear = currentDateTime.year
-## Get the current year
-
-## Set working directory
-os.chdir(os.path.dirname(__file__))
-## Change the working directory to the script's directory
-
-## Relative Path (this changes depending on the working directory of the main script)
-pfRelativePath = r".\\"
-
-## If the Canvas directory is not in the folder the relative path points to
-## find the Canvas directory and set the relative path to its parent folder
-while "Scripts TLC" not in os.listdir(pfRelativePath):
-    pfRelativePath = f"..\\{pfRelativePath}"
-
-## Change the relative path to an absolute path
-absolutePath = f"{os.path.abspath(pfRelativePath)}\\"
-
-## Local Path Variables
-baseLogPath = f"{absolutePath}Logs\\{scriptName}\\"
-## Define the base log path
-baseLocalInputPath = f"{absolutePath}Canvas Resources\\"
-## Define the base input path
-configPath = f"{absolutePath}Configs TLC\\"
-## Define the config path
-
-## If the base log path doesn't already exist, create it
-if not os.path.exists(baseLogPath):
-    os.makedirs(baseLogPath, mode=0o777, exist_ok=False)
-    ## Create the base log path
-
-## Add Input Modules to the sys path
-sys.path.append(f"{absolutePath}Scripts TLC\\ResourceModules")
-## Add ResourceModules to sys path
-sys.path.append(f"{absolutePath}Scripts TLC\\ActionModules")
-## Add ActionModules to sys path
-
-## Import local modules
-from Error_Email import errorEmail
-## Import errorEmail
-from TLC_Common import makeApiCall
-## Import makeApiCall
-
-## Canvas Instance Url
-coreCanvasApiUrl = None
-## Open the Core_Canvas_Url.txt from the config path
-with open(f"{configPath}Core_Canvas_Url.txt", "r") as file:
-    coreCanvasApiUrl = file.readlines()[0]
-    ## Read the Canvas URL
-
-## If the script is run as main the folder with the access token is in the parent directory
-canvasAccessToken = ""
-## Open and retrieve the Canvas Access Token
-with open(f"{configPath}Canvas_Access_Token.txt", "r") as file:
-    canvasAccessToken = file.readlines()[0]
-    ## Read the Canvas Access Token
-
-## Log configurations
-logger = logging.getLogger(__name__)
-rootFormat = ("%(asctime)s %(levelname)s %(message)s")
-FORMAT = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-logging.basicConfig(format=rootFormat, filemode="a", level=logging.INFO)
-
-## Local setup shim for compatibility with shared modules
-class _LoggerShim:
-    def __init__(self, p_logger):
-        self.logger = p_logger
-localSetup = _LoggerShim(logger)
-
-## Info Log Handler
-infoLogFile = f"{baseLogPath}\\Info Log.txt"
-logInfo = logging.FileHandler(infoLogFile, mode='a')
-logInfo.setLevel(logging.INFO)
-logInfo.setFormatter(FORMAT)
-localSetup.logger.addHandler(logInfo)
-
-## Warning Log handler
-warningLogFile = f"{baseLogPath}\\Warning Log.txt"
-logWarning = logging.FileHandler(warningLogFile, mode='a')
-logWarning.setLevel(logging.WARNING)
-logWarning.setFormatter(FORMAT)
-localSetup.logger.addHandler(logWarning)
-
-## Error Log handler
-errorLogFile = f"{baseLogPath}\\Error Log.txt"
-logError = logging.FileHandler(errorLogFile, mode='a')
-logError.setLevel(logging.ERROR)
-logError.setFormatter(FORMAT)
-localSetup.logger.addHandler(logError)
-
-## Setup the error handler
-errorHandler = errorEmail(scriptName, scriptPurpose, externalRequirements, localSetup)
-
-## This function deletes an enrollment given its Canvas enrollment ID
-def deleteEnrollment(p1_header, p3_courseId, p1_enrollmentId):
-    functionName = "deleteEnrollment"
-    try:
-
-        ## Define the API URL for deleting the enrollment
-        deleteEnrollmentUrl = f"{coreCanvasApiUrl}courses/{p3_courseId}/enrollments/{p1_enrollmentId}"
-
-        ## Define the API URL for deleting the enrollment
-        response, _ = makeApiCall(localSetup, p1_header=p1_header, p1_apiUrl=deleteEnrollmentUrl, p1_apiCallType="delete")
-
-        ## Make the API call to delete the enrollment
-        if response.status_code == 200:
-            localSetup.logger.info(f"Successfully deleted enrollment with ID: {p1_enrollmentId}")
-        else:
-            localSetup.logger.warning(f"Failed to delete enrollment with ID: {p1_enrollmentId}. Status code: {response.status_code}")
-
-    except Exception as Error:
-        errorHandler.sendError(functionName, Error)
-
-## This function re-enrolls a user with a new role given the Canvas user ID, course ID, role ID, and base role type
-def reEnrollUser(p1_header, p1_userId, p2_courseId, p3_roleId, p4_baseRoleType):
-    functionName = "reEnrollUser"
-    try:
-
-        ## Define the API URL for re-enrolling the user
-        reEnrollUrl = f"{coreCanvasApiUrl}courses/{p2_courseId}/enrollments"
-
-        ## Define the API URL for re-enrolling the user
-        payload = {"enrollment[user_id]": p1_userId
-                   , "enrollment[type]": p4_baseRoleType
-                   , "enrollment[role_id]": p3_roleId
-                   , "enrollment[enrollment_state]": "active"
-                   }
-
-        ## Define the payload
-        response, _ = makeApiCall(localSetup, p1_header=p1_header, p1_apiUrl=reEnrollUrl, p1_payload=payload, p1_apiCallType="post")
-
-        ## Make the API call to re-enroll the user
-        if response.status_code == 200:
-            localSetup.logger.info(f"Successfully re-enrolled user with ID: {p1_userId} in course with ID: {p2_courseId} with role ID: {p3_roleId}")
-        else:
-            localSetup.logger.warning(f"Failed to re-enroll user with ID: {p1_userId} in course with ID: {p2_courseId}. Status code: {response.status_code}")
-
-    except Exception as Error:
-        errorHandler.sendError(functionName, Error)
-
-## This function deletes the enrollment and re-enrolls the user with the new role
-def deleteAndReenroll(p1_header, p1_enrollmentId, p1_userId, p2_courseId, p3_roleId, p4_baseRoleType):
-    reEnrollUser(p1_header, p1_userId, p2_courseId, p3_roleId, p4_baseRoleType)
-    deleteEnrollment(p1_header, p2_courseId, p1_enrollmentId)
-
-## This function reads the CSV file, deletes the enrollment, and re-enrolls the user with the new role
-def changeListedEnrollmentsRole():
+## Read the CSV and change the role for each listed enrollment
+def changeListedEnrollmentsRole(localSetup: LocalSetup, errorHandler: errorEmail) -> None:
     functionName = "changeListedEnrollmentsRole"
     try:
-        targetEnrollmentsCsvFilePath = f"{baseLocalInputPath}Target_Canvas_Enrollment_Ids.csv"
-        ## Define the CSV file path
-        header = {'Authorization': f"Bearer {canvasAccessToken}"}
-        ## Define the header
+        ## Step 1: Load and validate the target CSV
+        csvPath = os.path.join(
+            localSetup.getInternalResourcePaths("Canvas"), "Target_Canvas_Enrollment_Ids.csv"
+        )
+        df = readTargetCsv(
+            localSetup, errorHandler, csvPath,
+            requiredColumns=["canvas_enrollment_id", "canvas_user_id", "canvas_course_id",
+                             "role_id", "base_role_type"],
+        )
+        if df.empty:
+            return
 
-        ## Define the necessary thread list
-        ongoingChangeRoleThreads = []
-
-        ## Read the CSV file using pandas
-        rawTargetEnrollmentsDf = pd.read_csv(targetEnrollmentsCsvFilePath)
-
-        ## Retain only rows that have a value in canvas_enrollment_id
-        targetEnrollmentsDf = rawTargetEnrollmentsDf[rawTargetEnrollmentsDf["canvas_enrollment_id"].notna()]
-
-                ## Iterate over each row in the DataFrame
-        for index, row in targetEnrollmentsDf.iterrows():
-
-            ## Get the enrollment id from the row
-            enrollmentId = str(row["canvas_enrollment_id"]).replace('.0', '')
-
-            ## Get the user id from the row
-            userId = str(row["canvas_user_id"]).replace('.0', '')
-            
-            ## Get the course id from the row
-            courseId = str(row["canvas_course_id"]).replace('.0', '')
-
-            ## Get the role id from the row
-            roleId = str(row["role_id"]).replace('.0', '')
-
-            ## Get the base role type from the row
+        ## Step 2: Define the per-row worker — re-enroll with new role then drop the old enrollment
+        def _worker(row):
+            enrollmentId = str(row["canvas_enrollment_id"]).replace(".0", "")
+            userId       = str(row["canvas_user_id"]).replace(".0", "")
+            courseId     = str(row["canvas_course_id"]).replace(".0", "")
+            roleId       = str(row["role_id"]).replace(".0", "")
             baseRoleType = str(row["base_role_type"])
+            enrollUser(localSetup, errorHandler, courseId, userId, baseRoleType, roleId=roleId)
+            deleteEnrollment(localSetup, errorHandler, courseId, enrollmentId)
 
-            ## Create a thread to delete the enrollment and re-enroll the user
-            changeRoleThread = threading.Thread(target=deleteAndReenroll, args=(header, enrollmentId, userId, courseId, roleId, baseRoleType))
-
-            ## Start the thread
-            changeRoleThread.start()
-
-            ## Add the thread to the ongoing change role threads list
-            ongoingChangeRoleThreads.append(changeRoleThread)
-
-            ## Sleep for a short time to avoid overloading the server
-            time.sleep(0.2)
-
-        ## Check if all ongoing change role threads have completed
-        for thread in ongoingChangeRoleThreads:
-            thread.join()
+        ## Step 3: Process all rows concurrently
+        runThreadedRows(df, _worker)
+        localSetup.logInfoThreadSafe(f"{functionName} completed. Processed {len(df)} enrollments.")
 
     except Exception as Error:
         errorHandler.sendError(functionName, Error)
 
 if __name__ == "__main__":
-    ## Set working directory
-    os.chdir(os.path.dirname(__file__))
-    
-    ## Change the role for the listed enrollments
-    changeListedEnrollmentsRole()
+    ## Initialize shared LocalSetup (paths, logging)
+    localSetup = LocalSetup(datetime.now(), __file__)
 
-    ## Wait for user input to exit
+    ## Setup the error handler (sends one email per function error)
+    errorHandler = errorEmail(scriptName, scriptPurpose, externalRequirements, localSetup)
+
+    changeListedEnrollmentsRole(localSetup, errorHandler)
+
     input("Press enter to exit")
+
 
 
 ## ===========================================================================
@@ -1212,9 +776,9 @@ def getNavigationTabs (p1_targetCourseSisId):
         navigationObject, _ = makeApiCall (localSetup, p1_apiUrl = navigationApiUrl)
         ## If the API status code is anything other than 200 it is an error, so log it and skip
         if (navigationObject.status_code != 200):
-            localSetup.logger.error("\nNavigation Error: " + str(navigationObject.status_code))
-            localSetup.logger.error(navigationApiUrl)
-            localSetup.logger.error(navigationObject.url)
+            localSetup.logErrorThreadSafe("\nNavigation Error: " + str(navigationObject.status_code))
+            localSetup.logErrorThreadSafe(navigationApiUrl)
+            localSetup.logErrorThreadSafe(navigationObject.url)
             return None
         ## If the API status code is 200, save the result as navigationTabs
         navigationTabs = navigationObject.json()
@@ -1248,6 +812,11 @@ def updateCourseSyllabusTab (p1_targetCourseSisId):
             if tab['id'] == 'context_external_tool_4856':
                 simpleSyllabusTab = tab
 
+        ## If there is no syllabus tab, skip this course
+        if syllabusTab is None:
+            localSetup.logWarningThreadSafe(f"No syllabus tab found for course {p1_targetCourseSisId}")
+            return
+
         ## If the syllabus tab's visibility is public, or if its position is not equal to the length of the navigation tabs, hide the syllabus tab and move it to the end
         if syllabusTab['visibility'] == 'public' or syllabusTab['position'] != (len(navigationTabs) - 2):
             ## Create the base and specific course API urls
@@ -1259,12 +828,12 @@ def updateCourseSyllabusTab (p1_targetCourseSisId):
             updateTabObject, _ = makeApiCall (localSetup, p1_apiUrl = updateTabApiUrl, p1_payload = payload, p1_apiCallType = "put")
             ## If the API status code is anything other than 200 it is an error, so log it and skip
             if (updateTabObject.status_code != 200):
-                localSetup.logger.error("\nUpdate Tab Error: " + str(updateTabObject.status_code))
-                localSetup.logger.error(updateTabApiUrl)
-                localSetup.logger.error(updateTabObject.url)
+                localSetup.logErrorThreadSafe("\nUpdate Tab Error: " + str(updateTabObject.status_code))
+                localSetup.logErrorThreadSafe(updateTabApiUrl)
+                localSetup.logErrorThreadSafe(updateTabObject.url)
                 return
             ## Log the fact that the tab was updated
-            localSetup.logger.info(f"\nSyllabus tab hidden for course {p1_targetCourseSisId}")
+            localSetup.logInfoThreadSafe(f"\nSyllabus tab hidden for course {p1_targetCourseSisId}")
 
         ## If there isn't a simple syllabus tab in the list or if it exists but it is not in position 2 tab is the simple syllabus tab
         if not simpleSyllabusTab or (simpleSyllabusTab.get('position') != 2 or simpleSyllabusTab.get('hidden') == True):
@@ -1277,9 +846,9 @@ def updateCourseSyllabusTab (p1_targetCourseSisId):
             updateTabObject, _ = makeApiCall (localSetup, p1_apiUrl = updateTabApiUrl, p1_payload = payload, p1_apiCallType = "put")
             ## If the API status code is anything other than 200 it is an error, so log it and skip
             if (updateTabObject.status_code != 200):
-                localSetup.logger.error("\nUpdate Tab Error: " + str(updateTabObject.status_code))
-                localSetup.logger.error(updateTabApiUrl)
-                localSetup.logger.error(updateTabObject.url)
+                localSetup.logErrorThreadSafe("\nUpdate Tab Error: " + str(updateTabObject.status_code))
+                localSetup.logErrorThreadSafe(updateTabApiUrl)
+                localSetup.logErrorThreadSafe(updateTabObject.url)
                 return
             ## Log the fact that the tab was updated
             localSetup.logger.info(f"\nSimple Syllabus tab moved to position 2 for course {p1_targetCourseSisId}")
@@ -1305,169 +874,80 @@ if __name__ == "__main__":
 ## Author: Bryce Miller - brycezmiller@nnu.edu
 ## Last Updated by: Bryce Miller
 
-import traceback, os, sys, logging, requests, pandas as pd
-from concurrent.futures import ThreadPoolExecutor
-import pandas as pd
+## Import Generic Modules
+import os, sys, pandas as pd
 from datetime import datetime
 
-## Define the script name, purpose, and external requirements for logging and error reporting purposes
-scriptName = "Change_Term_For_Listed_Courses"
+## Add the resource modules path
+sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules"))
 
+## Try direct imports if run as main, else relative for package usage
+try:
+    from Local_Setup import LocalSetup
+    from Error_Email import errorEmail
+    from TLC_Action import updateCourseField
+    from TLC_Common import readTargetCsv, runThreadedRows
+    from Common_Configs import coreCanvasApiUrl, canvasAccessToken
+except ImportError:  ## When imported as a package/module
+    from .Local_Setup import LocalSetup
+    from .Error_Email import errorEmail
+    from .TLC_Action import updateCourseField
+    from .TLC_Common import readTargetCsv, runThreadedRows
+    from .Common_Configs import coreCanvasApiUrl, canvasAccessToken
+
+## Define the script name, purpose, and external requirements for logging and error reporting purposes
+scriptName = os.path.basename(__file__).replace(".py", "")
 scriptPurpose = r"""
 This script reads a CSV file containing Canvas course IDs and changes the term for each course using the Canvas API.
 """
 externalRequirements = r"""
-To function properly, this script requires a valid access header and URL, and a CSV file named "courses_to_set_term.csv" located in the Canvas Resources directory.
+To function properly, this script requires:
+- Valid Canvas API configuration in Common_Configs (coreCanvasApiUrl, canvasAccessToken).
+- A CSV file named "Target_Canvas_Course_Ids.csv" located in the Canvas internal
+  resources directory (LocalSetup.getInternalResourcePaths("Canvas")) with columns:
+    - canvas_course_id
+    - canvas_term_id
 """
 
-## Date Variables
-currentDateTime = datetime.now()
-currentMonth = currentDateTime.month
-currentYear = currentDateTime.year
-
-## Set working directory
-os.chdir(os.path.dirname(__file__))
-
-## Relative Path (this changes depending on the working directory of the main script)
-PFRelativePath = r".\\"
-
-## If the Canvas directory is not in the folder the relative path points to
-## find the Canvas directory and set the relative path to its parent folder
-while "Scripts TLC" not in os.listdir(PFRelativePath):
-    PFRelativePath = f"..\\{PFRelativePath}"
-
-## Change the relative path to an absolute path
-absolutePath = f"{os.path.abspath(PFRelativePath)}\\"
-
-## Local Path Variables
-baseLogPath = f"{absolutePath}Logs\\{scriptName}\\"
-baseLocalInputPath = f"{absolutePath}Canvas Resources\\"
-configPath = f"{absolutePath}Configs TLC\\"
-
-## If the base log path doesn't already exist, create it
-if not os.path.exists(baseLogPath):
-    os.makedirs(baseLogPath, mode=0o777, exist_ok=False)
-
-## Add Input Modules to the sys path
-sys.path.append(f"{absolutePath}Scripts TLC\\ResourceModules")
-sys.path.append(f"{absolutePath}Scripts TLC\\ActionModules")
-
-## Import local modules
-from TLC_Common import makeApiCall  ## Import makeApiCall
-
-## Canvas Instance Url
-coreCanvasApiUrl = None
-## Open the Core_Canvas_Url.txt from the config path
-with open(f"{configPath}Core_Canvas_Url.txt", "r") as file:
-    coreCanvasApiUrl = file.readlines()[0]
-
-## If the script is run as main the folder with the access token is in the parent directory
-canvasAccessToken = ""
-
-## Open and retrieve the Canvas Access Token
-with open(f"{configPath}Canvas_Access_Token.txt", "r") as file:
-    canvasAccessToken = file.readlines()[0]
-
-## Log configurations
-logger = logging.getLogger(__name__)
-rootFormat = ("%(asctime)s %(levelname)s %(message)s")
-FORMAT = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-logging.basicConfig(format=rootFormat, filemode="a", level=logging.INFO)
-
-## Local setup shim for compatibility with shared modules
-class _LoggerShim:
-    def __init__(self, p_logger):
-        self.logger = p_logger
-localSetup = _LoggerShim(logger)
-setOfFunctionsWithErrors = set()
-
-## Info Log Handler
-infoLogFile = f"{baseLogPath}\\Info Log.txt"
-logInfo = logging.FileHandler(infoLogFile, mode='a')
-logInfo.setLevel(logging.INFO)
-logInfo.setFormatter(FORMAT)
-localSetup.logger.addHandler(logInfo)
-
-## Warning Log handler
-warningLogFile = f"{baseLogPath}\\Warning Log.txt"
-logWarning = logging.FileHandler(warningLogFile, mode='a')
-logWarning.setLevel(logging.WARNING)
-logWarning.setFormatter(FORMAT)
-localSetup.logger.addHandler(logWarning)
-
-## Error Log handler
-errorLogFile = f"{baseLogPath}\\Error Log.txt"
-logError = logging.FileHandler(errorLogFile, mode='a')
-logError.setLevel(logging.ERROR)
-logError.setFormatter(FORMAT)
-localSetup.logger.addHandler(logError)
-
-## This function handles function errors
-def errorHandler(p1_ErrorLocation, p1_errorInfo, sendOnce=True):
-    functionName = "errorHandler"
-    localSetup.logger.error(f"\nA script error occurred while running {p1_ErrorLocation}. Error: {str(p1_errorInfo)}")
-
-    ## Only log once per function
-    if p1_ErrorLocation not in setOfFunctionsWithErrors:
-        setOfFunctionsWithErrors.add(p1_ErrorLocation)
-        localSetup.logger.error(f"\nError logged for {p1_ErrorLocation}")
-    else:
-        localSetup.logger.error(f"\nError already logged for {p1_ErrorLocation}")
-
-## This function sets the term for a course given its Canvas course ID and term ID
-def setCourseTerm(p1_header, p1_courseId, p1_termId):
-    functionName = "setCourseTerm"
-    try:
-        set_term_url = f"{coreCanvasApiUrl}courses/{p1_courseId}"
-        payload = {"course": {"enrollment_term_id": p1_termId}}
-        response, _ = makeApiCall(localSetup, p1_header=p1_header, p1_apiUrl=set_term_url, p1_payload=payload, p1_apiCallType="put")
-
-        if response.status_code == 200:
-            localSetup.logger.info(f"Successfully set term for course with ID: {p1_courseId}")
-        else:
-            localSetup.logger.warning(f"Failed to set term for course with ID: {p1_courseId}. Status code: {response.status_code}")
-
-    except Exception as Error:
-        errorHandler(functionName, Error)
-
-## This function reads the CSV file and sets the term for the listed courses
-def setListedCoursesTerm():
+## Read the CSV and change the Canvas enrollment term for each listed course
+def setListedCoursesTerm(localSetup: LocalSetup, errorHandler: errorEmail) -> None:
     functionName = "setListedCoursesTerm"
     try:
-        targetCoursesCsvFilePath = f"{baseLocalInputPath}Target_Canvas_Course_Ids.csv"
-        header = {'Authorization': f"Bearer {canvasAccessToken}"}
-        
-        ## Read the CSV file using pandas
-        rawTargetCoursesDf = pd.read_csv(targetCoursesCsvFilePath)
+        ## Step 1: Load and validate the target CSV
+        csvPath = os.path.join(
+            localSetup.getInternalResourcePaths("Canvas"), "Target_Canvas_Course_Ids.csv"
+        )
+        df = readTargetCsv(
+            localSetup, errorHandler, csvPath,
+            requiredColumns=["canvas_course_id", "canvas_term_id"],
+        )
+        if df.empty:
+            return
 
-        ## Retain only rows that have a value in canvas_course_id
-        targetCoursesDf = rawTargetCoursesDf[rawTargetCoursesDf["canvas_course_id"].notna()]
+        ## Step 2: Define the per-row worker
+        def _worker(row):
+            courseId = str(row["canvas_course_id"]).replace(".0", "")
+            termId   = str(row["canvas_term_id"]).replace(".0", "")
+            updateCourseField(localSetup, errorHandler, courseId, "enrollment_term_id", termId)
 
-        ## Process each course in a thread pool
-        MAX_WORKERS = 25
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            for index, row in targetCoursesDf.iterrows():
-
-                ## Get the course id from the row
-                courseId = str(row["canvas_course_id"]).replace('.0', '')
-
-                ## Get the term id from the row
-                termId = str(row["canvas_term_id"]).replace('.0', '')
-
-                ## Submit the task to the thread pool
-                executor.submit(setCourseTerm, header, courseId, termId)
+        ## Step 3: Process all rows concurrently
+        runThreadedRows(df, _worker)
+        localSetup.logInfoThreadSafe(f"{functionName} completed. Processed {len(df)} courses.")
 
     except Exception as Error:
-        errorHandler(functionName, Error)
+        errorHandler.sendError(functionName, Error)
 
 if __name__ == "__main__":
-    ## Set working directory
-    os.chdir(os.path.dirname(__file__))
+    ## Initialize shared LocalSetup (paths, logging)
+    localSetup = LocalSetup(datetime.now(), __file__)
 
-    ## Set the term for the listed courses
-    setListedCoursesTerm()
+    ## Setup the error handler (sends one email per function error)
+    errorHandler = errorEmail(scriptName, scriptPurpose, externalRequirements, localSetup)
+
+    setListedCoursesTerm(localSetup, errorHandler)
 
     input("Press enter to exit")
+
 
 
 ## ===========================================================================
@@ -1478,7 +958,7 @@ if __name__ == "__main__":
 ## Last Updated by: Bryce Miller
 
 ## Import necessary modules
-import os, sys, argparse
+import os, sys, argparse, re
 from datetime import datetime, timedelta
 
 ## Add Script repository to syspath
@@ -1508,6 +988,7 @@ def collectLogs(startDate, endDate, minLevel="info"):
     minRank = _LEVEL_RANK.get(minLevel, 0)
 
     allLines = []
+    seenLines = set()  ## Track raw line text to prevent duplicates across log files
 
     for scriptDir in os.listdir(logsRoot):
         scriptLogPath = os.path.join(logsRoot, scriptDir)
@@ -1528,6 +1009,10 @@ def collectLogs(startDate, endDate, minLevel="info"):
                         if not line.strip():
                             continue
 
+                        ## Skip duplicate lines already seen in another log file
+                        if line in seenLines:
+                            continue
+
                         ## Try to parse the timestamp from the start of the line
                         lineDatetime = _parseLineTimestamp(line)
                         if lineDatetime is None:
@@ -1538,6 +1023,7 @@ def collectLogs(startDate, endDate, minLevel="info"):
                             ## Check if the line meets the minimum level
                             lineLevel = _parseLineLevel(line)
                             if _LEVEL_RANK.get(lineLevel, 0) >= minRank:
+                                seenLines.add(line)
                                 allLines.append((lineDatetime, scriptDir, logType, line))
             except Exception:
                 continue
@@ -1578,10 +1064,114 @@ def _parseLineLevel(line):
 
 
 ## ─────────────────────────────────────────────────────────────────────────────
+## Sensitive information redaction
+## ─────────────────────────────────────────────────────────────────────────────
+## Each redacted value gets a deterministic short hash so the same original value
+## always maps to the same placeholder across the combined file, letting you
+## correlate redacted entries with the true logs without exposing the raw data.
+##
+## Example:  "brycezmiller@nnu.edu"  →  "<EMAIL_a3f1>"
+##           "canvas_course_id=98432" →  "canvas_course_id=<ID_7b02>"
+
+import hashlib
+
+def _shortHash(value, length=4):
+    """Return a stable hex tag for *value* so the same input always gets the same placeholder."""
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:length]
+
+
+class _Redactor:
+    """
+    Stateful redactor that builds a lookup table mapping each unique sensitive
+    value to a tagged placeholder.  The table is written at the end of the
+    combined log file so an operator with access to the true logs can match
+    placeholders back to originals by position / hash.
+    """
+
+    ## Compiled patterns applied in order; earlier patterns take priority.
+    _PATTERNS = [
+        ## Bearer / API tokens
+        ("TOKEN", re.compile(r"(Bearer\s+)([\w\-\.]+)", re.IGNORECASE), 2),
+        ## Generic secrets (access_token, api_key, password, etc.)
+        ("SECRET", re.compile(
+            r"((?:access_token|api_key|apikey|token|secret|password|Authorization)[=:\s]+)"
+            r"([^\s,;\]\)'\"]+)", re.IGNORECASE), 2),
+        ## Canvas numeric IDs logged with known prefixes
+        ##   canvas_course_id=12345, enrollment 67890, user=111
+        ("ID", re.compile(
+            r"((?:canvas_course_id|canvas_enrollment_id|enrollment|Instructor_#\d+_ID"
+            r"|user_id|user|course_id|account_id|canvasCourseId|enrollmentId)[=:\s]+)"
+            r"(\d+)", re.IGNORECASE), 2),
+        ## Person names following "Professor(s) " or "Instructor ... name"
+        ("NAME", re.compile(
+            r"((?:Professors?\s+|Instructor_#\d+_name[=:\s]+))"
+            r"([A-Z][a-z]+(?:[\s,]+[A-Z][a-z]+)*)", 0), 2),
+        ## Email addresses (broad)
+        ("EMAIL", re.compile(r"([\w.+-]+@[\w-]+\.[\w.-]+)"), 1),
+        ## Canvas API URLs — redact the domain + path leaving only the endpoint shape
+        ("URL", re.compile(r"(https?://[^/]+/api/v1/)([^\s\"']+)"), 2),
+    ]
+
+    def __init__(self, workspaceRoot):
+        self._workspaceRoot = workspaceRoot
+        ## Forward-slash variant for path replacement
+        self._workspaceRootFwd = workspaceRoot.replace(os.sep, "/") if workspaceRoot else None
+        ## {category: {originalValue: shortHash}}
+        self._seen = {}
+
+    def _getPlaceholder(self, category, rawValue):
+        """Return a stable placeholder like <EMAIL_a3f1> for the given raw value."""
+        if category not in self._seen:
+            self._seen[category] = {}
+        if rawValue not in self._seen[category]:
+            self._seen[category][rawValue] = _shortHash(rawValue)
+        return f"<{category}_{self._seen[category][rawValue]}>"
+
+    def redact(self, line):
+        """Return a redacted copy of *line*."""
+        ## ── Step 1: Replace absolute workspace paths with relative notation ──
+        if self._workspaceRoot:
+            line = line.replace(self._workspaceRoot + os.sep, "")
+            line = line.replace(self._workspaceRoot, "")
+        if self._workspaceRootFwd:
+            line = line.replace(self._workspaceRootFwd + "/", "")
+            line = line.replace(self._workspaceRootFwd, "")
+
+        ## ── Step 2: Regex-based redaction with stable placeholders ───────────
+        for category, pattern, captureGroup in self._PATTERNS:
+            def _replacer(m, _cat=category, _grp=captureGroup):
+                rawValue = m.group(_grp)
+                placeholder = self._getPlaceholder(_cat, rawValue)
+                ## Rebuild match: everything before the captured group + placeholder
+                if _grp == 1:
+                    return placeholder
+                ## _grp == 2: prefix in group(1), sensitive part in group(2)
+                return m.group(1) + placeholder
+            line = pattern.sub(_replacer, line)
+
+        return line
+
+    def getSummaryLines(self):
+        """
+        Return summary lines that list how many unique values were redacted per
+        category (without revealing the values themselves).
+        """
+        lines = ["", "## ── Redaction Summary ──"]
+        for category, mapping in sorted(self._seen.items()):
+            lines.append(f"##   {category}: {len(mapping)} unique value(s) redacted")
+        if not self._seen:
+            lines.append("##   No sensitive values detected.")
+        return lines
+
+
+## ─────────────────────────────────────────────────────────────────────────────
 ## Write collected lines to a single output file
 ## ─────────────────────────────────────────────────────────────────────────────
 def writeCombinedLog(lines, outputPath):
-    """Write the sorted log lines to a combined output file."""
+    """Write the sorted, redacted log lines to a combined output file."""
+    ## Create a stateful redactor for consistent placeholders across the file
+    redactor = _Redactor(localSetup.absolutePath)
+
     with open(outputPath, "w", encoding="utf-8") as f:
         currentScript = None
         for lineDatetime, scriptDir, logType, rawLine in lines:
@@ -1591,7 +1181,11 @@ def writeCombinedLog(lines, outputPath):
                     f.write("\n")
                 f.write(f"## ── {scriptDir} ({logType}) ──\n")
                 currentScript = scriptDir
-            f.write(rawLine + "\n")
+            f.write(redactor.redact(rawLine) + "\n")
+
+        ## Append redaction summary so the reader knows what was masked
+        for summaryLine in redactor.getSummaryLines():
+            f.write(summaryLine + "\n")
 
 
 ## ─────────────────────────────────────────────────────────────────────────────
@@ -1772,7 +1366,7 @@ if __name__ == "__main__":
 ## Author: Bryce Miller - brycezmiller@nnu.edu
 ## Last Updated by: Bryce Miller
 
-import os, sys, threading, time, pandas as pd
+import os, sys, pandas as pd
 from datetime import datetime
 
 # Make ResourceModules importable (mirrors Course_Date_Related_Actions.py)
@@ -1781,12 +1375,12 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules")
 try:  # Irregular try clause, do not comment out in testing
     from Local_Setup import LocalSetup
     from Error_Email import errorEmail
-    from TLC_Common import makeApiCall
+    from TLC_Common import makeApiCall, runThreadedRows
 except ImportError:
     # Fallback to relative imports if package layout differs
     from ResourceModules.Local_Setup import LocalSetup
     from ResourceModules.Error_Email import errorEmail
-    from ResourceModules.TLC_Common import makeApiCall
+    from ResourceModules.TLC_Common import makeApiCall, runThreadedRows
 
 #
 # Define the script name, purpose, and external requirements for logging and error reporting purposes
@@ -1926,50 +1520,24 @@ def countRespondusQuizzes(p1_courseId: str, result_dict: dict) -> None:
 def countListedCoursesRespondusQuizzes() -> None:
     functionName = "countListedCoursesRespondusQuizzes"
     try:
-        # Locate the Canvas resources directory using LocalSetup, similar to SIS in Course_Date_Related_Actions.py
+        ## Step 1: Load the target courses CSV
         baseCanvasResourcesPath = localSetup.getInternalResourcePaths('Canvas')
-
-        # Adjust the filename here if you prefer 'courses_to_check.csv'
         targetCoursesCsvFilePath = os.path.join(
             baseCanvasResourcesPath, "Target_Canvas_Course_Ids.csv"
         )
-
-        # Define the necessary thread list
-        ongoingCountThreads = []
-        result_dict = {}
-
-        # Read the CSV file using pandas
         rawTargetCoursesDf = pd.read_csv(targetCoursesCsvFilePath)
+        targetCoursesDf = rawTargetCoursesDf[rawTargetCoursesDf["canvas_course_id"].notna()]
 
-        # Retain only rows that have a value in canvas_course_id
-        targetCoursesDf = rawTargetCoursesDf[
-            rawTargetCoursesDf["canvas_course_id"].notna()
-        ]
-
-        # Iterate over each row in the DataFrame
-        for index, row in targetCoursesDf.iterrows():
-            # Get the course id from the row
+        ## Step 2: Run the per-course count concurrently, accumulating into a shared dict
+        ## Each courseId key is unique so concurrent dict writes are safe without a lock
+        result_dict = {}
+        def _worker(row):
             courseId = str(row["canvas_course_id"]).replace(".0", "")
+            countRespondusQuizzes(courseId, result_dict)
 
-            # Create a thread to count Respondus quizzes for the course
-            countThread = threading.Thread(
-                target=countRespondusQuizzes,
-                args=(courseId, result_dict),
-            )
+        runThreadedRows(targetCoursesDf, _worker)
 
-            # Start the thread
-            countThread.start()
-
-            # Add the thread to the ongoing count threads list
-            ongoingCountThreads.append(countThread)
-
-            # Sleep for a short time to avoid overloading the server
-            time.sleep(0.1)
-
-        # Wait for all count threads to complete
-        for thread in ongoingCountThreads:
-            thread.join()
-
+        ## Step 3: Aggregate and log the totals
         total_quizzes = sum(result[0] for result in result_dict.values())
         total_students = set()
         for result in result_dict.values():
@@ -2002,7 +1570,8 @@ if __name__ == "__main__":
 
 ## Import Generic Moduels
 
-import os, sys, threading, asyncio
+import os, sys, asyncio
+from concurrent.futures import ThreadPoolExecutor
 import pandas as pd
 from datetime import datetime
 
@@ -2347,11 +1916,11 @@ def craftAndSendRelevantEmail(
                                                           )
 
             ## Send the Outcome Email
-            sendOutlookEmail(p1_subject = emailDetails['Relevant Email']
-                             , p1_body = emailDetails['Outcome Email Body']
-                             , p1_recipientEmailList = emailDetails['Instructor Email Or Emails String']
-                             , p1_shared_mailbox = emailDetails['Client Send/Recieve Email']
-                             )
+            # sendOutlookEmail(p1_subject = emailDetails['Relevant Email']
+            #                  , p1_body = emailDetails['Outcome Email Body']
+            #                  , p1_recipientEmailList = emailDetails['Instructor Email Or Emails String']
+            #                  , p1_shared_mailbox = emailDetails['Client Send/Recieve Email']
+            #                  )
             ## info log the test
             localSetup.logger.info(f"Crafted and sent email with subject: {emailDetails['Relevant Email']} to {emailDetails['Instructor Email Or Emails String']} with body: {emailDetails['Outcome Email Body']}")
 
@@ -2375,10 +1944,11 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
             )
                 
         ## Define a list to hold the communication threads
-        actionThreads = []
+        ## Process all per-row actions concurrently using a thread pool
+        with ThreadPoolExecutor(max_workers=25) as executor:
         
         ## For each row in the complete active canvas courses df
-        for index, row in completeActiveCanvasCoursesDF.iterrows():
+            for index, row in completeActiveCanvasCoursesDF.iterrows():
             
             ## If ENGR4250 in row long_name
             #if "WELL1000" in row["long_name"]:
@@ -2434,21 +2004,8 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
                         uniqueOutcomes = auxiliaryDfDict["Unique Outcomes"]
                         outcomeCourseDict = auxiliaryDfDict["Outcome Canvas Data Dict"]
                     
-                        ## Start a thread to make sure the outcome has been added to the course
-                        addOutcomeThread = threading.Thread(
-                            target=addOutcomeToCourse
-                            , args=(localSetup
-                                    , errorHandler
-                                    , row
-                                    , auxiliaryDfDict
-                                    )
-                            )
-
-                        ## Start the thread
-                        addOutcomeThread.start()
-
-                        ## Add the thread to the list of communication threads
-                        actionThreads.append(addOutcomeThread)
+                        ## Submit a task to make sure the outcome has been added to the course
+                        executor.submit(addOutcomeToCourse, localSetup, errorHandler, row, auxiliaryDfDict)
         
                 ## If it is the Monday of week 0
                 if (row['Course Week'] == 0
@@ -2527,27 +2084,10 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
                     #         , auxiliaryDfDict
                     #         )
                     
-                    ## Create a thread to send the relevant outcome email
-        #             communicationThread = threading.Thread(
-        #                 target=craftAndSendRelevantEmail
-        #                 , args=(p1_inputTerm
-        #                         , relevantEmail
-        #                         , targetRow
-        #                         , auxiliaryDfDict
-        #                         )
-        #                 )
-                
-        #             ## Start the thread
-        #             communicationThread.start()
-                
-        #             ## Add the thread to the list of communication threads
-        #             actionThreads.append(communicationThread)
+                    ## Submit a task to send the relevant outcome email
+                    executor.submit(craftAndSendRelevantEmail, p1_inputTerm, relevantEmail, targetRow, auxiliaryDfDict)
 
-        # ## For each thread in the list of communication threads
-        # for thread in actionThreads:
-            
-        #     ## Wait for the thread to finish
-        #     thread.join()
+        ## ThreadPoolExecutor context manager waits for all submitted tasks before exiting
 
     except Exception as Error:
         errorHandler.sendError(functionName, Error)
@@ -2586,167 +2126,81 @@ if __name__ == "__main__":
 ## ===========================================================================
 
 
-import traceback, os, sys, logging, csv, pandas as pd
-from concurrent.futures import ThreadPoolExecutor
+## Author: Bryce Miller - brycezmiller@nnu.edu
+## Last Updated by: Bryce Miller
+
+## Import Generic Modules
+import os, sys, pandas as pd
 from datetime import datetime
 
-## Define the script name, purpose, and external requirements for logging and error reporting purposes
-scriptName = "Delete_Listed_Courses"
+## Add the resource modules path
+sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules"))
 
+## Try direct imports if run as main, else relative for package usage
+try:
+    from Local_Setup import LocalSetup
+    from Error_Email import errorEmail
+    from TLC_Action import deleteCourse
+    from TLC_Common import readTargetCsv, runThreadedRows
+    from Common_Configs import coreCanvasApiUrl, canvasAccessToken
+except ImportError:  ## When imported as a package/module
+    from .Local_Setup import LocalSetup
+    from .Error_Email import errorEmail
+    from .TLC_Action import deleteCourse
+    from .TLC_Common import readTargetCsv, runThreadedRows
+    from .Common_Configs import coreCanvasApiUrl, canvasAccessToken
+
+## Define the script name, purpose, and external requirements for logging and error reporting purposes
+scriptName = os.path.basename(__file__).replace(".py", "")
 scriptPurpose = r"""
 This script reads a CSV file containing Canvas course IDs and makes API calls to delete each course.
 """
 externalRequirements = r"""
-To function properly, this script requires a valid access header and URL, and a CSV file named "courses_to_delete.csv" located in the Canvas Resources directory.
+To function properly, this script requires:
+- Valid Canvas API configuration in Common_Configs (coreCanvasApiUrl, canvasAccessToken).
+- A CSV file named "Target_Canvas_Course_Ids.csv" located in the Canvas internal
+  resources directory (LocalSetup.getInternalResourcePaths("Canvas")) with column:
+    - canvas_course_id
 """
 
-## Date Variables
-currentDateTime = datetime.now()
-currentMonth = currentDateTime.month
-currentYear = currentDateTime.year
-
-## Relative Path (this changes depending on the working directory of the main script)
-PFRelativePath = r".\\"
-
-## If the Canvas directory is not in the folder the relative path points to
-## find the Canvas directory and set the relative path to its parent folder
-while "Scripts TLC" not in os.listdir(PFRelativePath):
-    PFRelativePath = f"..\\{PFRelativePath}"
-
-## Change the relative path to an absolute path
-absolutePath = f"{os.path.abspath(PFRelativePath)}\\"
-
-## Local Path Variables
-baseLogPath = f"{absolutePath}Logs\\{scriptName}\\"
-baseLocalInputPath = f"{absolutePath}Canvas Resources\\"
-configPath = f"{absolutePath}Configs TLC\\"
-
-## If the base log path doesn't already exist, create it
-if not os.path.exists(baseLogPath):
-    os.makedirs(baseLogPath, mode=0o777, exist_ok=False)
-
-## Add Input Modules to the sys path
-sys.path.append(f"{absolutePath}Scripts TLC\\ResourceModules")
-sys.path.append(f"{absolutePath}Scripts TLC\\ActionModules")
-
-## Import local modules
-from TLC_Common import makeApiCall  ## Import makeApiCall
-
-## Canvas Instance Url
-coreCanvasApiUrl = None
-## Open the Core_Canvas_Url.txt from the config path
-with open(f"{configPath}Core_Canvas_Url.txt", "r") as file:
-    coreCanvasApiUrl = file.readlines()[0]
-
-## If the script is run as main the folder with the access token is in the parent directory
-canvasAccessToken = ""
-
-## Open and retrieve the Canvas Access Token
-with open(f"{configPath}Canvas_Access_Token.txt", "r") as file:
-    canvasAccessToken = file.readlines()[0]
-
-## Log configurations
-logger = logging.getLogger(__name__)
-rootFormat = ("%(asctime)s %(levelname)s %(message)s")
-FORMAT = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-logging.basicConfig(format=rootFormat, filemode="a", level=logging.INFO)
-
-## Local setup shim for compatibility with shared modules
-class _LoggerShim:
-    def __init__(self, p_logger):
-        self.logger = p_logger
-localSetup = _LoggerShim(logger)
-setOfFunctionsWithErrors = set()
-
-## Info Log Handler
-infoLogFile = f"{baseLogPath}\\Info Log.txt"
-logInfo = logging.FileHandler(infoLogFile, mode='a')
-logInfo.setLevel(logging.INFO)
-logInfo.setFormatter(FORMAT)
-localSetup.logger.addHandler(logInfo)
-
-## Warning Log handler
-warningLogFile = f"{baseLogPath}\\Warning Log.txt"
-logWarning = logging.FileHandler(warningLogFile, mode='a')
-logWarning.setLevel(logging.WARNING)
-logWarning.setFormatter(FORMAT)
-localSetup.logger.addHandler(logWarning)
-
-## Error Log handler
-errorLogFile = f"{baseLogPath}\\Error Log.txt"
-logError = logging.FileHandler(errorLogFile, mode='a')
-logError.setLevel(logging.ERROR)
-logError.setFormatter(FORMAT)
-localSetup.logger.addHandler(logError)
-
-## This function handles function errors
-def errorHandler(p1_ErrorLocation, p1_errorInfo, sendOnce=True):
-    functionName = "errorHandler"
-    localSetup.logger.error(f"\nA script error occurred while running {p1_ErrorLocation}. Error: {str(p1_errorInfo)}")
-
-    ## Only log once per function
-    if p1_ErrorLocation not in setOfFunctionsWithErrors:
-        setOfFunctionsWithErrors.add(p1_ErrorLocation)
-        localSetup.logger.error(f"\nError logged for {p1_ErrorLocation}")
-    else:
-        localSetup.logger.error(f"\nError already logged for {p1_ErrorLocation}")
-
-## This function deletes a course given its Canvas course ID
-def deleteCourse(p1_header, courseId):
-    functionName = "deleteCourse"
-    try:
-        delete_url = f"{coreCanvasApiUrl}courses/{courseId}"
-        payload = {"event": "delete"}
-        response, _ = makeApiCall(localSetup, 
-            p1_header=p1_header
-            , p1_apiUrl=delete_url
-            , p1_payload=payload
-            , p1_apiCallType="delete"
-            )
-
-        if response.status_code == 200:
-            localSetup.logger.info(f"Successfully deleted course with ID: {courseId}")
-        else:
-            localSetup.logger.warning(f"Failed to delete course with ID: {courseId}. Status code: {response.status_code}")
-
-    except Exception as Error:
-        errorHandler(functionName, Error)
-
-## This function reads the CSV file and deletes the listed courses
-def deleteListedCourses():
+## Read the CSV and delete each listed course
+def deleteListedCourses(localSetup: LocalSetup, errorHandler: errorEmail) -> None:
     functionName = "deleteListedCourses"
     try:
-        targetCoursesCsvFilePath = f"{baseLocalInputPath}Target_Canvas_Course_Ids.csv"
-        header = {'Authorization': f"Bearer {canvasAccessToken}"}
+        ## Step 1: Load and validate the target CSV
+        csvPath = os.path.join(
+            localSetup.getInternalResourcePaths("Canvas"), "Target_Canvas_Course_Ids.csv"
+        )
+        df = readTargetCsv(
+            localSetup, errorHandler, csvPath,
+            requiredColumns=["canvas_course_id"],
+        )
+        if df.empty:
+            return
 
-        ## Read the CSV file using pandas
-        rawTargetCoursesDf = pd.read_csv(targetCoursesCsvFilePath)
+        ## Step 2: Define the per-row worker
+        def _worker(row):
+            courseId = str(row["canvas_course_id"]).replace(".0", "")
+            deleteCourse(localSetup, errorHandler, courseId)
 
-        ## Retain only rows that have a value in canvas_course_id
-        targetCoursesDf = rawTargetCoursesDf[rawTargetCoursesDf["canvas_course_id"].notna()]
-
-        ## Process each course in a thread pool
-        MAX_WORKERS = 25
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            for index, row in targetCoursesDf.iterrows():
-
-                ## Get the course id from the row
-                courseId = str(row["canvas_course_id"]).replace('.0', '')
-
-                ## Submit the task to the thread pool
-                executor.submit(deleteCourse, header, courseId)
+        ## Step 3: Process all rows concurrently
+        runThreadedRows(df, _worker)
+        localSetup.logInfoThreadSafe(f"{functionName} completed. Processed {len(df)} courses.")
 
     except Exception as Error:
-        errorHandler(functionName, Error)
+        errorHandler.sendError(functionName, Error)
 
 if __name__ == "__main__":
-    ## Set working directory
-    os.chdir(os.path.dirname(__file__))
+    ## Initialize shared LocalSetup (paths, logging)
+    localSetup = LocalSetup(datetime.now(), __file__)
 
-    ## Delete the listed courses
-    deleteListedCourses()
+    ## Setup the error handler (sends one email per function error)
+    errorHandler = errorEmail(scriptName, scriptPurpose, externalRequirements, localSetup)
+
+    deleteListedCourses(localSetup, errorHandler)
 
     input("Press enter to exit")
+
 
 ## ===========================================================================
 ## FILE: ActionModules\Enroll_GPS_Students_In_Grad_Hub.py
@@ -2756,26 +2210,27 @@ if __name__ == "__main__":
 ## Last Updated by: Bryce Miller
 
 ## Import necessary modules
-import os, sys, pandas as pd, threading, time
-from datetime import datetime, date
+import os, sys
+from datetime import datetime
 
-## Import necessary functions from local modules
 ## Add Script repository to syspath
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules"))
 
-## New resource modules
+## Resource module imports
 try:
     from Local_Setup import LocalSetup
     from TLC_Common import makeApiCall, isFileRecent
     from Canvas_Report import CanvasReport
     from Error_Email import errorEmail
+    from TLC_Action import deleteEnrollment, enrollUser
 except ImportError:
     from ResourceModules.Local_Setup import LocalSetup
     from ResourceModules.TLC_Common import makeApiCall, isFileRecent
     from ResourceModules.Canvas_Report import CanvasReport
     from ResourceModules.Error_Email import errorEmail
+    from ResourceModules.TLC_Action import deleteEnrollment, enrollUser
 
-## Create the localsetup variable
+## Module-level setup (required because this module is imported and called by the orchestrator)
 localSetup = LocalSetup(datetime.now(), __file__)  ## sets cwd, paths, logs, date parts
 
 ## Import configs
@@ -2785,227 +2240,86 @@ from Common_Configs import coreCanvasApiUrl, canvasAccessToken, gradTermsWordsTo
 scriptName = os.path.basename(__file__).replace(".py", "")
 
 scriptPurpose = r"""
-This script reads a CSV file containing Canvas enrollment IDs and changes the role for each enrollment using the Canvas API.
+Auto-enrolls all current GPS (Graduate & Professional Studies) students in the
+Graduate & Professional Student Hub course and removes any students who are no
+longer GPS students for the given term.
 """
 externalRequirements = r"""
-To function properly, this script requires a valid access header and URL, and a CSV file named "Target_Canvas_Enrollment_Ids.csv" located in the Canvas Resources directory.
+To function properly, this script requires a valid Canvas API URL and the Canvas courses
+and enrollment reports to be populated via CanvasReport.
 """
 
 ## Setup the error handler
 errorHandler = errorEmail(scriptName, scriptPurpose, externalRequirements, localSetup)
 
-## This function deletes an enrollment given its Canvas enrollment ID
-def deleteEnrollment(p3_courseId, p1_enrollmentId):
-    functionName = "deleteEnrollment"
-    try:
 
-        ## Define the API URL for deleting the enrollment
-        ##deleteEnrollmentUrl = f"{coreCanvasApiUrl}courses/{p3_courseId}/enrollments/{p1_enrollmentId}"
-        deleteEnrollmentUrl = f"{coreCanvasApiUrl}courses/{p3_courseId}/enrollments/{p1_enrollmentId}"
-
-        ## Define the API URL for deleting the enrollment
-        response, _ = makeApiCall(localSetup, p1_apiUrl=deleteEnrollmentUrl, p1_apiCallType="delete")
-
-        ## Make the API call to delete the enrollment
-        if response.status_code == 200:
-            localSetup.logger.info(f"Successfully deleted enrollment with ID: {p1_enrollmentId}")
-        else:
-            localSetup.logger.warning(f"Failed to delete enrollment with ID: {p1_enrollmentId}. Status code: {response.status_code}")
-
-    except Exception as Error:
-        errorHandler.sendError(functionName, Error)
-
-## This function enrolls a user with a new role given the Canvas user ID, course ID, role ID, and base role type
-def reEnrollUser(p1_userId, p2_courseId, p3_roleId, p4_baseRoleType):
-    functionName = "reEnrollUser"
-    try:
-
-        ## Define the API URL for enrolling the user
-        reEnrollUrl = f"{coreCanvasApiUrl}courses/{p2_courseId}/enrollments"
-
-        ## Define the API URL for enrolling the user
-        payload = {"enrollment[user_id]": p1_userId
-                   , "enrollment[type]": p4_baseRoleType
-                   , "enrollment[role_id]": p3_roleId
-                   , "enrollment[enrollment_state]": "active"
-                   }
-
-        ## Define the payload
-        response, _ = makeApiCall(localSetup, p1_apiUrl=reEnrollUrl, p1_payload=payload, p1_apiCallType="post")
-
-        ## Make the API call to enroll the user
-        if response.status_code == 200:
-            localSetup.logger.info(f"Successfully enrolled user with ID: {p1_userId} in course with ID: {p2_courseId} with role ID: {p3_roleId}")
-        else:
-            localSetup.logger.warning(f"Failed to enroll user with ID: {p1_userId} in course with ID: {p2_courseId}. Status code: {response.status_code}")
-
-    except Exception as Error:
-        errorHandler.sendError(functionName, Error)
-
-## This function deletes the enrollment and enrolls the user with the new role
-def deleteAndReenroll(p1_enrollmentId, p1_userId, p2_courseId, p3_roleId, p4_baseRoleType):
-    reEnrollUser(p1_userId, p2_courseId, p3_roleId, p4_baseRoleType)
-    deleteEnrollment(p2_courseId, p1_enrollmentId)
-
-## This function reads the CSV file, deletes the enrollment, and enrolls the user with the new role
+## Sync GPS student enrollment in the Grad Hub course for the given term
 def enrollGPSStudentsInGrad_Hub(inputTerm):
-
     functionName = "enrollGPSStudentsInGrad_Hub"
-
     try:
-
-        ## Get the term prefix
+        ## Step 1: Determine the grad term code from the given input term
         termPrefix = inputTerm[:2]
-        termYear = int(str(localSetup.dateDict['century']) + inputTerm[2:4])
-        
-        ## Define the grad term
-        termName = localSetup._determineTermName(termPrefix)
-
-        ## Get the grad term
+        termYear   = int(str(localSetup.dateDict["century"]) + inputTerm[2:4])
+        termName   = localSetup._determineTermName(termPrefix)
         gradTermPrefix = gradTermsWordsToCodesDict[termName]
         gradTerm = gradTermPrefix + str(termYear)[2:4]
 
-        ## Read the input term's GPS student csv into a df
-        GPSStudentsDf = CanvasReport.getGpsStudentsDf(localSetup, gradTerm)
+        ## Step 2: Retrieve GPS students and the Grad Hub course ID
+        gpStudentsDf = CanvasReport.getGpsStudentsDf(localSetup, gradTerm)
+        gpStudentsDf = gpStudentsDf.dropna(subset=["user_id"])
+        gpStudentsDf["user_id"] = gpStudentsDf["user_id"].astype(int)
 
-        ## Drop student rows without user_ids
-        GPSStudentsDf = GPSStudentsDf.dropna(subset=['user_id'])
+        coursesDf = CanvasReport.getCoursesDf(localSetup, "Default Term")
+        targetCourseId = coursesDf.loc[
+            coursesDf["short_name"] == "Graduate & Professional Student Hub",
+            "canvas_course_id",
+        ].values[0]
 
-        ## Set studentRow['user_id'] to int
-        GPSStudentsDf['user_id'] = GPSStudentsDf['user_id'].astype(int)
+        gradHubCoreApiUrl  = f"{coreCanvasApiUrl}courses/{targetCourseId}"
+        gradHubUsersApiUrl = f"{gradHubCoreApiUrl}/users"
+        gradHubUsersPayload = {
+            "enrollment_type[]": ["student"],
+            "include[]": "enrollments",
+            "per_page": 100,
+        }
 
-        ## Retrieve (and update if neccessary) the term relavent canvas courses file path
-        ##Grad_HubCourseTermLocationDf = pd.read_csv(termGetCourses("All"))
-        Grad_HubCourseTermLocationDf = CanvasReport.getCoursesDf(localSetup, "Default Term")
+        ## Step 3: Build a dict of students currently enrolled in the Grad Hub course
+        ## {sis_user_id: enrollment_id}
+        gradHubEnrollmentResponse, _ = makeApiCall(
+            localSetup, p1_apiUrl=gradHubUsersApiUrl, p1_payload=gradHubUsersPayload
+        )
+        currentlyEnrolled = {}
+        for studentObj in gradHubEnrollmentResponse.json():
+            currentlyEnrolled[studentObj["sis_user_id"]] = studentObj["enrollments"][0]["id"]
 
-        ## Find the "canvas_course_id" for the Graduate & Professional Student Hub course by looking for the target Graduate & Professional Student Hub sis id in the course short name
-        targetOrientationCanvasCourseId = Grad_HubCourseTermLocationDf.loc[Grad_HubCourseTermLocationDf['short_name'] == "Graduate & Professional Student Hub", 'canvas_course_id'].values[0]
-         
-        ## Define the Graduate & Professional Student Hub course's base api url
-        Grad_HubCourseCoreApiUrl = f"{coreCanvasApiUrl}courses/{targetOrientationCanvasCourseId}"
+        ## Step 4: Remove students who are enrolled but are no longer in the GPS list
+        for studentId, enrollmentId in currentlyEnrolled.items():
+            if studentId.isdigit() and int(studentId) not in gpStudentsDf["user_id"].values:
+                deleteEnrollment(localSetup, errorHandler, str(targetCourseId), str(enrollmentId))
 
-        ## Define the Graduate & Professional Student Hub courses users api url
-        Grad_HubCourseUsersApiUrl = f"{Grad_HubCourseCoreApiUrl}/users"
-
-        ## Define the payload to get the course's students
-        Grad_HubCourseUserPayload = {"enrollment_type[]":["student"], "include[]": "enrollments", "per_page": 100}
-
-        ## Make the API call to get the course's details
-        Grad_HubCourseEnrollmentObjectOrObjectList, _ = makeApiCall(localSetup, p1_apiUrl = Grad_HubCourseUsersApiUrl, p1_payload = Grad_HubCourseUserPayload)
-
-        ## Make a list to hold the target orientation students
-        targetCourseEnrolledStudentsDict = {}
-        
-        ## Make List to hold all threads
-        actionThreads = []
-
-        ## If the Grad_HubCourseEnrollmentObjectOrObjectList is a list
-        if isinstance(Grad_HubCourseEnrollmentObjectOrObjectList, list):
-
-            ## For each json api object in the course's enrollment objects list
-            for enrollmentsObject in Grad_HubCourseEnrollmentObjectOrObjectList:
-                
-                ## For each student within the text (dict) of the object
-                for studentObject in enrollmentsObject.json():
-
-                    ## Add the student's sis_user_id and the target student's Graduate & Professional Student Hub enrollment id to the targetCourseEnrolledStudentsDict
-                    targetCourseEnrolledStudentsDict[studentObject["sis_user_id"]] = studentObject['enrollments'][0]["id"]
-        
-        ## If the Grad_HubCourseEnrollmentObjectOrObjectList is not a list, There was just one object returned
-        else:
-            
-             ## For each student within the text (dict) of the object
-                for studentObject in Grad_HubCourseEnrollmentObjectOrObjectList.json():
-
-                    ## Define a variable to hold the student's enrollment id
-                    targetStudentsGrad_HubEnrollmentId = None
-
-                    ## For each enrollment in the student object's enrollments list
-                    for enrollment in studentObject["enrollments"]:
-
-                        ## If the course id of the enrollment matches the target orientation course id
-                        if enrollment["course_id"] == targetOrientationCanvasCourseId:
-
-                            ## Set the target student's Graduate & Professional Student Hub enrollment id to the enrollment's id
-                            targetStudentsGrad_HubEnrollmentId = enrollment["id"]
-
-                    ## Add the student's sis_user_id and the target student's Graduate & Professional Student Hub enrollment id to the targetCourseEnrolledStudentsDict
-                    targetCourseEnrolledStudentsDict[studentObject["sis_user_id"]] = targetStudentsGrad_HubEnrollmentId
-
-        ## For each student in the targetCourseEnrolledStudentsDict
-        for studentId, enrollmentID in targetCourseEnrolledStudentsDict.items():
-
-            ## If the student is not in the GPSStudentsDf
-            if studentId.isdigit() and int(studentId) not in GPSStudentsDf['user_id'].values:
-                
-                ## Create the deletion api url by adding the enrollment id to the end of the stuCourseEnrollmentApiUrl
-                stuCourseEnrollmentDeletionApiUrl = f"{coreCanvasApiUrl}courses/{targetOrientationCanvasCourseId}/enrollments/{enrollmentID}"
-
-                ## Defeine the parameter to delete the enrollment
-                stuCourseEnrollmentDeleteParams = {
-                    "task": "delete"
-                }
-
-                ## Make a delete enrollment api call to remove the reactivated enrollment
-                enrollmentDeletionApiOjbect, _ = makeApiCall(localSetup, p1_apiUrl = stuCourseEnrollmentDeletionApiUrl, p1_payload = stuCourseEnrollmentDeleteParams, p1_apiCallType = "delete")
-
-                ## Define a deletion attempt variable
-                enrollmentDeletionAttempt = 1
-
-                ## If the enrollment deletion api call was not successful
-                while enrollmentDeletionApiOjbect.status_code != 200 and enrollmentDeletionAttempt != 5:
-
-                    ## Sleep 3 seconds
-                    time.sleep(3)
-
-                    ## Log a warning that the enrollment deletion failed
-                    localSetup.logger.warning(f"Enrollment deletion failed in the Graduate & Professional Student Hub course for student {studentId}")
-
-                    ## try to remove the reactiviated enrollment again
-                    enrollmentDeletionApiOjbect, _ = makeApiCall(localSetup, p1_apiUrl = stuCourseEnrollmentDeletionApiUrl, p1_payload = stuCourseEnrollmentDeleteParams, p1_apiCallType = "delete")
-
-                    ## Increment the attempt number
-                    enrollmentDeletionAttempt += 1
-
-        ## Define the Graduate & Professional Student Hub courses's enrollment API URL
-        Grad_HubCourseUsersApiUrl = f"{Grad_HubCourseCoreApiUrl}/enrollments"
-
-        ## For each student in the GPSStudentsDf
-        for index, studentRow in GPSStudentsDf.iterrows():
-
-            ## Define the payload to enroll the student in the Graduate & Professional Student Hub course
-            reEnrollPayload = {
-                "enrollment[user_id]": studentRow['canvas_user_id'],
-                "enrollment[type]": "StudentEnrollment",
-                "enrollment[enrollment_state]": "active"
-            }
-
-            ## If the student is not already enrolled in the Graduate & Professional Student Hub course
-            if str(studentRow['user_id']) not in targetCourseEnrolledStudentsDict.keys():
-
-                ## Make a post api call to enroll the student in the Graduate & Professional Student Hub course
-                reEnrollApiObject, _ = makeApiCall(localSetup, p1_apiUrl=Grad_HubCourseUsersApiUrl, p1_payload=reEnrollPayload, p1_apiCallType="post")
-
-                ## If the enrollment was successful
-                if reEnrollApiObject.status_code == 200:
-                    localSetup.logger.info(f"Successfully enrolled student {studentRow['user_id']} in the Graduate & Professional Student Hub course")
-                else:
-                    localSetup.logger.warning(f"Failed to enroll student {studentRow['user_id']} in the Graduate & Professional Student Hub course. Status code: {reEnrollApiObject.status_code}")
-
-        
+        ## Step 5: Enroll students who are in the GPS list but not yet enrolled in Grad Hub
+        gradHubEnrollmentsApiUrl = f"{gradHubCoreApiUrl}/enrollments"
+        for _, studentRow in gpStudentsDf.iterrows():
+            if str(studentRow["user_id"]) not in currentlyEnrolled:
+                enrollUser(
+                    localSetup, errorHandler,
+                    str(targetCourseId), str(studentRow["canvas_user_id"]),
+                    "StudentEnrollment",
+                )
 
     except Exception as Error:
         errorHandler.sendError(functionName, Error)
+
 
 if __name__ == "__main__":
     ## Set working directory
     os.chdir(os.path.dirname(__file__))
-    
-    ## Change the role for the listed enrollments
-    enrollGPSStudentsInGrad_Hub(inputTerm = input("Enter the desired term in \
-four character format (FA20, SU20, SP20): "))
 
-    ## Wait for user input to exit
+    ## Prompt for the target term and run
+    enrollGPSStudentsInGrad_Hub(
+        inputTerm=input("Enter the desired term in four character format (GF20, GS20): ")
+    )
+
     input("Press enter to exit")
 
 
@@ -3017,26 +2331,27 @@ four character format (FA20, SU20, SP20): "))
 ## Last Updated by: Bryce Miller
 
 ## Import necessary modules
-import os, sys, threading, time, pandas as pd
+import os, sys
 from datetime import datetime
 
-## Import necessary functions from local modules
 ## Add Script repository to syspath
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules"))
 
-## New resource modules
+## Resource module imports
 try:
     from Local_Setup import LocalSetup
     from TLC_Common import makeApiCall, isFileRecent
     from Canvas_Report import CanvasReport
     from Error_Email import errorEmail
+    from TLC_Action import deleteEnrollment, enrollUser
 except ImportError:
     from ResourceModules.Local_Setup import LocalSetup
     from ResourceModules.TLC_Common import makeApiCall, isFileRecent
     from ResourceModules.Canvas_Report import CanvasReport
     from ResourceModules.Error_Email import errorEmail
+    from ResourceModules.TLC_Action import deleteEnrollment, enrollUser
 
-## Create the localsetup variable
+## Module-level setup (required because this module is imported and called by the orchestrator)
 localSetup = LocalSetup(datetime.now(), __file__)  ## sets cwd, paths, logs, date parts
 
 ## Import configs
@@ -3046,209 +2361,80 @@ from Common_Configs import coreCanvasApiUrl, canvasAccessToken, gradTermsWordsTo
 scriptName = os.path.basename(__file__).replace(".py", "")
 
 scriptPurpose = r"""
-This script reads a CSV file containing Canvas enrollment IDs and changes the role for each enrollment using the Canvas API.
+Auto-enrolls all current TUG (Traditional Undergraduate) students in the SGA course
+and removes any students who are no longer TUG students for the given term.
 """
 externalRequirements = r"""
-To function properly, this script requires a valid URL, and a CSV file named "Target_Canvas_Enrollment_Ids.csv" located in the Canvas Resources directory.
+To function properly, this script requires a valid Canvas API URL and the Canvas courses
+and enrollment reports to be populated via CanvasReport.
 """
 
 ## Setup the error handler
 errorHandler = errorEmail(scriptName, scriptPurpose, externalRequirements, localSetup)
 
-## This function deletes an enrollment given its Canvas enrollment ID
-def deleteEnrollment(p3_courseId, p1_enrollmentId):
-    functionName = "deleteEnrollment"
-    try:
 
-        ## Define the API URL for deleting the enrollment
-        deleteEnrollmentUrl = f"{coreCanvasApiUrl}courses/{p3_courseId}/enrollments/{p1_enrollmentId}"
-
-        ## Define the API URL for deleting the enrollment
-        response, _ = makeApiCall(localSetup, p1_apiUrl=deleteEnrollmentUrl, p1_apiCallType="delete")
-
-        ## Make the API call to delete the enrollment
-        if response.status_code == 200:
-            localSetup.logger.info(f"Successfully deleted enrollment with ID: {p1_enrollmentId}")
-        else:
-            localSetup.logger.warning(f"Failed to delete enrollment with ID: {p1_enrollmentId}. Status code: {response.status_code}")
-
-    except Exception as Error:
-        errorHandler.sendError(functionName, Error)
-
-## This function enrolls a user with a new role given the Canvas user ID, course ID, role ID, and base role type
-def reEnrollUser(p1_userId, p2_courseId, p3_roleId, p4_baseRoleType):
-    functionName = "reEnrollUser"
-    try:
-
-        ## Define the API URL for enrolling the user
-        reEnrollUrl = f"{coreCanvasApiUrl}courses/{p2_courseId}/enrollments"
-
-        ## Define the API URL for enrolling the user
-        payload = {"enrollment[user_id]": p1_userId
-                   , "enrollment[type]": p4_baseRoleType
-                   , "enrollment[role_id]": p3_roleId
-                   , "enrollment[enrollment_state]": "active"
-                   }
-
-        ## Define the payload
-        response, _ = makeApiCall(localSetup, p1_apiUrl=reEnrollUrl, p1_payload=payload, p1_apiCallType="post")
-
-        ## Make the API call to enroll the user
-        if response.status_code == 200:
-            localSetup.logger.info(f"Successfully enrolled user with ID: {p1_userId} in course with ID: {p2_courseId} with role ID: {p3_roleId}")
-        else:
-            localSetup.logger.warning(f"Failed to enroll user with ID: {p1_userId} in course with ID: {p2_courseId}. Status code: {response.status_code}")
-
-    except Exception as Error:
-        errorHandler.sendError(functionName, Error)
-
-## This function deletes the enrollment and enrolls the user with the new role
-def deleteAndReenroll(p1_enrollmentId, p1_userId, p2_courseId, p3_roleId, p4_baseRoleType):
-    reEnrollUser(p1_userId, p2_courseId, p3_roleId, p4_baseRoleType)
-    deleteEnrollment(p2_courseId, p1_enrollmentId)
-
-## This function reads the CSV file, deletes the enrollment, and enrolls the user with the new role
+## Sync TUG student enrollment in the SGA course for the given term
 def enrollTugStudentsInSga(inputTerm):
-
     functionName = "enrollTugStudentsInSga"
-
     try:
-
-        ## Determine and save the term's school year
+        ## Step 1: Determine school-year variables for the term
         termName = localSetup._determineTermName(inputTerm[:2])
-        startYear, endYear = localSetup._getSchoolYearRange(termName, int(str(localSetup.dateDict["century"]) + inputTerm[2:4]))
-        termYear = localSetup._getYearForTerm(termName, startYear, endYear)
+        startYear, endYear = localSetup._getSchoolYearRange(
+            termName, int(str(localSetup.dateDict["century"]) + inputTerm[2:4])
+        )
 
-        
-        ## Get TUG students from Canvas
+        ## Step 2: Retrieve the current TUG students and the SGA course ID
         tugStudentsDf = CanvasReport.getTugStudentsDf(localSetup, inputTerm)
-
-        ## Get SGA course info
         coursesDf = CanvasReport.getCoursesDf(localSetup, "Default Term")
-        targetOrientationCanvasCourseId = coursesDf.loc[coursesDf['short_name'] == "SGA", 'canvas_course_id'].values[0]
-         
-        ## Define the SGA course's base api url
-        SGACourseCoreApiUrl = f"{coreCanvasApiUrl}courses/{targetOrientationCanvasCourseId}"
+        targetCourseId = coursesDf.loc[
+            coursesDf["short_name"] == "SGA", "canvas_course_id"
+        ].values[0]
 
-        ## Define the SGA courses users api url
-        SGACourseUsersApiUrl = f"{SGACourseCoreApiUrl}/users"
+        sgaCoreApiUrl   = f"{coreCanvasApiUrl}courses/{targetCourseId}"
+        sgaUsersApiUrl  = f"{sgaCoreApiUrl}/users"
+        sgaUsersPayload = {
+            "enrollment_type[]": ["student"],
+            "include[]": "enrollments",
+            "per_page": 100,
+        }
 
-        ## Define the payload to get the course's students
-        SGACourseUserPayload = {"enrollment_type[]":["student"], "include[]": "enrollments", "per_page": 100}
+        ## Step 3: Build a dict of students currently enrolled in the SGA course
+        ## {sis_user_id: enrollment_id}
+        sgaEnrollmentResponse, _ = makeApiCall(
+            localSetup, p1_apiUrl=sgaUsersApiUrl, p1_payload=sgaUsersPayload
+        )
+        currentlyEnrolled = {}
+        for studentObj in sgaEnrollmentResponse.json():
+            currentlyEnrolled[studentObj["sis_user_id"]] = studentObj["enrollments"][0]["id"]
 
-        ## Make the API call to get the course's details
-        SGACourseEnrollmentObjectOrObjectList, _ = makeApiCall(localSetup, p1_apiUrl = SGACourseUsersApiUrl, p1_payload = SGACourseUserPayload)
+        ## Step 4: Remove students who are enrolled but are no longer in the TUG list
+        for studentId, enrollmentId in currentlyEnrolled.items():
+            if studentId.isdigit() and str(studentId) not in tugStudentsDf["user_id"].astype(str).values:
+                deleteEnrollment(localSetup, errorHandler, str(targetCourseId), str(enrollmentId))
 
-        ## Make a list to hold the target orientation students
-        targetCourseEnrolledStudentsDict = {}
-
-        ## If the SGACourseEnrollmentObjectOrObjectList is a list
-        if isinstance(SGACourseEnrollmentObjectOrObjectList, list):
-
-            ## For each json api object in the course's enrollment objects list
-            for enrollmentsObject in SGACourseEnrollmentObjectOrObjectList:
-                
-                ## For each student within the text (dict) of the object
-                for studentObject in enrollmentsObject.json():
-
-                    ## Add the student's sis_user_id and the target student's SGA enrollment id to the targetCourseEnrolledStudentsDict
-                    targetCourseEnrolledStudentsDict[studentObject["sis_user_id"]] = studentObject['enrollments'][0]["id"]
-        
-        ## If the SGACourseEnrollmentObjectOrObjectList is not a list, There was just one object returned
-        else:
-            
-             ## For each student within the text (dict) of the object
-                for studentObject in SGACourseEnrollmentObjectOrObjectList.json():
-
-                    ## Define a variable to hold the student's enrollment id
-                    targetStudentsSgaEnrollmentId = None
-
-                    ## For each enrollment in the student object's enrollments list
-                    for enrollment in studentObject["enrollments"]:
-
-                        ## If the course id of the enrollment matches the target orientation course id
-                        if enrollment["course_id"] == targetOrientationCanvasCourseId:
-
-                            ## Set the target student's SGA enrollment id to the enrollment's id
-                            targetStudentsSgaEnrollmentId = enrollment["id"]
-
-                    ## Add the student's sis_user_id and the target student's SGA enrollment id to the targetCourseEnrolledStudentsDict
-                    targetCourseEnrolledStudentsDict[studentObject["sis_user_id"]] = targetStudentsSgaEnrollmentId
-
-        ## For each student in the targetCourseEnrolledStudentsDict
-        for studentId, enrollmentID in targetCourseEnrolledStudentsDict.items():
-
-            ## If the student is not in the tugStudentsDf
-            if studentId.isdigit() and str(studentId) not in tugStudentsDf['user_id'].astype(str).values:
-                
-                ## Create the deletion api url by adding the enrollment id to the end of the stuCourseEnrollmentApiUrl
-                stuCourseEnrollmentDeletionApiUrl = f"{coreCanvasApiUrl}courses/{targetOrientationCanvasCourseId}/enrollments/{enrollmentID}"
-
-                ## Defeine the parameter to delete the enrollment
-                stuCourseEnrollmentDeleteParams = {
-                    "task": "delete"
-                }
-
-                ## Make a delete enrollment api call to remove the reactivated enrollment
-                enrollmentDeletionApiOjbect, _ = makeApiCall(localSetup, p1_apiUrl = stuCourseEnrollmentDeletionApiUrl, p1_payload = stuCourseEnrollmentDeleteParams, p1_apiCallType = "delete")
-
-                ## Define a deletion attempt variable
-                enrollmentDeletionAttempt = 1
-
-                ## If the enrollment deletion api call was not successful
-                while enrollmentDeletionApiOjbect.status_code != 200 and enrollmentDeletionAttempt != 5:
-
-                    ## Sleep 3 seconds
-                    time.sleep(3)
-
-                    ## Log a warning that the enrollment deletion failed
-                    localSetup.logger.warning(f"Enrollment deletion failed in the SGA course for student {studentId}")
-
-                    ## try to remove the reactiviated enrollment again
-                    enrollmentDeletionApiOjbect, _ = makeApiCall(localSetup, p1_apiUrl = stuCourseEnrollmentDeletionApiUrl, p1_payload = stuCourseEnrollmentDeleteParams, p1_apiCallType = "delete")
-
-                    ## Increment the attempt number
-                    enrollmentDeletionAttempt += 1
-
-        ## Define the SGA courses's enrollment API URL
-        SGACourseUsersApiUrl = f"{SGACourseCoreApiUrl}/enrollments"
-
-        ## For each student in the tugStudentsDf
-        for index, studentRow in tugStudentsDf.iterrows():
-
-            ## Define the payload to enroll the student in the SGA course
-            reEnrollPayload = {
-                "enrollment[user_id]": studentRow['canvas_user_id'],
-                "enrollment[type]": "StudentEnrollment",
-                "enrollment[enrollment_state]": "active"
-            }
-
-            ## If the student is not already enrolled in the SGA course
-            if str(studentRow['user_id']) not in targetCourseEnrolledStudentsDict.keys():
-
-                ## Make a post api call to enroll the student in the SGA course
-                reEnrollApiObject, _ = makeApiCall(localSetup, p1_apiUrl=SGACourseUsersApiUrl, p1_payload=reEnrollPayload, p1_apiCallType="post")
-
-                ## If the enrollment was successful
-                if reEnrollApiObject.status_code == 200:
-                    localSetup.logger.info(f"Successfully enrolled student {studentRow['user_id']} in the SGA course")
-                else:
-                    localSetup.logger.warning(f"Failed to enroll student {studentRow['user_id']} in the SGA course. Status code: {reEnrollApiObject.status_code}")
-
-        
+        ## Step 5: Enroll students who are in the TUG list but not yet enrolled in SGA
+        sgaEnrollmentsApiUrl = f"{sgaCoreApiUrl}/enrollments"
+        for _, studentRow in tugStudentsDf.iterrows():
+            if str(studentRow["user_id"]) not in currentlyEnrolled:
+                enrollUser(
+                    localSetup, errorHandler,
+                    str(targetCourseId), str(studentRow["canvas_user_id"]),
+                    "StudentEnrollment",
+                )
 
     except Exception as Error:
         errorHandler.sendError(functionName, Error)
+
 
 if __name__ == "__main__":
     ## Set working directory
     os.chdir(os.path.dirname(__file__))
-    
-    ## Change the role for the listed enrollments
-    enrollTugStudentsInSga(inputTerm = input("Enter the desired term in \
-four character format (FA20, SU20, SP20): "))
 
-    ## Wait for user input to exit
+    ## Prompt for the target term and run
+    enrollTugStudentsInSga(
+        inputTerm=input("Enter the desired term in four character format (FA20, SU20, SP20): ")
+    )
+
     input("Press enter to exit")
 
 
@@ -3264,6 +2450,7 @@ import os, sys, re, pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from dateutil import parser as dateutil_parser
+import threading
 
 ## Import necessary functions from local modules
 ## Add Script repository to syspath
@@ -3308,6 +2495,7 @@ To function properly, this script requires:
 
 ## Setup the error handler
 errorHandler = errorEmail(scriptName, scriptPurpose, externalRequirements, localSetup)
+_summaryLock = threading.Lock()
 
 ## ─────────────────────────────────────────────────────────────────────────────
 ## Helper: Parse a date string safely, returning None on failure
@@ -3351,7 +2539,7 @@ def buildTermDateLookup():
                     "end_date":   _safeParseDatetime(row.get("end_date")),
                 }
 
-        localSetup.logger.info(f"Built term date lookup with {len(termDateDict)} terms")
+        localSetup.logInfoThreadSafe(f"Built term date lookup with {len(termDateDict)} terms")
         return termDateDict
 
     except Exception as Error:
@@ -3384,7 +2572,7 @@ def buildSisDateIntervals(sisCoursesDf, canvasTermDateDict):
                     endDt = termDates.get("end_date")
             if startDt is not None and endDt is not None:
                 intervals.add((startDt, endDt))
-        localSetup.logger.info(
+        localSetup.logInfoThreadSafe(
             f"Built {len(intervals)} unique SIS date pair(s) from {len(sisCoursesDf)} SIS course rows"
         )
         return intervals
@@ -3483,7 +2671,7 @@ def processOrphanedCourse(courseRow, activeEnrollmentsDf, summary):
 
         ## ── Step B: Course HAS grades → notify, skip ─────────────────────────
         if hasGrades:
-            localSetup.logger.warning(
+            localSetup.logWarningThreadSafe(
                 f"Orphaned course {courseId} (canvas_course_id={canvasCourseId}) has "
                 f"{scoredCount} scored submission(s) -- skipping deletion, sending email"
             )
@@ -3511,7 +2699,8 @@ def processOrphanedCourse(courseRow, activeEnrollmentsDf, summary):
                 p1_shared_mailbox=f"{scriptLibrary}@nnu.edu",
             )
 
-            summary["skipped_grades"].append(courseId)
+            with _summaryLock:
+                summary["skipped_grades"].append(courseId)
             return
 
         ## ── Step C: Course has NO grades ─────────────────────────────────────
@@ -3534,13 +2723,13 @@ def processOrphanedCourse(courseRow, activeEnrollmentsDf, summary):
                 )
                 response, _ = apiResult if apiResult is not None else (None, None)
                 if response and response.status_code == 200:
-                    localSetup.logger.info(
+                    localSetup.logInfoThreadSafe(
                         f"Deleted enrollment {enrollmentId} (user={enrollRow.get('user_id', '')}) "
                         f"from orphaned course {courseId}"
                     )
                 else:
                     statusCode = response.status_code if response else "N/A"
-                    localSetup.logger.warning(
+                    localSetup.logWarningThreadSafe(
                         f"Failed to delete enrollment {enrollmentId} from orphaned course {courseId}. "
                         f"Status: {statusCode}"
                     )
@@ -3556,13 +2745,13 @@ def processOrphanedCourse(courseRow, activeEnrollmentsDf, summary):
             response, _ = apiResult if apiResult is not None else (None, None)
 
             if response and response.status_code == 200:
-                localSetup.logger.info(
+                localSetup.logInfoThreadSafe(
                     f"Deleted orphaned course {courseId} (canvas_course_id={canvasCourseId}) "
                     f"after removing {enrollmentCount} enrollment(s)"
                 )
             else:
                 statusCode = response.status_code if response else "N/A"
-                localSetup.logger.warning(
+                localSetup.logWarningThreadSafe(
                     f"Failed to delete orphaned course {courseId}. Status: {statusCode}"
                 )
 
@@ -3590,7 +2779,8 @@ def processOrphanedCourse(courseRow, activeEnrollmentsDf, summary):
                 p1_shared_mailbox=f"{scriptLibrary}@nnu.edu",
             )
 
-            summary["deleted_with_enrollments"].append(courseId)
+            with _summaryLock:
+                summary["deleted_with_enrollments"].append(courseId)
 
         else:
             ## No enrollments, no grades — delete silently
@@ -3604,17 +2794,18 @@ def processOrphanedCourse(courseRow, activeEnrollmentsDf, summary):
             response, _ = apiResult if apiResult is not None else (None, None)
 
             if response and response.status_code == 200:
-                localSetup.logger.info(
+                localSetup.logInfoThreadSafe(
                     f"Silently deleted orphaned course {courseId} (canvas_course_id={canvasCourseId}) -- "
                     f"no enrollments, no grades"
                 )
             else:
                 statusCode = response.status_code if response else "N/A"
-                localSetup.logger.warning(
+                localSetup.logWarningThreadSafe(
                     f"Failed to silently delete orphaned course {courseId}. Status: {statusCode}"
                 )
 
-            summary["deleted_silently"].append(courseId)
+            with _summaryLock:
+                summary["deleted_silently"].append(courseId)
 
     except Exception as Error:
         errorHandler.sendError(functionName, Error)
@@ -3642,14 +2833,15 @@ def processOrphanedEnrollment(enrollRow, summary):
         response, _ = apiResult if apiResult is not None else (None, None)
 
         if response and response.status_code == 200:
-            localSetup.logger.info(
+            localSetup.logInfoThreadSafe(
                 f"Deleted orphaned enrollment {enrollmentId} "
                 f"(user={userId}, course={courseId})"
             )
-            summary["orphaned_enrollments_deleted"].append(enrollmentId)
+            with _summaryLock:
+                summary["orphaned_enrollments_deleted"].append(enrollmentId)
         else:
             statusCode = response.status_code if response else "N/A"
-            localSetup.logger.warning(
+            localSetup.logWarningThreadSafe(
                 f"Failed to delete orphaned enrollment {enrollmentId} "
                 f"(user={userId}, course={courseId}). Status: {statusCode}"
             )
@@ -3667,9 +2859,9 @@ def removeOrphanedSisItems():
 
     try:
 
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
         ## 1. Read the SIS feed files
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
         sisResourcePath = localSetup.getExternalResourcePath("SIS")
 
         sisCoursesDf = pd.read_csv(
@@ -3681,9 +2873,9 @@ def removeOrphanedSisItems():
             dtype=str,
         )
 
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
         ## 2. Build Canvas term date lookup (all terms, including legacy)
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
         termDateDict     = buildTermDateLookup()
         sisDateIntervals = buildSisDateIntervals(sisCoursesDf, termDateDict)
 
@@ -3691,7 +2883,7 @@ def removeOrphanedSisItems():
         ## If the SIS has a course at all, it will manage its own deletion; this script
         ## only removes courses that are completely absent from the SIS feed.
         activeSisCourseIds = set(sisCoursesDf["course_id"].dropna())
-        localSetup.logger.info(f"SIS feed: {len(activeSisCourseIds)} known course IDs (all statuses)")
+        localSetup.logInfoThreadSafe(f"SIS feed: {len(activeSisCourseIds)} known course IDs (all statuses)")
 
         ## Build the set of all known SIS enrollment keys (any status)
         ## If the SIS has an enrollment at all, it will manage its own deletion; this script
@@ -3703,7 +2895,7 @@ def removeOrphanedSisItems():
                 sisEnrollDf["role"].str.lower().str.strip(),
             )
         )
-        localSetup.logger.info(f"SIS feed: {len(activeEnrollKeys)} known enrollment keys (all statuses)")
+        localSetup.logInfoThreadSafe(f"SIS feed: {len(activeEnrollKeys)} known enrollment keys (all statuses)")
 
         ## Derive a broad span from the SIS date pairs purely to limit which Canvas
         ## term provisioning reports we need to pull.  The actual per-course date
@@ -3712,12 +2904,12 @@ def removeOrphanedSisItems():
             windowStart = min(s for s, e in sisDateIntervals)
             windowEnd   = max(e for s, e in sisDateIntervals)
         else:
-            localSetup.logger.warning(
+            localSetup.logWarningThreadSafe(
                 "No resolvable SIS date intervals found -- no Canvas terms will be queried"
             )
             return
 
-        localSetup.logger.info(
+        localSetup.logInfoThreadSafe(
             f"SIS date span for term pre-filter: {windowStart.date()} → {windowEnd.date()} "
             f"({len(sisDateIntervals)} unique SIS date pair(s))"
         )
@@ -3743,17 +2935,17 @@ def removeOrphanedSisItems():
                 relevantTermIds.append(termId)
 
         if skippedTermIds:
-            localSetup.logger.info(
+            localSetup.logInfoThreadSafe(
                 f"Skipped {len(skippedTermIds)} non-standard Canvas term(s): {', '.join(skippedTermIds)}"
             )
 
-        localSetup.logger.info(
+        localSetup.logInfoThreadSafe(
             f"Identified {len(relevantTermIds)} Canvas term(s) overlapping the SIS date window"
         )
 
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
         ## 3. Retrieve Canvas courses, enrollments, and sections across relevant terms
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
         allCoursesDfs     = []
         allEnrollmentsDfs = []
         allSectionsDfs    = []
@@ -3776,14 +2968,14 @@ def removeOrphanedSisItems():
         canvasSectionsDf = pd.concat(allSectionsDfs, ignore_index=True) if allSectionsDfs else pd.DataFrame()
 
         if isMissing(canvasCoursesDf):
-            localSetup.logger.info("No Canvas courses found across relevant terms -- nothing to do")
+            localSetup.logInfoThreadSafe("No Canvas courses found across relevant terms -- nothing to do")
             return
         if isMissing(canvasEnrollDf):
-            localSetup.logger.info("No Canvas enrollments found across relevant terms")
+            localSetup.logInfoThreadSafe("No Canvas enrollments found across relevant terms")
 
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
         ## Step 3.5: Build crosslist mapping from sections
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
         ## Maps original_course_id → set of parent_course_ids
         ## so we can recognize crosslisted enrollments
 
@@ -3830,7 +3022,7 @@ def removeOrphanedSisItems():
                     crosslistOrigToParent[origSisId.lower()] = parentSisId.lower()
                     crosslistedAwayCourseIds.add(origSisId)
 
-            localSetup.logger.info(
+            localSetup.logInfoThreadSafe(
                 f"Built crosslist mapping: {len(crosslistOrigToParent)} original→parent course mappings, "
                 f"{len(crosslistedAwayCourseIds)} courses with sections crosslisted away"
             )
@@ -3845,26 +3037,26 @@ def removeOrphanedSisItems():
                     crosslistExpandedKeys.add((parentCourseId, userId, role))
 
             activeEnrollKeys.update(crosslistExpandedKeys)
-            localSetup.logger.info(
+            localSetup.logInfoThreadSafe(
                 f"After crosslist expansion: {len(activeEnrollKeys)} active enrollment keys "
                 f"(added {len(crosslistExpandedKeys)} crosslisted variants)"
             )
 
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
         ## Step 4: Active‑status pre‑filter
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
         canvasCoursesDf = canvasCoursesDf[canvasCoursesDf["status"].astype(str).str.lower() == "active"].copy()
         if isPresent(canvasEnrollDf):
             canvasEnrollDf = canvasEnrollDf[canvasEnrollDf["status"].astype(str).str.lower() == "active"].copy()
 
-        localSetup.logger.info(
+        localSetup.logInfoThreadSafe(
             f"After active-status filter: {len(canvasCoursesDf)} active courses, "
             f"{len(canvasEnrollDf)} active enrollments"
         )
 
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
         ## Step 5: SIS exact-date filter on courses
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
         ## A Canvas course is in scope only if its resolved (start, end) date pair
         ## exactly matches one of the date pairs present in the SIS feed.  This
         ## avoids treating courses that legitimately ended mid-window (e.g. Quad 1)
@@ -3879,7 +3071,7 @@ def removeOrphanedSisItems():
                 inWindowMask.append((startDt, endDt) in sisDateIntervals)
 
         canvasCoursesDf = canvasCoursesDf[inWindowMask].copy()
-        localSetup.logger.info(
+        localSetup.logInfoThreadSafe(
             f"After SIS exact-date filter: {len(canvasCoursesDf)} active courses with matching SIS date pair"
         )
 
@@ -3893,14 +3085,14 @@ def removeOrphanedSisItems():
             if endDt is None or endDt >= now:
                 enrollmentScopeCanvasIds.add(row["canvas_course_id"])
 
-        localSetup.logger.info(
+        localSetup.logInfoThreadSafe(
             f"Enrollment orphan scope: {len(enrollmentScopeCanvasIds)} course(s) in non-ended terms "
             f"(excluded {len(canvasCoursesDf) - len(enrollmentScopeCanvasIds)} ended-term course(s))"
         )
 
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
         ## Step 6: Identify orphaned courses
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
         orphanedCoursesDf = canvasCoursesDf[
             (canvasCoursesDf["created_by_sis"].astype(str).str.lower() == "true")
             & (canvasCoursesDf["status"].astype(str).str.lower() == "active")
@@ -3908,14 +3100,14 @@ def removeOrphanedSisItems():
             & (~canvasCoursesDf["course_id"].isin(crosslistedAwayCourseIds))  ## NEW: exclude crosslisted courses
         ].copy()
 
-        localSetup.logger.info(f"Identified {len(orphanedCoursesDf)} orphaned course(s)")
+        localSetup.logInfoThreadSafe(f"Identified {len(orphanedCoursesDf)} orphaned course(s)")
 
         ## Build a set of orphaned course canvas IDs for exclusion in enrollment step
         orphanedCanvasCourseIds = set(orphanedCoursesDf["canvas_course_id"])
 
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
         ## Step 7: Identify orphaned enrollments in still‑active courses
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
         orphanedEnrollRows = []
         if isPresent(canvasEnrollDf):
             for _, eRow in canvasEnrollDf.iterrows():
@@ -3940,7 +3132,7 @@ def removeOrphanedSisItems():
                 if enrollKey not in activeEnrollKeys:
                     orphanedEnrollRows.append(eRow)
 
-        localSetup.logger.info(
+        localSetup.logInfoThreadSafe(
             f"Identified {len(orphanedEnrollRows)} orphaned enrollment(s) in still-active courses"
         )
         ## save the orpahned enroll rows to a csv file for reference
@@ -3949,9 +3141,9 @@ def removeOrphanedSisItems():
         pd.DataFrame(orphanedEnrollRows).to_csv(orphanEnrollmentsOutputPath, index=False)
 
 
-        ## ═══════════════════════════════════════════════���══════════════════════
+        ## ===============================================���======================
         ## Step 8 & 9: Process orphaned courses and enrollments in batches
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
         ## Thread‑safe summary (lists are append‑safe in CPython)
         summary = {
             "deleted_silently":             [],
@@ -3970,8 +3162,8 @@ def removeOrphanedSisItems():
             ]
             for i, future in enumerate(as_completed(futures), 1):
                 if i % MAX_WORKERS == 0:
-                    localSetup.logger.info(f"Orphaned courses: {i} threads completed")
-            localSetup.logger.info(f"Orphaned courses: all {len(futures)} threads completed")
+                    localSetup.logInfoThreadSafe(f"Orphaned courses: {i} threads completed")
+            localSetup.logInfoThreadSafe(f"Orphaned courses: all {len(futures)} threads completed")
 
         ## ── Orphaned enrollments ─────────────────────────────────────────────
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
@@ -3981,32 +3173,32 @@ def removeOrphanedSisItems():
             ]
             for i, future in enumerate(as_completed(futures), 1):
                 if i % MAX_WORKERS == 0:
-                    localSetup.logger.info(f"Orphaned enrollments: {i} threads completed")
-            localSetup.logger.info(f"Orphaned enrollments: all {len(futures)} threads completed")
+                    localSetup.logInfoThreadSafe(f"Orphaned enrollments: {i} threads completed")
+            localSetup.logInfoThreadSafe(f"Orphaned enrollments: all {len(futures)} threads completed")
 
-        ## ════════════════════════════════════════════════════════════════��═════
+        ## ================================================================��=====
         ## Step 10: Final summary log
-        ## ══════════════════════════════════════════════════════════════════════
-        localSetup.logger.info("===============================================")
-        localSetup.logger.info("        Remove Orphaned SIS Items -- Summary")
-        localSetup.logger.info("===============================================")
-        localSetup.logger.info(
+        ## ======================================================================
+        localSetup.logInfoThreadSafe("===============================================")
+        localSetup.logInfoThreadSafe("        Remove Orphaned SIS Items -- Summary")
+        localSetup.logInfoThreadSafe("===============================================")
+        localSetup.logInfoThreadSafe(
             f"  Courses deleted silently (no enrollments, no grades): "
             f"{len(summary['deleted_silently'])}"
         )
-        localSetup.logger.info(
+        localSetup.logInfoThreadSafe(
             f"  Courses deleted after enrollment cleanup (email sent): "
             f"{len(summary['deleted_with_enrollments'])}"
         )
-        localSetup.logger.info(
+        localSetup.logInfoThreadSafe(
             f"  Courses skipped -- grades found (email sent): "
             f"{len(summary['skipped_grades'])}"
         )
-        localSetup.logger.info(
+        localSetup.logInfoThreadSafe(
             f"  Orphaned enrollments deleted (in still-active courses): "
             f"{len(summary['orphaned_enrollments_deleted'])}"
         )
-        localSetup.logger.info("===============================================")
+        localSetup.logInfoThreadSafe("===============================================")
 
         ## Send a summary email if anything was actually deleted
         totalDeleted = (
@@ -4043,7 +3235,7 @@ def removeOrphanedSisItems():
                 p1_recipientEmailList=f"{scriptLibrary}@nnu.edu",
                 p1_shared_mailbox=f"{scriptLibrary}@nnu.edu",
             )
-            localSetup.logger.info("Summary email sent")
+            localSetup.logInfoThreadSafe("Summary email sent")
 
     except Exception as Error:
         errorHandler.sendError(functionName, Error)
@@ -4056,6 +3248,7 @@ if __name__ == "__main__":
     os.chdir(os.path.dirname(__file__))
     removeOrphanedSisItems()
     input("Press enter to exit")
+
 
 ## ===========================================================================
 ## FILE: ActionModules\Send_Catalog_To_Simple_Syllabus.py
@@ -4121,9 +3314,9 @@ localSetup = LocalSetup(datetime.now(), __file__)
 errorHandler = errorEmail(scriptName, scriptPurpose, externalRequirements, localSetup)
 
 
-## ══════════════════════════════════════════════════════════════════════════════
+## ==============================================================================
 ## CSV Helpers (script-specific)
-## ══════════════════════════════════════════════════════════════════════════════
+## ==============================================================================
 
 ## This function normalizes spacing and delimiters in prerequisite/corequisite strings from the catalog
 def _normalizeRequisiteSpacing(text: str) -> str:
@@ -4230,9 +3423,9 @@ def formatCombinedCatalogForSimpleSyllabus(p1_combinedCatalogDf: pd.DataFrame, p
             result = re.sub(r'\.\s*\.', '.', result)
             return result
 
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
         ## STEP 1: Determine term codes for the catalog school year
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
 
         currentSchoolYear = localSetup.getCurrentSchoolYear()
         currentStartYear = int(currentSchoolYear.split("-")[0])
@@ -4255,9 +3448,9 @@ def formatCombinedCatalogForSimpleSyllabus(p1_combinedCatalogDf: pd.DataFrame, p
                                f"current school year={currentSchoolYear}, "
                                f"target term codes={targetTermCodes}")
 
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
         ## STEP 2: Retrieve the Canvas terms DataFrame and build lookup
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
 
         termsDf = CanvasReport.getTermsDf(localSetup)
         termCodeToNameDict = {}
@@ -4273,10 +3466,10 @@ def formatCombinedCatalogForSimpleSyllabus(p1_combinedCatalogDf: pd.DataFrame, p
         undgTermCodes = [tc for tc in targetTermCodes if tc[:2] in undgTermsCodesToWordsDict]
         gradTermCodes = [tc for tc in targetTermCodes if tc[:2] in gradTermsCodesToWordsDict]
 
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
         ## STEP 3: Load Simple Syllabus Organizations and Canvas Accounts
         ##         hierarchy to build the Parent Organization lookup
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
 
         simpleSyllabusOrgsPath = os.path.join(localSetup.configPath, "Simple Syllabus Organizations.csv")
         simpleSyllabusOrgsDf = readCsvWithEncoding(simpleSyllabusOrgsPath)
@@ -4321,9 +3514,9 @@ def formatCombinedCatalogForSimpleSyllabus(p1_combinedCatalogDf: pd.DataFrame, p
                 currentId = parentId
             return ""
 
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
         ## STEP 4: Retrieve Canvas courses for each target term
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
 
         canvasCourseInfoByTerm = {}
         for termCode in targetTermCodes:
@@ -4346,9 +3539,9 @@ def formatCombinedCatalogForSimpleSyllabus(p1_combinedCatalogDf: pd.DataFrame, p
                 localSetup.logger.warning(f"{functionName}: Could not retrieve courses for term {termCode}: {termError}")
                 canvasCourseInfoByTerm[termCode] = {}
 
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
         ## STEP 4.5: Expand rows where Title contains multiple codes via "/"
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
 
         expandedRows = []
         for _, row in p1_combinedCatalogDf.iterrows():
@@ -4365,10 +3558,10 @@ def formatCombinedCatalogForSimpleSyllabus(p1_combinedCatalogDf: pd.DataFrame, p
         p1_combinedCatalogDf = pd.DataFrame(expandedRows).reset_index(drop=True)
         localSetup.logger.info(f"{functionName}: After expanding multi-code rows: {len(p1_combinedCatalogDf)} rows")
 
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
         ## STEP 5: Process each catalog row — build prerequisites/corequisites,
         ##         expand into per-term rows, and filter by Canvas presence
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
 
         extractRows = []
 
@@ -4486,9 +3679,9 @@ def formatCombinedCatalogForSimpleSyllabus(p1_combinedCatalogDf: pd.DataFrame, p
                     "Corequisites": finalCorequisites,
                 })
 
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
         ## STEP 6: Build the output DataFrame and save
-        ## ══════════════════════════════════════════════════════════════════════
+        ## ======================================================================
 
         courseExtractDf = pd.DataFrame(extractRows, columns=[
             "Term", "Subject", "Course Number", "Title", "Parent Organization",
@@ -4741,9 +3934,9 @@ localSetup = LocalSetup(datetime.now(), __file__)
 errorHandler = errorEmail(scriptName, scriptPurpose, externalRequirements, localSetup)
 
 
-## ══════════════════════════════════════════════════════════════════════════════
+## ==============================================================================
 ## Course Editor Input Discovery and Normalization
-## ══════════════════════════════════════════════════════════════════════════════
+## ==============================================================================
 
 def _findCourseEditorFiles(p1_searchDir: str) -> list:
     """
@@ -4874,9 +4067,9 @@ def _normalizeCourseEditorDf(p1_rawDf: pd.DataFrame, p1_sourcePath: str) -> pd.D
     return outputDf
 
 
-## ══════════════════════════════════════════════════════════════════════════════
+## ==============================================================================
 ## Course Editor File Builder
-## ══════════════════════════════════════════════════════════════════════════════
+## ==============================================================================
 
 def buildCourseEditorFile(p1_combinedEditorInputDf: pd.DataFrame, p1_courseExtractPath: str, p1_outputPath: str) -> str:
     """
@@ -5002,9 +4195,9 @@ def buildCourseEditorFile(p1_combinedEditorInputDf: pd.DataFrame, p1_courseExtra
         raise
 
 
-## ══════════════════════════════���═══════════════════════════════════════════════
+## ==============================���===============================================
 ## Main Process Function
-## ══════════════════════════════════════════════════════════════════════════════
+## ==============================================================================
 
 def processCourseEditorsAndUploadToSimpleSyllabus():
     """
@@ -5167,9 +4360,9 @@ def processCourseEditorsAndUploadToSimpleSyllabus():
         raise
 
 
-## ══════════════════════════════════════════════════════════════════════════════
+## ==============================================================================
 ## Script Entry Point
-## ══════════════════════════════════════════════════════════════════════════════
+## ==============================================================================
 
 ## If the script is being run directly, execute the main function
 if __name__ == "__main__":
@@ -5230,315 +4423,154 @@ if __name__ == "__main__":
 ## Author: Bryce Miller - brycezmiller@nnu.edu
 ## Last Updated by: Bryce Miller
 
-## Import Generic Moduels
-from __future__ import print_function
-import traceback, os, sys, logging, requests, os, os.path, time
-from concurrent.futures import ThreadPoolExecutor
+## Import Generic Modules
+import os, sys, threading, pandas as pd
 from datetime import datetime
-from datetime import date
-import pandas as pd
 
-## Set working directory
-os.chdir(os.path.dirname(__file__))
+## Add the resource modules path
+sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules"))
 
-## Add Script repository to syspath
-sys.path.append(f"{os.getcwd()}\ResourceModules")
+## Try direct imports if run as main, else relative for package usage
+try:
+    from Local_Setup import LocalSetup
+    from TLC_Common import makeApiCall, runThreadedRows
+    from Error_Email import errorEmail
+    from Common_Configs import coreCanvasApiUrl, canvasAccessToken
+except ImportError:  ## When imported as a package/module
+    from .Local_Setup import LocalSetup
+    from .TLC_Common import makeApiCall, runThreadedRows
+    from .Error_Email import errorEmail
+    from .Common_Configs import coreCanvasApiUrl, canvasAccessToken
 
 ## Define the script name, purpose, and external requirements for logging and error reporting purposes
-scriptName = "Turn off disallow threaded discussions"
-
-## Script file identifier
-scriptRequirementMissingFolderIdentifier = "Missing_Syllabi"
-
+scriptName = os.path.basename(__file__).replace(".py", "")
 scriptPurpose = r"""
-The Outcome Exporter script is to copy the most recent relative outcome/s into the c ourses that need them.
+This script reads a CSV file of Canvas courses and, for each course, identifies discussion
+topics that do not allow threaded replies and records them. It produces a report CSV of all
+unthreaded discussions found across the listed courses.
 """
 externalRequirements = r"""
-To function properly this script requires a spreadsheet of the most recent outcomes and the courses they are assigned to.
+To function properly, this script requires:
+- Valid Canvas API configuration in Common_Configs (coreCanvasApiUrl, canvasAccessToken).
+- A CSV file named "Target_Canvas_Courses.csv" located in the Canvas internal resources
+  directory (LocalSetup.getInternalResourcePaths("Canvas")) with columns:
+    - canvas_course_id
+    - course_id
 """
 
-## Date Variables
-currentDateTime = datetime.now()
-currentMonth = currentDateTime.month
-currentYear = currentDateTime.year
-century = str(currentYear)[:2]
-decade = str(currentYear)[2:]
+_sharedDataLock = threading.Lock()
 
-## Time variables
-currentDateTime = date.today()
-current_year = currentDateTime.year
-lastYear = current_year - 1
-nextYear = current_year + 1
-century = str(current_year)[:2]
-decade = str(current_year)[2:]
-
-## Set working directory
-fileDir = os.path.dirname(__file__)
-os.chdir(fileDir)
-
-## The relative path is used to provide a generic way of finding where the Scripts TLC folder has been placed
-## This provides a non-script specific manner of finding the vaiours related modules
-PFRelativePath = r".\\"
-
-## If the Scripts TLC folder is not in the folder the PFRelative path points to
-## look for it in the next parent folder
-while "Scripts TLC" not in os.listdir(PFRelativePath):
-
-    PFRelativePath = f"..\\{PFRelativePath}"
-
-## Change the relative path to an absolute path
-absolutePath = f"{os.path.abspath(PFRelativePath)}\\"
-
-## Add Input Modules to the sys path
-sys.path.append(f"{absolutePath}Scripts TLC\\ResourceModules")
-
-## Import local modules
-from Error_Email import errorEmail
-
-## Local Path Variables
-baseLogPath = f"{absolutePath}Logs\\{scriptName}\\"
-configPath = f"{absolutePath}\\Configs TLC\\"
-baseLocalInputPath = f"{absolutePath}Canvas Resources\\"
-
-## Canvas Instance Url
-coreCanvasApiUrl = ""
-## Open the Core_Canvas_Url.txt from the config path
-with open (f"{configPath}Core_Canvas_Url.txt", "r") as file:
-    coreCanvasApiUrl = file.readlines()[0]
-
-## If the script is run as main the folder with the access token is in the parent directory
-canvasAccessToken = ""
-
-## Open and retrieve the Canvas Access Token
-with open (fr"{configPath}Canvas_Access_Token.txt", "r") as file:
-    canvasAccessToken = file.readlines()[0]
-
-## Begin localSetup.logger set up
-
-## If the base log path doesn't already exist, create it
-if not (os.path.exists(baseLogPath)):
-    os.makedirs(baseLogPath, mode=0o777, exist_ok=False)
-
-## Log configurations
-logger = logging.getLogger(__name__)
-rootFormat = ("%(asctime)s %(levelname)s %(message)s")
-FORMAT = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-logging.basicConfig(format=rootFormat, filemode = "a", level=logging.INFO)
-
-## Local setup shim for compatibility with shared modules
-class _LoggerShim:
-    def __init__(self, p_logger):
-        self.logger = p_logger
-localSetup = _LoggerShim(logger)
-
-## Info Log Handler
-infoLogFile = f"{baseLogPath}\\Info Log.txt"
-logInfo = logging.FileHandler(infoLogFile, mode = 'a')
-logInfo.setLevel(logging.INFO)
-logInfo.setFormatter(FORMAT)
-localSetup.logger.addHandler(logInfo)
-
-## Warning Log handler
-warningLogFile = f"{baseLogPath}\\Warning Log.txt"
-logWarning = logging.FileHandler(warningLogFile, mode = 'a')
-logWarning.setLevel(logging.WARNING)
-logWarning.setFormatter(FORMAT)
-localSetup.logger.addHandler(logWarning)
-
-## Error Log handler
-errorLogFile = f"{baseLogPath}\\Error Log.txt"
-logError = logging.FileHandler(errorLogFile, mode = 'a')
-logError.setLevel(logging.ERROR)
-logError.setFormatter(FORMAT)
-localSetup.logger.addHandler(logError)
-
-## Setup the error handler
-errorHandler = errorEmail(scriptName, scriptPurpose, externalRequirements, localSetup)
-
-## This function processes the rows of the CSV file and sends on the relavent data to process_course
-def addOutcomeToCourse (row, p2_inputTerm, p1_header, p1_outcomeCourseDict):
-    functionName = "Add Outcome/s to courses"
-
-    try:
-        
-        ## If the row's course_sis_id is empty skip it
-        if pd.isna(row['Course_sis_id']):
-            return
-
-        ## For each row in our CSV file pull the course sis id column and outcome column names
-        ## Sample sess values: FA2022_PHIL2030_01
-        ## Sample outcome value: GE_CF4_V1.0
-        targetCourseSisId = row['Course_sis_id']
-        outcomeKeys = [col for col in row.keys() if "Outcome" in col and "Area" not in col]
-            
-        ## Log the start of the process
-        localSetup.logger.info("\n     Course:" + targetCourseSisId)
-
-        ## Create the URL the API call will be made to
-        course_API_url = coreCanvasApiUrl + "courses/sis_course_id:" + targetCourseSisId + "/course_copy"
-        
-        ## For each outcome in the row
-        for outcome in outcomeKeys:
-            
-            ## If the outcome is empty skip it
-            if pd.isna(row[outcome]):
-                continue
-            
-            ## Get the canvas course id from the outcomeCourseDict
-            canvasCourseId = p1_outcomeCourseDict[row[outcome]]
-
-            ## Create the API Payload from the outcome sis id
-            payload = {'source_course': canvasCourseId, 'only[]': ['outcomes']}
-                
-            ## Make the API call and save the result as course_object
-            course_object = requests.post(course_API_url, headers = p1_header, params = payload)
-                
-            ## If the API status code is anything other than 200 it is an error, so log it and skip
-            if (course_object.status_code != 200):
-                localSetup.logger.error("\nCourse Error: " + str(course_object.status_code))
-                localSetup.logger.error(course_API_url)
-                localSetup.logger.error(course_object.url)
-            else:
-                ## Successfully made the API call
-                localSetup.logger.info("\nOutcome copy successful for : " + targetCourseSisId)
-
-    except Exception as Error:
-        errorHandler.sendError(functionName, Error)
-
-## This function makes a makes an api call to Canvas to set a course's discussion topic to allow threaded replies
-def allowThreadedReplies (p1_row, p1_header, p1_canvasCourseUnthreadedDiscussions):
-    
+## This function makes an API call to Canvas to collect unthreaded discussion topics for a course
+def allowThreadedReplies(
+    localSetup: LocalSetup,
+    errorHandler: errorEmail,
+    row,
+    canvasCourseUnthreadedDiscussions: dict,
+) -> None:
     functionName = "allowThreadedReplies"
 
     try:
+        ## Define the course variables
+        canvasCourseId = int(row['canvas_course_id'])
+        sisCourseID = row['course_id']
 
-            ## Define the course vaables
-            canvasCourseId = int(p1_row['canvas_course_id'])
-            sisCourseID = p1_row['course_id']
+        ## Define the payload that will be sent to each course discussion topics end point
+        discussionTopicsPayload = {"per_page": 100}
 
-            ## Define the payload that will be sent to each course discussion topics end point
-            discussionTopicsPayload = {"per_page": 100}
-        
-            ## Define the payload that will be sent to each course discussion end point
-            discussionTopicPayload = {"discussion_type": "threaded"}
-            
-            ## Make a url to get the the courses's discussions
-            courseDiscussionTopicsApiUrl = coreCanvasApiUrl + "courses/" + str(canvasCourseId) + "/discussion_topics"
+        ## Make a url to get the course's discussions
+        courseDiscussionTopicsApiUrl = f"{coreCanvasApiUrl}courses/{canvasCourseId}/discussion_topics"
 
-            ## Make the API call
-            courseDiscussionTopicsObject = requests.get(courseDiscussionTopicsApiUrl, headers = p1_header, params = discussionTopicsPayload)
+        ## Make the API call with retry/rate-limit handling
+        courseDiscussionTopicsResponse, _ = makeApiCall(
+            localSetup=localSetup,
+            p1_apiUrl=courseDiscussionTopicsApiUrl,
+            p1_payload=courseDiscussionTopicsPayload,
+        )
 
-            ## If the api status code is 403
-            if (courseDiscussionTopicsObject.status_code == 403):
+        ## If the API status code is anything other than 200 it is an error, log it and skip
+        if courseDiscussionTopicsResponse.status_code != 200:
+            localSetup.logErrorThreadSafe(f"\nCourse Error: {courseDiscussionTopicsResponse.status_code}")
+            localSetup.logErrorThreadSafe(courseDiscussionTopicsApiUrl)
+            return
 
-                ## So long as the API status code is 403, wait 2 seconds and try again
-                while (courseDiscussionTopicsObject.status_code == 403):
-                    
-                    ## Log that the course has been rate limited
-                    localSetup.logger.warning("\nRate limited for course: " + str(canvasCourseId))
-                    
-                    ## Wait 2 seconds
-                    time.sleep(5) 
+        ## Get the course object as a json
+        courseDiscussionTopicsDict = courseDiscussionTopicsResponse.json()
 
-                    ## Make the API call again
-                    courseDiscussionTopicsObject = requests.get(courseDiscussionTopicsApiUrl, headers = p1_header, params = discussionTopicsPayload)
+        ## If the course object is empty log and return
+        if not courseDiscussionTopicsDict:
+            localSetup.logInfoThreadSafe(f"\nNo discussion topics for course: {canvasCourseId}")
+        else:
+            ## For each discussion topic
+            for topic in courseDiscussionTopicsDict:
 
-            ## If the API status code is anything other than 200 it is an error, so log it and skip
-            if (courseDiscussionTopicsObject.status_code != 200):
-                localSetup.logger.error("\nCourse Error: " + str(courseDiscussionTopicsObject.status_code))
-                localSetup.logger.error(courseDiscussionTopicsApiUrl)
-                localSetup.logger.error(courseDiscussionTopicsObject.url)
+                ## If the discussion isn't already threaded, record it
+                if topic['discussion_type'] not in ["threaded", "side_comment"]:
+                    discussionTitle = topic['title']
+                    discussionUrl = topic['html_url']
 
-            ## Otherwise
-            else:
-                
-                ## Get the course object as a json
-                courseDiscussionTopicsDict = courseDiscussionTopicsObject.json()
+                    with _sharedDataLock:
+                        canvasCourseUnthreadedDiscussions["canvas_sis_id"].append(sisCourseID)
+                        canvasCourseUnthreadedDiscussions["canvas_course_id"].append(canvasCourseId)
+                        canvasCourseUnthreadedDiscussions["discussion title"].append(discussionTitle)
+                        canvasCourseUnthreadedDiscussions["discussion url"].append(discussionUrl)
 
-                ## If the course object is empty
-                if not courseDiscussionTopicsDict:
-                    
-                    ## Log that the course has no discussion topics
-                    localSetup.logger.info("\nNo discussion topics for course: " + str(canvasCourseId))
-                
-                ## Otherwise
-                else:
+        localSetup.logInfoThreadSafe(f"Course {canvasCourseId} processed")
 
-                    ## For each discussion topic
-                    for topic in courseDiscussionTopicsDict:
-
-                        ## if the discussion isn't already threaded
-                        if topic['discussion_type'] not in ["threaded", "side_comment"]:
-
-                            ## Get the discussion title and url
-                            discussionTitle = topic['title']
-                            discussionUrl = topic['html_url']
-
-                            ## Add the course's information to the canvasCourseUnthreadedDiscussions dict
-                            p1_canvasCourseUnthreadedDiscussions["canvas_sis_id"].append(sisCourseID)
-                            p1_canvasCourseUnthreadedDiscussions["canvas_course_id"].append(canvasCourseId)
-                            p1_canvasCourseUnthreadedDiscussions["discussion title"].append(discussionTitle)
-                            p1_canvasCourseUnthreadedDiscussions["discussion url"].append(discussionUrl)
-
-            localSetup.logger.info (f"Course {canvasCourseId} processed")
-                            
     except Exception as Error:
         errorHandler.sendError(functionName, Error)
 
-## This function opens the CSV file, the save locations json file, sends the information on, and closes both files
-def allowThreadedDiscussions():
-    functionName = "outcome_exporter"
-    
+## This function reads the CSV file and collects unthreaded discussion topics across all listed courses
+def allowThreadedDiscussions(localSetup: LocalSetup, errorHandler: errorEmail) -> None:
+    functionName = "allowThreadedDiscussions"
+
     try:
+        canvasResourcePath = localSetup.getInternalResourcePaths("Canvas")
 
-        ## Define the API Call header using the retreived Canvas Token
-        header = {'Authorization' : f"Bearer {canvasAccessToken}"}
+        ## Open the relevant Target_Canvas_Courses.csv as a df
+        canvasCourses = pd.read_csv(os.path.join(canvasResourcePath, "Target_Canvas_Courses.csv"))
 
-        ## Open the relevant Active_GE_Course.csv as a df
-        canvasCourses = pd.read_csv(f"{baseLocalInputPath}Target_Canvas_Courses.csv")
+        ## Remove any rows that are all blank
+        canvasCourses.dropna(how="all", inplace=True)
 
-        ## Remove any rows that area all blank
-        canvasCourses.dropna(how = "all", inplace = True)
+        ## Create a dict with canvas_sis_id, canvas_course_id, discussion title, and discussion url
+        canvasCourseUnthreadedDiscussions = {
+            "canvas_sis_id": [],
+            "canvas_course_id": [],
+            "discussion title": [],
+            "discussion url": [],
+        }
 
-        ## Create a dict with canvas_sis_id, canvas_course_id, discussion title, and discussion url, each with an empty list as the value
-        canvasCourseUnthreadedDiscussions = {"canvas_sis_id": []
-                                                , "canvas_course_id": []
-                                                , "discussion title": []
-                                                , "discussion url": []
-                                                }
-        
+        ## Process each course concurrently; skip rows where canvas_course_id is absent
+        def _worker(row):
+            if pd.isna(row['canvas_course_id']):
+                return
+            allowThreadedReplies(localSetup, errorHandler, row, canvasCourseUnthreadedDiscussions)
 
-        ## Process each course in a thread pool
-        MAX_WORKERS = 25
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        runThreadedRows(canvasCourses, _worker)
 
-            ## For each row in the Canvas Courses DF
-            for index, row in canvasCourses.iterrows():
-
-                ## If the row's course_sis_id is empty skip it
-                if pd.isna(row['canvas_course_id']):
-                    continue
-
-                ##if row["course_id"] == "FA2024_ACCT2060_01":
-
-                ## Submit the task to the thread pool
-                executor.submit(allowThreadedReplies, row, header, canvasCourseUnthreadedDiscussions)
-
-        ## Create a df from the canvasCourseUnthreadedDiscussions dict
+        ## Create a df from the canvasCourseUnthreadedDiscussions dict and save to CSV
         canvasCourseUnthreadedDiscussionsDF = pd.DataFrame(canvasCourseUnthreadedDiscussions)
-        
-        ## Save the df to a csv
-        canvasCourseUnthreadedDiscussionsDF.to_csv(f"{baseLocalInputPath}Canvas_Course_Unthreaded_Discussions.csv", index = False)
-     
+        canvasCourseUnthreadedDiscussionsDF.to_csv(
+            os.path.join(canvasResourcePath, "Canvas_Course_Unthreaded_Discussions.csv"),
+            index=False,
+        )
+
+        localSetup.logInfoThreadSafe(f"{functionName} completed. Processed {len(canvasCourses)} courses.")
+
     except Exception as Error:
         errorHandler.sendError(functionName, Error)
 
 if __name__ == "__main__":
+    ## Initialize shared LocalSetup (paths, logging)
+    localSetup = LocalSetup(datetime.now(), __file__)
 
-    ## Start and download the Canvas reportz
-    allowThreadedDiscussions ()
+    ## Setup the error handler (sends one email per function error)
+    errorHandler = errorEmail(scriptName, scriptPurpose, externalRequirements, localSetup)
+
+    allowThreadedDiscussions(localSetup, errorHandler)
 
     input("Press enter to exit")
+
 
 ## ===========================================================================
 ## FILE: ActionModules\Uncomment Out Error Handling.py
@@ -5597,205 +4629,24 @@ if __name__ == "__main__":
 ## FILE: ActionModules\Update_Grading_Standard_For_Listed_Courses.py
 ## ===========================================================================
 
+## Author: Bryce Miller - brycezmiller@nnu.edu
+## Last Updated by: Bryce Miller
+##
+## DEPRECATED — superseded by Change_Grading_Scheme_For_Listed_Courses.py
+##
+## This file previously contained a duplicate implementation for updating the
+## Canvas grading standard on a list of courses.  It had syntax errors and was
+## never imported by the orchestrator (IDT_Canvas_Primary.py).
+##
+## Use Change_Grading_Scheme_For_Listed_Courses.py instead.
+## All functionality is available through changeListedCoursesGradingStandard().
 
-# Author: Bryce Miller - brycezmiller@nnu.edu
-# Last Updated by: Bryce Miller (refactored to update grading standards via Courses API)
-
-import os, threading, time, pandas as pd, sys
-from datetime import datetime
-
-## Add the resource modules path
+import sys, os
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules"))
 
-# Try direct imports if run as main, else relative for package usage
-    try:
-    from Local_Setup import LocalSetup
-    from TLC_Common import makeApiCall
-    from Error_Email import errorEmail
-    from Common_Configs import coreCanvasApiUrl, canvasAccessToken
-except ImportError:  # When imported as a package/module
-    from .Local_Setup import LocalSetup
-    from .TLC_Common import makeApiCall
-    from .Error_Email import errorEmail
-    from .Common_Configs import coreCanvasApiUrl, canvasAccessToken
-
-## Define the script name, purpose, and external requirements for logging and error reporting purposes
-scriptName = "Change_Grading_Standard_For_Listed_Courses"
-scriptPurpose = r"""
-This script reads a CSV file containing Canvas course IDs and grading standard IDs
-and updates the grading standard for each listed course using the Canvas Courses API
-(�Update a course� - course[grading_standard_id]).
-"""
-externalRequirements = r"""
-To function properly, this script requires:
-- Valid Canvas API configuration in Common_Configs (coreCanvasApiUrl, canvasAccessToken).
-- A CSV file located in the Canvas internal resources directory
-  (LocalSetup.getInternalResourcePaths("Canvas")) with:
-    - canvas_course_id
-    - grading_standard_id  (or grading_scheme_id)
-"""
-
-## Initialize the local setup object and error handler
-localSetup = LocalSetup(datetime.now(), __file__)
-errorHandler = errorEmail(scriptName, scriptPurpose, externalRequirements, localSetup)
-
-## Change the grading standard for the target course
-def changeCourseGradingStandard(
-    courseId: str,
-    gradingStandardId: str,
-) -> None:
-    """
-    Change the grading standard for a Canvas course given its course ID and
-    target grading standard ID.
-
-    Uses the Courses "Update a course" endpoint:
-    PUT /api/v1/courses/:id
-    with course[grading_standard_id].
-    """
-    functionName = "changeCourseGradingStandard"
-    try:
-        updateCourseUrl = f"{coreCanvasApiUrl}courses/{courseId}"
-        # Build payload using nested course object, matching Rails-style parameters
-        payload = {
-            "course": {
-                "grading_standard_id": int(gradingStandardId)
-            }
-        }
-
-        response, _ = makeApiCall(
-            localSetup=localSetup,
-            p1_apiUrl=updateCourseUrl,
-            p1_payload=payload,
-            p1_apiCallType="put",
-        )
-
-        # makeApiCall may return a Response or a list; handle the primary case.
-        statusCode = getattr(response, "status_code", None)
-
-        if statusCode == 200:
-            localSetup.logger.info(
-                f"Successfully changed grading_standard_id for course with ID: "
-                f"{courseId} to {gradingStandardId}"
-            )
-        else:
-            localSetup.logger.warning(
-                f"Failed to change grading_standard_id for course with ID: {courseId}. "
-                f"Status code: {statusCode}"
-            )
-
-    except Exception as Error:
-        errorHandler.sendError(functionName, Error)
-
-## Change the grading standard for listed courses from a CSV file
-def changeListedCoursesGradingStandard(
-    csvFileName: str = "Target_Canvas_Course_Ids.csv",
-    threadSleep: float = 0.1,
-) -> None:
-    """
-    Read a CSV file of course/grading standard IDs and change each course's grading standard.
-
-    Expected columns in CSV:
-      - canvas_course_id
-      - grading_standard_id  (preferred)
-        or grading_scheme_id (alias, will be treated as grading_standard_id)
-    """
-    functionName = "changeListedCoursesGradingStandard"
-    try:
-        ## Get the internal canvas resource path
-        canvasResourcePath =  = localSetup.getInternalResourcePaths("Canvas")
-
-        targetCoursesCsvFilePath = os.path.join(
-            canvasResourcePath,
-            csvFileName,
-        )
-
-        localSetup.logger.info(
-            f"Starting {functionName}. Input file: {targetCoursesCsvFilePath}"
-        )
-
-        if not os.path.exists(targetCoursesCsvFilePath):
-            raise FileNotFoundError(
-                f"Target courses CSV not found: {targetCoursesCsvFilePath}"
-            )
-
-        ## Thread tracking
-        ongoingThreads = []
-
-        ## Load CSV
-        rawTargetCoursesDf = pd.read_csv(targetCoursesCsvFilePath)
-
-        ## Keep rows that have a value in canvas_course_id
-        if "canvas_course_id" not in rawTargetCoursesDf.columns:
-            raise KeyError(
-                "Expected column 'canvas_course_id' not found in CSV."
-            )
-
-        ## Support either grading_standard_id (Canvas term) or grading_scheme_id (your wording)
-        gradingColumnName = None
-        if "grading_standard_id" in rawTargetCoursesDf.columns:
-            gradingColumnName = "grading_standard_id"
-        elif "grading_scheme_id" in rawTargetCoursesDf.columns:
-            gradingColumnName = "grading_scheme_id"
-        else:
-            raise KeyError(
-                "Expected column 'grading_standard_id' or 'grading_scheme_id' "
-                "not found in CSV."
-            )
-
-        targetCoursesDf = rawTargetCoursesDf[
-            rawTargetCoursesDf["canvas_course_id"].notna()
-        ]
-
-        localSetup.logger.info(
-            f"Found {len(targetCoursesDf)} target course rows with non-null canvas_course_id."
-        )
-
-        ## Iterate and spawn threads
-        for _, row in targetCoursesDf.iterrows():
-            courseId = str(row["canvas_course_id"]).replace(".0", "")
-            gradingStandardId = str(row[gradingColumnName]).replace(".0", "")
-
-            # Skip if either is empty
-            if not courseId or not gradingStandardId:
-                localSetup.logger.warning(
-                    f"Skipping row with courseId='{courseId}' "
-                    f"{gradingColumnName}='{gradingStandardId}'"
-                )
-                continue
-
-            changeGradingThread = threading.Thread(
-                target=changeCourseGradingStandard,
-                args=(courseId, gradingStandardId),
-                name=f"change_grading_standard_{courseId}",
-                daemon=True,
-            )
-            changeGradingThread.start()
-            ongoingThreads.append(changeGradingThread)
-
-            ## Sleep for a short time to avoid overloading the server
-            time.sleep(threadSleep)
-
-        ## Check if all ongoing change grading standard threads have completed
-        for thread in ongoingThreads:
-            thread.join()
-
-        localSetup.logger.info(
-            f"{functionName} completed. Processed {len(targetCoursesDf)} courses."
-        )
-
-    except Exception as Error:
-        errorHandler.sendError(functionName, Error)
-
-if __name__ == "__main__":
-    localSetup.logger.info(
-        f"Starting script: {scriptName} | Purpose: {scriptPurpose.strip()}"
-    )
-
-    ## Change the grading standard for the listed courses
-    changeListedCoursesGradingStandard()
-
-    localSetup.logger.info(f"Script {scriptName} completed.")
-    input("Press Enter to exit...")
+from Change_Grading_Scheme_For_Listed_Courses import (   # noqa: F401
+    changeListedCoursesGradingStandard,
+)
 
 
 ## ===========================================================================
@@ -5814,7 +4665,6 @@ if __name__ == "__main__":
 
 ## Import Generic Moduels
 from datetime import datetime
-from math import e
 import os, sys, threading, time
 import pandas as pd
 
@@ -6092,10 +4942,18 @@ def determineTargetTerms():
 
         ## If today is Friday
         if currentWeekDay == 4:
-            ## Add current school year, most recent completed terms, and next terms
-            targetTermSet.update(localSetup.getCurrentSchoolYearTermCodes())
-            targetTermSet.update(localSetup.getMostRecentCompletedTermCodes())
-            targetTermSet.update(localSetup.getNextTermCodes())
+            ## Add current school year and most recent completed terms
+            currentSchoolYearTerms = localSetup.getCurrentSchoolYearTermCodes()
+            targetTermSet.update(currentSchoolYearTerms)
+            targetTermSet.update(localSetup.getPreviousTermCodes())
+
+            ## Add next terms only if they are not already in the current school year
+            nextTerms = localSetup.getNextTermCodes()
+            targetTermSet.update(nextTerms - currentSchoolYearTerms)
+
+            ## Add previous terms only if they are not already in the current school year
+            previousTerms = localSetup.getPreviousTermCodes()
+            targetTermSet.update(previousTerms)
 
             ## If this is the first or third Friday of the month
             if (1 <= currentDay <= 7) or (15 <= currentDay <= 21):
@@ -6105,7 +4963,7 @@ def determineTargetTerms():
         ## Convert set to list for return
         targetTermList = list(targetTermSet)
 
-        localSetup.logger.info(f"\nRelevant Terms set as {targetTermList}.")
+        localSetup.logInfoThreadSafe(f"\nRelevant Terms set as {targetTermList}.")
         return targetTermList
 
     except Exception as Error:
@@ -6248,7 +5106,7 @@ def oneTimeDaily (p1_currentTerm, p1_relaventTerms):
 
         ## Get the current, most recent completed, and next term codes
         currentTermCodes = localSetup.getCurrentTermCodes()
-        mostRecentCompletedTermCodes = localSetup.getMostRecentCompletedTermCodes()
+        mostRecentCompletedTermCodes = localSetup.getPreviousTermCodes()
         nextTermCodes = localSetup.getNextTermCodes()
 
         ## Define a variable to hold the outcome target terms
@@ -6361,6 +5219,7 @@ def main ():
 if __name__ == "__main__":
     main()
     #input("Press enter to exit")
+
 
 ## ===========================================================================
 ## FILE: ReportModules\Inactive_Enrollments_Report.py
@@ -6702,7 +5561,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules")
 
 ## New resource modules
 from Local_Setup import LocalSetup
-from TLC_Common import makeApiCall, isPresent
+from TLC_Common import makeApiCall, isPresent, runThreadedRows
 from Canvas_Report import CanvasReport
 from Common_Configs import coreCanvasApiUrl, canvasAccessToken, undgTermsCodesToWordsDict, gradTermsCodesToWordsDict
 from Error_Email import errorEmail
@@ -7278,36 +6137,25 @@ def studentTypeGetIncomingStudentsInfo(p1_targetOrientation, p1_slateFile, p1_in
         ## Open up the enrollment data activity file
         enrollmentDataActivityDF = pd.read_csv(f"{localSetup.getExternalResourcePath('SIS')}output\\pharos\\Enrollment_Data_Activity.csv", delimiter='|')
  
-        ongoingStudentThreads = []
-
-        ## Define input threading objects
-        for index, row in slateDataDF.iterrows():
-
-            ##if row['StudentID'] == 190996:
-
-                newThread = threading.Thread(target=getTargetIncomingStudentInfo
-                                             , args=(row
-                                                     , index
-                                                     , p1_inputTerm
-                                                     , p1_targetOrientation
-                                                     , p1_targetOrientationStudents
-                                                     , p1_targetOrientationSections
-                                                     , p1_targetOrientationFinalQuizSubmissionDatesAndIds
-                                                     , orientationCourseApiUrl
-                                                     , header
-                                                     , slateDataDF
-                                                     , sisFeedCourseDf
-                                                     , sisFeedEnrollmentDf
-                                                     , enrollmentDataActivityDF
-                                                     )
-                                             )
-                newThread.start()
-                ongoingStudentThreads.append(newThread)
-                time.sleep(1)
- 
-        ## Check if all ongoing input threads have completed
-        for thread in ongoingStudentThreads:
-            thread.join()
+        ## Process each student row concurrently
+        runThreadedRows(
+            slateDataDF,
+            lambda row: getTargetIncomingStudentInfo(
+                row,
+                row.name,
+                p1_inputTerm,
+                p1_targetOrientation,
+                p1_targetOrientationStudents,
+                p1_targetOrientationSections,
+                p1_targetOrientationFinalQuizSubmissionDatesAndIds,
+                orientationCourseApiUrl,
+                header,
+                slateDataDF,
+                sisFeedCourseDf,
+                sisFeedEnrollmentDf,
+                enrollmentDataActivityDF,
+            ),
+        )
 
         ## Save the updated slate undergrad data DF
         slateDataDF.to_csv(updatedSlateFilePathWithName, index=False)
@@ -8827,8 +7675,7 @@ four character format (FA20, SU20, SP20): "))
 ## Last Updated by: Bryce Miller
 
 ## External libraries
-import os, sys, csv, json, os.path, shutil
-from concurrent.futures import ThreadPoolExecutor
+import os, sys, csv, json, os.path, shutil, threading
 from datetime import datetime
 import pandas as pd
 
@@ -8837,7 +7684,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules")
 
 ## New resource modules
 from Local_Setup import LocalSetup
-from TLC_Common import makeApiCall, isFileRecent, isPresent
+from TLC_Common import makeApiCall, isFileRecent, isPresent, runThreadedRows
 from Canvas_Report import CanvasReport
 from Common_Configs import coreCanvasApiUrl, termSchoolYearLogic
 from Error_Email import errorEmail
@@ -8859,6 +7706,7 @@ To function properly, this script requires that the static Syllabus Addendum lin
 
 ## Setup the error handler
 errorHandler = errorEmail(scriptName, scriptPurpose, externalRequirements, localSetup)
+_sharedDataLock = threading.Lock()
 
 
 """ 
@@ -9185,11 +8033,12 @@ def outcomeAttachmentReport(row, p1_rawOutcomesDF, p1_outcomeCoursesMissingAttac
             instructorEmailsString = ", ".join(instructorEmails)
             
             ## Add the course's information to the dictionary of courses missing outcomes
-            p1_outcomeCoursesMissingAttachmentsDataDict["Course_name"].append(courseName)
-            p1_outcomeCoursesMissingAttachmentsDataDict["Required Outcome"].append(missingOutcomesString)
-            p1_outcomeCoursesMissingAttachmentsDataDict["Issue"].append("The Associated Outcome/s is/are not attached to a published assignment")
-            p1_outcomeCoursesMissingAttachmentsDataDict["Instructor Name"].append(instructorNamesString)
-            p1_outcomeCoursesMissingAttachmentsDataDict["Instructor Email"].append(instructorEmailsString)
+            with _sharedDataLock:
+                p1_outcomeCoursesMissingAttachmentsDataDict["Course_name"].append(courseName)
+                p1_outcomeCoursesMissingAttachmentsDataDict["Required Outcome"].append(missingOutcomesString)
+                p1_outcomeCoursesMissingAttachmentsDataDict["Issue"].append("The Associated Outcome/s is/are not attached to a published assignment")
+                p1_outcomeCoursesMissingAttachmentsDataDict["Instructor Name"].append(instructorNamesString)
+                p1_outcomeCoursesMissingAttachmentsDataDict["Instructor Email"].append(instructorEmailsString)
 
     except Exception as Error:
         errorHandler.sendError (functionName, Error)
@@ -9264,23 +8113,17 @@ def termOutcomeAttachmentReport (p1_inputTerm
             , "Instructor Email": []
             }
         
-        ## Process each course in a thread pool
-        MAX_WORKERS = 25
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        ## Process each course concurrently
+        def _worker(row):
+            ## Target a specific course for testing if needed
+            # if row['Course_sis_id'] == "SP2026_EDUC3090_1L":
+            #     outcomeAttachmentReport(row, rawOutcomesDF, outcomeCoursesMissingAttachments)
 
-            ## For each row in the termActiveOutcomeCoursesDF
-            for index, row in termActiveOutcomeCoursesDF.iterrows():
+            ## If the row is not a nan
+            if not isPresent(row["Course_sis_id"]):
+                outcomeAttachmentReport(row, rawOutcomesDF, outcomeCoursesMissingAttachments)
 
-                    ## Target a specific course for testing if needed
-                    # if row['Course_sis_id'] == "SP2026_EDUC3090_1L":
-
-                    #     outcomeAttachmentReport (row, rawOutcomesDF, outcomeCoursesMissingAttachments)
-
-                    # If the row is not a nan
-                    if not isPresent(row["Course_sis_id"]):
-
-                        ## Submit the task to the thread pool
-                        executor.submit(outcomeAttachmentReport, row, rawOutcomesDF, outcomeCoursesMissingAttachments)
+        runThreadedRows(termActiveOutcomeCoursesDF, _worker)
             
         # If any of the lists in the outcomeCoursesMissingAttachments dict are not empty
         if any([len(outcomeCoursesMissingAttachments[key]) > 0 for key in outcomeCoursesMissingAttachments.keys()]):
@@ -9312,6 +8155,7 @@ if __name__ == "__main__":
 
     input("Press enter to exit")
 
+
 ## ===========================================================================
 ## FILE: ReportModules\Outcome_Results_Report.py
 ## ===========================================================================
@@ -9322,15 +8166,14 @@ if __name__ == "__main__":
 
 from datetime import datetime
 import traceback, os, logging, sys, re, shutil, ast, json
-from concurrent.futures import ThreadPoolExecutor
-import pandas as pd, numpy as np, time
+import pandas as pd, numpy as np
 
 ## Add Script repository to syspath
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules"))
 
 ## New resource modules
 from Local_Setup import LocalSetup
-from TLC_Common import makeApiCall, isFileRecent, flattenApiObjectToJsonList, isPresent 
+from TLC_Common import makeApiCall, isFileRecent, flattenApiObjectToJsonList, isPresent, isMissing, runThreadedRows, runUnthreadedRows
 from Canvas_Report import CanvasReport
 from Common_Configs import coreCanvasApiUrl
 from Error_Email import errorEmail
@@ -9459,58 +8302,28 @@ def termCreateOutcomeComplianceReport(
                     ## If the account id is not already in the dict
                     if courseInfoDict["Canvas_Account_id"] not in p1_targetAccountDataDict.keys():
 
-                        ## Determine what the save path for the department would be (which is determined by the parent 
-                        ## accounts for the particular sub account)
-                        courseDepartmentPath = CanvasReport.determineDepartmentSavePath (localSetup, courseInfoDict["Canvas_Account_id"])
+                        ## Determine the college/department/discpline directly from account hierarchy
+                        accountStructureDict = CanvasReport.determineCollegeDepartmentDiscipline(
+                            localSetup,
+                            courseInfoDict["Canvas_Account_id"]
+                        )
 
-                        ## Split the path by \\ to seperate the college, department, and sub department where applicable
-                        courseDepartmentPathSeperated = courseDepartmentPath.split("\\")
-
-                        ## Skip this account if the department path could not be resolved
-                        if len(courseDepartmentPathSeperated) < 2 or courseDepartmentPathSeperated[0] == "":
-                            localSetup.logger.warning(f"Could not resolve department path for account {courseInfoDict['Canvas_Account_id']} -- skipping")
+                        ## Skip this account if the structure could not be resolved
+                        if accountStructureDict.get("College", "") == "":
+                            localSetup.logWarningThreadSafe(f"Could not resolve account structure for account {courseInfoDict['Canvas_Account_id']} -- skipping")
                             continue
 
-                        ## The course college (## e.g. College of Business) is always the 0th element of the section 
-                        courseInfoDict["College"] = courseDepartmentPathSeperated[0].replace("College of ", "")
+                        ## Populate course structure metadata
+                        courseInfoDict["College"] = accountStructureDict.get("College", "").replace("College of ", "")
+                        courseInfoDict['Discpline'] = accountStructureDict.get("Discpline", "")
+                        courseInfoDict["Department"] = accountStructureDict.get("Department", "")
 
-                        ## Append the college name to the p1_targetAccountDataDict[courseInfoDict["Canvas_Account_id"]] list as the 0th element
-                        p1_targetAccountDataDict[courseInfoDict["Canvas_Account_id"]] = [courseInfoDict["College"]]
-
-                        ## The length of the seperated sections list tells whether the college is made of multiple disciplines
-                        ## or if it is all one. This changes where the department name is placed in the section list
-                        courseDepartmentPathNumberOfSections = len(courseDepartmentPathSeperated)
-
-                        ## If the length of the section list == 4, the college contains multiple disciplines
-                        if courseDepartmentPathNumberOfSections == 4:
-
-                            ## The discpline names (## e.g. Music) for college's with multiple disciplines is the 2nd element
-                            ## of the section list. Append the discpline name to the p1_targetAccountDataDict[courseInfoDict["Canvas_Account_id"]] list as the 1st element
-                            courseInfoDict['Discpline'] = courseDepartmentPathSeperated[1]
-                            p1_targetAccountDataDict[courseInfoDict["Canvas_Account_id"]].append(courseInfoDict['Discpline'])
-
-                            ## The department (## e.g. Undergraduate Music, Undergraduate_NNUO Music) is made by combining the
-                            ## 2nd element in the list and the course discpline
-                            courseInfoDict["Department"] = f"{courseDepartmentPathSeperated[2]} {courseInfoDict['Discpline']}"
-
-                            ## Append the department name to the p1_targetAccountDataDict[courseInfoDict["Canvas_Account_id"]] list as the 2nd element
-                            p1_targetAccountDataDict[courseInfoDict["Canvas_Account_id"]].append(courseInfoDict["Department"])
-
-                        ## If the length of the section list isn't 4
-                        else:
-                            ## The college name and discipline name is the same
-                            courseInfoDict['Discpline'] = courseInfoDict["College"]
-
-                            ## Append the discpline name to the p1_targetAccountDataDict[courseInfoDict["Canvas_Account_id"]] list as the 1st element
-                            p1_targetAccountDataDict[courseInfoDict["Canvas_Account_id"]].append(courseInfoDict['Discpline'])
-
-                            ## The department (## e.g. Undergraduate Nursing, Undergraduate RN-BSN Nursing) for single
-                            ## discipline colleges is made of up the secondary department component (## e.g. Undergraduate, Undergraduate RN-BSN)
-                            ## and the College discipline (## e.g. Nursing). 
-                            courseInfoDict["Department"] = f"{courseDepartmentPathSeperated[1]} {courseInfoDict['Discpline']}"
-
-                            ## Append the department name to the p1_targetAccountDataDict[courseInfoDict["Canvas_Account_id"]] list
-                            p1_targetAccountDataDict[courseInfoDict["Canvas_Account_id"]].append(courseInfoDict["Department"])
+                        ## Cache values for reuse by account id
+                        p1_targetAccountDataDict[courseInfoDict["Canvas_Account_id"]] = [
+                            courseInfoDict["College"],
+                            courseInfoDict['Discpline'],
+                            courseInfoDict["Department"],
+                        ]
                         
                     ## If the account id is already in the dict
                     else:
@@ -9713,6 +8526,15 @@ def termCompileCourseOutcomesScores (p1_CourseDict
 
     try:
 
+        ## If the outcome result report df is empty there is no instructor/college/department
+        ## metadata for this course (e.g. account could not be resolved), so skip it
+        if isMissing(p1_targetOutcomeResultReportDf):
+            localSetup.logWarningThreadSafe(
+                f"{functionName}: No outcome result report row found for course "
+                f"'{p1_CourseDict.get('Course_sis_id', 'unknown')}' -- skipping"
+            )
+            return
+
         ## For each unique student of the course
         #for studentID in p1_targetTermEnrollmentDf["user_id"].astype(int).unique():
         for studentID in p1_targetTermEnrollmentDf["user_id"].unique():
@@ -9907,7 +8729,7 @@ def termCompileCourseOutcomesScores (p1_CourseDict
                 p1_outcomeResultsDashboardDataDictList.append(outcomeDashboardDataDf)
 
                 ## localSetup.logger.info the current length of the outcomeResultsDashboardDataDictList
-                localSetup.logger.info(len(p1_outcomeResultsDashboardDataDictList))
+                localSetup.logInfoThreadSafe(len(p1_outcomeResultsDashboardDataDictList))
             
         ## End the function
         return
@@ -9971,7 +8793,7 @@ def targetDesignatorProcessOutcomeResults(
             else:
                 
                 ## Log that there are no outcome results to report on
-                localSetup.logger.info("No Outcome Results to Report on. Exiting function")
+                localSetup.logInfoThreadSafe("No Outcome Results to Report on. Exiting function")
                 
                 ## Exit the function
                 return
@@ -9985,67 +8807,59 @@ def targetDesignatorProcessOutcomeResults(
         ## Create a list of the unique student-course-outcome ids
         ##uniqueStudentCourseIds = p1_outcomeResultDF["student-course-outcome id"].unique()
 
-        ## Process each course in a thread pool
-        MAX_WORKERS = 25
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        ## Process each course concurrently
+        def _worker(courseDict):
+            ## If the courseDict's course_sis_id has 3400 in it
+            # if "EDUC3410" not in courseDict["Course_sis_id"]:
+                # return
 
-            ## For each active Canvas Outcome Course
-            for index, courseDict in p1_activeCanvasOutcomeCoursesDf.iterrows():
+            ## Define a target course variables
+            targetCourseSisId = courseDict["Course_sis_id"]
+            targetCourseName = courseDict["Course_name"]
+            targetSectionId = courseDict["Section_id"]
 
-                ## If the courseDict's course_sis_id has 3400 in it
-                ##if "COMM1210" in courseDict["Course_sis_id"]:
+            ## If there is a non nan Parent_Course_sis_id
+            if not pd.isna(courseDict["Parent_Course_sis_id"]) and courseDict["Parent_Course_sis_id"] not in ["", None]:
 
-                    ## Define a target course variables
-                    targetCourseSisId = courseDict["Course_sis_id"]
-                    targetCourseName = courseDict["Course_name"]
-                    targetSectionId = courseDict["Section_id"]
+                ## Set the target course sis id to the Parent_Course_sis_id
+                targetCourseSisId = courseDict["Parent_Course_sis_id"]
 
-                    ## If there is a non nan Parent_Course_sis_id
-                    if not pd.isna(courseDict["Parent_Course_sis_id"]) and courseDict["Parent_Course_sis_id"] not in ["", None]:
+                ## Find the index of the Parent_Course_sis_id in the activeCanvasOutcomeCoursesDf
+                parentCourseIndex = p1_activeCanvasOutcomeCoursesDf[p1_activeCanvasOutcomeCoursesDf["Course_sis_id"] == targetCourseSisId].index[0]
 
-                        ## Set the target course sis id to the Parent_Course_sis_id
-                        targetCourseSisId = courseDict["Parent_Course_sis_id"]
+                ## Set the target course name to the Parent_Course_sis_id's course name
+                targetCourseName = p1_activeCanvasOutcomeCoursesDf.at[parentCourseIndex, "Course_name"]
 
-                        ## Find the index of the Parent_Course_sis_id in the activeCanvasOutcomeCoursesDf
-                        parentCourseIndex = p1_activeCanvasOutcomeCoursesDf[p1_activeCanvasOutcomeCoursesDf["Course_sis_id"] == targetCourseSisId].index[0]
+            ## Make a filtered p1_termEnrollmentDf for the target course using the target course sis id and the canvas_section_id
+            targetTermEnrollmentDf = p1_termEnrollmentDf[
+                (p1_termEnrollmentDf["course_id"] == targetCourseSisId)
+                & (p1_termEnrollmentDf["canvas_section_id"] == targetSectionId)
+                ]
 
-                        ## Set the target course name to the Parent_Course_sis_id's course name
-                        targetCourseName = p1_activeCanvasOutcomeCoursesDf.at[parentCourseIndex, "Course_name"]
+            ## Make a filtered p1_outcomeResultDF for the current course using the target course sis id amd section id
+            targetOutcomeResultsDf = p1_outcomeResultDF[
+                (p1_outcomeResultDF["course sis id"] == targetCourseSisId)
+                & (p1_outcomeResultDF["section id"] == targetSectionId)
+                ]
 
-                    ## Make a filtered p1_termEnrollmentDf for the target course using the target course sis id and the canvas_section_id
-                    targetTermEnrollmentDf = p1_termEnrollmentDf[
-                        (p1_termEnrollmentDf["course_id"] == targetCourseSisId)
-                        & (p1_termEnrollmentDf["canvas_section_id"] == targetSectionId)
-                        ]
+            ## Make a filtered outcomeResultReportDF for the current course
+            targetOutcomeResultReportDf = outcomeResultReportDF[outcomeResultReportDF["Course_name"] == targetCourseName]
 
-                    ## Make a filtered p1_outcomeResultDF for the current course using the target course sis id amd section id
-                    targetOutcomeResultsDf = p1_outcomeResultDF[
-                        (p1_outcomeResultDF["course sis id"] == targetCourseSisId)
-                        & (p1_outcomeResultDF["section id"] == targetSectionId)
-                        ]
+            ## Compile the Course outcome scores
+            termCompileCourseOutcomesScores(
+                courseDict
+                , targetTermEnrollmentDf
+                , targetOutcomeResultsDf
+                , targetOutcomeResultReportDf
+                , outcomeResultsDashboardDataDictList
+                , p1_uniqueOutcomeInfoDictOfDicts
+            )
 
-                    ## Make a filtered outcomeResultReportDF for the current course
-                    targetOutcomeResultReportDf = outcomeResultReportDF[outcomeResultReportDF["Course_name"] == targetCourseName]
+        ## Default threaded run
+        runThreadedRows(p1_activeCanvasOutcomeCoursesDf, _worker)
 
-                    ## test without threading
-                    # termCompileCourseOutcomesScores(
-                    #     courseDict
-                    #     , targetTermEnrollmentDf
-                    #     , targetOutcomeResultsDf
-                    #     , targetOutcomeResultReportDf
-                    #     , outcomeResultsDashboardDataDictList
-                    #     , p1_uniqueOutcomeInfoDictOfDicts
-                    # )
-
-                    ## Submit the task to the thread pool
-                    executor.submit(termCompileCourseOutcomesScores
-                                                        , courseDict
-                                                        , targetTermEnrollmentDf
-                                                        , targetOutcomeResultsDf
-                                                        , targetOutcomeResultReportDf
-                                                        , outcomeResultsDashboardDataDictList
-                                                        , p1_uniqueOutcomeInfoDictOfDicts
-                                                        )
+        ## For testing, comment out runThreadedRows above and uncomment below
+        # runUnthreadedRows(p1_activeCanvasOutcomeCoursesDf, _worker)
             
 
         ## If there are any dashboard dicts in the outcomeResultsDashboardDataDictList
@@ -10163,9 +8977,8 @@ def termProcessOutcomeResults(p1_inputTerm
             else accountInfoDF.loc[accountInfoDF["name"] == targetAccountName, "canvas_account_id"].values[0]
             )
 
-        ## Use the targetCanvasAccountId to determine  and add the department specific path element
-        departmentSpecifcPathElement = CanvasReport.determineDepartmentSavePath(localSetup, targetCanvasAccountId)
-        termExternalOutputPath = os.path.join(localSetup.getExternalResourcePath("IE"), departmentSpecifcPathElement, schoolYear, p1_inputTerm)
+        ## Resolve structure metadata for the target account (used for reporting logic, not path parsing)
+        CanvasReport.determineCollegeDepartmentDiscipline(localSetup, targetCanvasAccountId)
 
         ## Create a Unique Outcome Title : Vendor guids dict
         uniqueOutcomeInfoDictOfDicts = {}
@@ -10257,7 +9070,7 @@ def termProcessOutcomeResults(p1_inputTerm
                 uniqueOutcomesWithoutVendorGuidList.append(uniqueOutcome)
 
                 ## Log that the outcome was not found in the outcomes csv and handle the error
-                localSetup.logger.warning(f"Outcome {uniqueOutcome} was not found in the Canvas outcomes csv. Skipping it.")
+                localSetup.logWarningThreadSafe(f"Outcome {uniqueOutcome} was not found in the Canvas outcomes csv. Skipping it.")
                 errorHandler.sendError (functionName, f"Outcome {uniqueOutcome} was not found in the Canvas outcomes csv. Skipping it.")
 
                 ## Skip the value
@@ -10309,7 +9122,10 @@ def termProcessOutcomeResults(p1_inputTerm
 
         ## Get the outcome results df for the target designator
         targetOutcomeResultsDf = CanvasReport.getOutcomeResultsDf(localSetup, p1_inputTerm, targetAccountName, p1_targetDesignator)
-        
+
+        ## Convert student sis id column to string to match enrollment dataframe types
+        targetOutcomeResultsDf["student sis id"] = targetOutcomeResultsDf["student sis id"].astype(str)
+
         ## Fill NA/NaN values with an empty string
         targetOutcomeResultsDf["learning outcome name"].fillna("", inplace=True)
 
@@ -10462,7 +9278,7 @@ def termProcessOutcomeResults(p1_inputTerm
                     if targetUniqueOutcomeInfoDict is None:
 
                         ## Log a warning and continue
-                        localSetup.logger.warning(f"Could not find unique outcome info dict for outcome id {row['learning outcome id']}. Skipping row.")
+                        localSetup.logWarningThreadSafe(f"Could not find unique outcome info dict for outcome id {row['learning outcome id']}. Skipping row.")
                         continue
 
                     ## Set the name of the outcome to the title paired with the id in the unique outcome info dict
@@ -10479,16 +9295,12 @@ def termProcessOutcomeResults(p1_inputTerm
         ## Filter the rawTermEnrollmentDf to only contain rows with student as the role 
         ## and active or concluded as the status
         termEnrollmentDf = rawTermEnrollmentDf[
-            (rawTermEnrollmentDf["role"] == "student") 
-            & (
-                (rawTermEnrollmentDf["status"] == "active")
-                | (rawTermEnrollmentDf["status"] == "concluded")
-                )
+            (rawTermEnrollmentDf["role"] == "student")
             ]
         ##termEnrollmentDf = rawTermEnrollmentDf[rawTermEnrollmentDf["role"] == "student"]
         
         ## Fill any na values of user id with -1
-        termEnrollmentDf.loc[:, "user_id"] = termEnrollmentDf["user_id"].fillna(-1)
+        termEnrollmentDf.loc[:, "user_id"] = termEnrollmentDf["user_id"].fillna(-1).astype(str)
 
         ## Create a thread for the current target designation
         targetDesignatorProcessOutcomeResults (
@@ -10568,6 +9380,7 @@ config = pdfkit.configuration(wkhtmltopdf=path_wkhtmltopdf)
 ## Import local modules
 from Download_File import downloadFile
 from Core_Microsoft_Api import downloadSharedMicrosoftFile
+from Canvas_Report import CanvasReport
 
 
 ## List of courses that don't need a syllabus. Syllabi for such courses are still gathered but they are not listed in the missing_syllabi.csv
@@ -11017,8 +9830,7 @@ def courseSyllabiReport (p1_row, p2_inputTerm, p1_departmentSavePaths, p1_Colleg
                     courseDepartmentPath = "Misc\\Uncategorized\\"
 
                 else:
-                    courseDepartmentPath = p1_departmentSavePaths[courseAccountId] = determineDepartmentSavePath \
-                        (courseAccountId = courseAccountId)
+                    courseDepartmentPath = p1_departmentSavePaths[courseAccountId] = CanvasReport.determineDepartmentSavePath(localSetup, courseAccountId)
 
             ## If the determined path has the manually created courses parent account name in it, skip the course
             if "Manually-Created Courses" in courseDepartmentPath:
@@ -11336,10 +10148,7 @@ sys.path.append(f"{absolutePath}Scripts TLC\\ResourceModules")
 
 ## Import local modules
 from Error_Email import errorEmail
-
-## Stub for removed Create_Sub_Account_Save_Path dependency
-def determineDepartmentSavePath(*args, **kwargs):
-    raise NotImplementedError("determineDepartmentSavePath requires the Create_Sub_Account_Save_Path module")
+from Canvas_Report import CanvasReport
 
 ## Local Path Variables
 baseLogPath = f"{absolutePath}Logs\\{scriptName}\\"
@@ -11587,8 +10396,7 @@ def courseAddendumReport (row, p3_inputTerm, p1_departmentSavePaths, p1_CollegeO
                     courseDepartmentPath = "Misc\\Uncategorized\\"
 
                 else:
-                    courseDepartmentPath = p1_departmentSavePaths[courseAccountId] = determineDepartmentSavePath \
-                        (courseAccountId = courseAccountId)
+                    courseDepartmentPath = p1_departmentSavePaths[courseAccountId] = CanvasReport.determineDepartmentSavePath(localSetup, courseAccountId)
 
             ## If the determined path has the manually created courses parent account name in it, skip the course
             if "Manually-Created Courses" in courseDepartmentPath:
@@ -11759,9 +10567,9 @@ from datetime import datetime
 from typing import Callable, Tuple, Type, Optional, Dict, Any, List
 
 try: ## If the module is run directly
-    from Local_Setup import LocalSetup
+    from Local_Setup import LocalSetup, logInfo as _logInfo, logWarning as _logWarning, logError
 except ImportError: ## Otherwise as a relative import if the module is imported
-    from .Local_Setup import LocalSetup
+    from .Local_Setup import LocalSetup, logInfo as _logInfo, logWarning as _logWarning, logError
 
 ## Define the script name, purpose, and external requirements for logging and error reporting purposes
 __scriptName = os.path.basename(__file__).replace(".py", "")
@@ -11901,7 +10709,7 @@ def retry(
                     throttleRetries += 1
 
                     if getattr(localSetup, "logger", None):
-                        localSetup.logger.warning(
+                        _logWarning(localSetup, 
                             f"Rate limit hit for {func.__name__} "
                             f"(throttle retry {throttleRetries}/{max_throttle_retries}). "
                             f"Global cooldown triggered — waiting for gate to reopen..."
@@ -11909,7 +10717,7 @@ def retry(
 
                     if throttleRetries >= max_throttle_retries:
                         if getattr(localSetup, "logger", None):
-                            localSetup.logger.error(
+                            logError(localSetup, 
                                 f"{func.__name__} exceeded max throttle retries ({max_throttle_retries})."
                             )
                         raise
@@ -11923,14 +10731,14 @@ def retry(
                     attempts += 1
 
                     if getattr(localSetup, "logger", None):
-                        localSetup.logger.warning(
+                        _logWarning(localSetup, 
                             f"Attempt {attempts} failed for {func.__name__}: {error}. "
                             f"Retrying in {currentDelaySeconds:.1f} seconds..."
                         )
 
                     if attempts == max_attempts:
                         if getattr(localSetup, "logger", None):
-                            localSetup.logger.error(f"{func.__name__} failed after {attempts} attempts.")
+                            logError(localSetup, f"{func.__name__} failed after {attempts} attempts.")
                         raise
 
                     time.sleep(currentDelaySeconds)
@@ -11971,10 +10779,10 @@ def _sendTimeoutEmail(localSetup, apiUrl: str, timeoutSeconds: float, error: Exc
                 return
             except Exception as emailError:
                 if getattr(localSetup, "logger", None):
-                    localSetup.logger.error(f"Failed sending timeout email via {methodName}: {emailError}")
+                    logError(localSetup, f"Failed sending timeout email via {methodName}: {emailError}")
 
     if getattr(localSetup, "logger", None):
-        localSetup.logger.error(f"No email method found on LocalSetup. Timeout email not sent.\n{subject}\n{body}")
+        logError(localSetup, f"No email method found on LocalSetup. Timeout email not sent.\n{subject}\n{body}")
 
 
 ## -------------------------
@@ -12014,7 +10822,7 @@ def _preemptiveRateLimitPauseIfNeeded(localSetup, apiUrl: str) -> None:
         pauseSeconds = basePreemptivePauseSeconds + jitterSeconds
 
         if getattr(localSetup, "logger", None):
-            localSetup.logger.info(
+            _logInfo(localSetup, 
                 f"Rate-limit remaining low ({currentRemaining:.1f} <= {rateLimitPauseThreshold:.1f}). "
                 f"Preemptive pause {pauseSeconds:.2f}s before {apiUrl}."
             )
@@ -12048,7 +10856,7 @@ def _triggerGlobalCooldown(waitSeconds: float, localSetup=None) -> None:
         _canvasApiGate.clear()  ## Block all threads
 
     if localSetup and getattr(localSetup, "logger", None):
-        localSetup.logger.warning(
+        _logWarning(localSetup, 
             f"Global rate-limit cooldown: blocking all Canvas API threads for {waitSeconds:.1f}s"
         )
 
@@ -12060,7 +10868,7 @@ def _triggerGlobalCooldown(waitSeconds: float, localSetup=None) -> None:
         if time.monotonic() >= _gateReopenTime:
             _canvasApiGate.set()
             if localSetup and getattr(localSetup, "logger", None):
-                localSetup.logger.info("Global rate-limit cooldown expired. Resuming API calls.")
+                _logInfo(localSetup, "Global rate-limit cooldown expired. Resuming API calls.")
 
 
 ## -------------------------
@@ -12216,7 +11024,7 @@ class ApiCaller:
         except requests.exceptions.Timeout as timeoutError:
             ## Log, send best-effort email, then raise so @retry can retry
             if getattr(self.localSetup, "logger", None):
-                self.localSetup.logger.error(
+                logError(self.localSetup,
                     f"Timeout after {requestTimeoutSeconds:.0f}s calling {p1_apiUrl}: {timeoutError}"
                 )
             _sendTimeoutEmail(self.localSetup, p1_apiUrl, requestTimeoutSeconds, timeoutError)
@@ -12277,7 +11085,7 @@ class ApiCaller:
                 ## Canvas-only: 409 Conflict handling for report generation (PUT/POST/PATCH)
                 if isCanvas and statusCode == 409 and p1_apiCallType.lower() in ["put", "patch", "post"]:
                     if getattr(self.localSetup, "logger", None):
-                        self.localSetup.logger.warning(
+                        _logWarning(self.localSetup,
                             f"Received 409 Conflict for {p1_apiCallType.upper()} {p1_apiUrl}. "
                             f"Checking for active existing item..."
                         )
@@ -12311,7 +11119,7 @@ class ApiCaller:
 
                     if matchingReport:
                         if getattr(self.localSetup, "logger", None):
-                            self.localSetup.logger.info(
+                            _logInfo(self.localSetup,
                                 "Found active report with matching parameters. Returning its status response."
                             )
 
@@ -12326,7 +11134,7 @@ class ApiCaller:
 
                     else:
                         if getattr(self.localSetup, "logger", None):
-                            self.localSetup.logger.info(
+                            _logInfo(self.localSetup,
                                 f"409 received but no matching active report with parameters: {requestedParams}. "
                                 f"Retrying normally."
                             )
@@ -12335,7 +11143,7 @@ class ApiCaller:
                     responseObject.close()
                 except Exception as closeError:
                     if getattr(self.localSetup, "logger", None):
-                        self.localSetup.logger.warning(
+                        _logWarning(self.localSetup,
                             f"Failed to close API response before retry: {closeError}"
                         )
 
@@ -12343,7 +11151,7 @@ class ApiCaller:
                     raise Exception(f"Failed API call to {p1_apiUrl}: HTTP {statusCode}")
                 else:
                     if getattr(self.localSetup, "logger", None):
-                        self.localSetup.logger.warning(
+                        _logWarning(self.localSetup,
                             f"Failed to delete resource at {p1_apiUrl}: HTTP {statusCode}"
                         )
                     return responseObject, []
@@ -12403,6 +11211,7 @@ def makeApiCall(
         firstPageOnly=firstPageOnly,
     )
 
+
 ## ===========================================================================
 ## FILE: ResourceModules\Canvas_Report.py
 ## ===========================================================================
@@ -12443,7 +11252,7 @@ To function properly this module requires:
 
 class CanvasReport:
     def __init__(self, localSetup : LocalSetup, reportType, apiUrl = None, header = None, termCode=None, accountName="NNU",
-                 outputRoot=None, includeDeleted=False, filename=None, payload=None, 
+                 outputRoot=None, includeDeleted=None, filename=None, payload=None, 
                  endpoint="provisioning_csv", accountCanvasID=None):
         ## Receive LocalSetup from caller
         self.localSetup = localSetup
@@ -12456,14 +11265,34 @@ class CanvasReport:
         self.header = header or {'Authorization' : f"Bearer {canvasAccessToken}"}
         self.termCode = termCode
         self.accountName = accountName
-        self.includeDeleted = includeDeleted
-        self.filename = filename or self._generateFilename()  # Generate filename if not provided
+        self.hasIncludeDeletedOption = includeDeleted is not None
+        self.requestedIncludeDeleted = bool(includeDeleted) if self.hasIncludeDeletedOption else False
+        # If caller provided the includeDeleted option (True/False), always request the include-deleted
+        # version from Canvas so we can persist both unfiltered and filtered files.
+        self.includeDeleted = True if self.hasIncludeDeletedOption else False
+
+        # Prepare filenames for both versions
+        if filename:
+            base_name, ext = os.path.splitext(filename)
+            if base_name.endswith("_including_deleted"):
+                self.filenameIncludingDeleted = filename
+                self.filenameFiltered = base_name[:-len("_including_deleted")] + ext
+            else:
+                self.filenameFiltered = filename
+                self.filenameIncludingDeleted = f"{base_name}_including_deleted{ext}"
+        else:
+            self.filenameFiltered = self._generateFilename(includeDeleted=False)
+            self.filenameIncludingDeleted = self._generateFilename(includeDeleted=True)
         self.payload = payload or self._buildDefaultPayload()  # Use provided payload or build default
         self.endpoint = endpoint
         self.accountsDf = pd.DataFrame() if self.reportType == "accounts" else self.getAccountsDf(self.localSetup)
         self.accountCanvasID = accountCanvasID if accountCanvasID else self._resolveAccountId()
         self.outputPath = self._buildOutputPath()  # Build directory path for output
-        self.filePath = os.path.join(self.outputPath, self.filename)  # Full path to the output file
+        # Always download the include-deleted file (when hasIncludeDeletedOption True) so use that path
+        self.filteredFilePath = os.path.join(self.outputPath, self.filenameFiltered)
+        self.includingDeletedFilePath = os.path.join(self.outputPath, self.filenameIncludingDeleted)
+        # filePath is the actual download target used by getOrCreateReport
+        self.filePath = self.includingDeletedFilePath if self.hasIncludeDeletedOption else self.filteredFilePath
         self.statusUrl = None
         os.makedirs(self.outputPath, exist_ok=True)  # Ensure output directory exists
         ## Log initialization
@@ -12480,9 +11309,9 @@ class CanvasReport:
         return payload
 
     ## Generate a filename for the report
-    def _generateFilename(self):
+    def _generateFilename(self, includeDeleted=False):
         suffix = self.reportType.replace(" ", "_").capitalize()
-        if self.includeDeleted:
+        if includeDeleted:
             suffix += "_including_deleted"
         return f"{self.termCode or 'All'}_{suffix}.csv"
 
@@ -12585,7 +11414,19 @@ class CanvasReport:
             except EmptyDataError:
                 time.sleep(3)
             attempt += 1
-        return targetDf if targetDf is not None else pd.DataFrame()
+        if targetDf is None:
+            return pd.DataFrame()
+
+        if self.hasIncludeDeletedOption:
+            filteredDf = targetDf
+            if "status" in targetDf.columns:
+                filteredDf = targetDf[targetDf["status"].isin(["active", "concluded"])].copy()
+            filteredFilePath = self.filePath.replace("_including_deleted.csv", ".csv")
+            if filteredFilePath != self.filePath:
+                filteredDf.to_csv(filteredFilePath, index=False)
+            return targetDf if self.requestedIncludeDeleted else filteredDf
+
+        return targetDf
 
 
     
@@ -13414,6 +12255,73 @@ class CanvasReport:
             return pd.DataFrame()  # Return empty DataFrame on error
 
     @classmethod
+    def getAccountOrgStructure(cls, localSetup, courseAccountId, accountsDf=None):
+        """
+    Determine the organizational structure placement of a Canvas sub-account
+    by traversing the account hierarchy from the given account up to (but not
+    including) the root account.
+
+    Args:
+        localSetup (LocalSetup): The LocalSetup instance for logging and path management.
+        courseAccountId (int): The Canvas account ID to resolve.
+        accountsDf (pd.DataFrame, optional): Pre-loaded accounts DataFrame.
+            If None, it will be fetched via getAccountsDf.
+
+    Returns:
+        list[str]: Ordered list of account names from the highest ancestor
+            (just below root) down to the given account.  Returns ["NNU"] for
+            the root account and an empty list on error.
+        """
+        methodName = "getAccountOrgStructure"
+        try:
+            if courseAccountId == 1:
+                return ["NNU"]
+
+            if accountsDf is None or accountsDf.empty:
+                accountsDf = cls.getAccountsDf(localSetup)
+
+            # Determine which column to use for matching
+            targetCol = "account_id"
+            if courseAccountId not in accountsDf[targetCol].tolist():
+                targetCol = "canvas_account_id"
+
+            # Locate the row for the given account ID
+            rowIdx = accountsDf.index.get_loc(
+                accountsDf[accountsDf[targetCol] == courseAccountId].index[0]
+            )
+
+            # Collect account names from leaf up to root
+            hierarchy = [accountsDf["name"][rowIdx]]
+
+            _rawParentId = accountsDf["canvas_parent_id"][rowIdx]
+            parentId: int | None = None
+            if isinstance(_rawParentId, (int, float)):
+                try:
+                    parentId = int(_rawParentId)
+                except (ValueError, TypeError, OverflowError):
+                    pass
+
+            while parentId is not None and parentId != 1:
+                parentRowIdx = accountsDf.index.get_loc(
+                    accountsDf[accountsDf["canvas_account_id"] == parentId].index[0]
+                )
+                hierarchy.insert(0, accountsDf["name"][parentRowIdx])
+                _rawParentId = accountsDf["canvas_parent_id"][parentRowIdx]
+                if isinstance(_rawParentId, (int, float)):
+                    try:
+                        parentId = int(_rawParentId)
+                    except (ValueError, TypeError, OverflowError):
+                        parentId = None
+                else:
+                    parentId = None
+
+            return hierarchy
+
+        except Exception as Error:
+            localSetup.logger.error(f"Error in {methodName}: {Error}")
+            return []
+
+    @classmethod
     def determineDepartmentSavePath(cls, localSetup, courseAccountId):
         """
     Determine the save path for a given Canvas account ID by traversing the account hierarchy.
@@ -13432,47 +12340,17 @@ class CanvasReport:
             if courseAccountId == 1:
                 return "NNU\\"
 
-            # Read the accounts CSV into a DataFrame
-            departmentSavePathsDF = cls.getAccountsDf(localSetup)
+            accountStructure = cls.determineCollegeDepartmentDiscipline(localSetup, courseAccountId)
+            pathComponents = accountStructure.get("Path_Components", [])
 
-            # Determine which column to use for matching
-            targetRow = "account_id"
-            if courseAccountId not in departmentSavePathsDF[targetRow].tolist():
-                targetRow = "canvas_account_id"
+            if not pathComponents:
+                return ""
 
-            # Locate the row for the given account ID
-            accountRow = departmentSavePathsDF.index.get_loc(
-                departmentSavePathsDF[departmentSavePathsDF[targetRow] == courseAccountId].index[0]
-            )
+            # Build the backslash-delimited path from the hierarchy derived by
+            # determineCollegeDepartmentDiscipline.
+            accountSavePath = "\\".join(pathComponents) + "\\"
 
-            # Start building the path with the account name
-            accountName = departmentSavePathsDF["name"][accountRow]
-            accountSavePath = f"{accountName}\\"
-
-            # Traverse parent accounts until root
-            _rawParentId = departmentSavePathsDF["canvas_parent_id"][accountRow]
-            targetAccountParentID: int | None = None
-            if isinstance(_rawParentId, (int, float)):
-                try:
-                    targetAccountParentID = int(_rawParentId)
-                except (ValueError, TypeError, OverflowError):
-                    pass
-            while targetAccountParentID is not None and targetAccountParentID != 1:
-                parentAccountRow = departmentSavePathsDF.index.get_loc(
-                    departmentSavePathsDF[departmentSavePathsDF["canvas_account_id"] == targetAccountParentID].index[0]
-                )
-                targetAccountName = departmentSavePathsDF["name"][parentAccountRow]
-                accountSavePath = f"{targetAccountName}\\{accountSavePath}"
-                _rawParentId = departmentSavePathsDF["canvas_parent_id"][parentAccountRow]
-                if isinstance(_rawParentId, (int, float)):
-                    try:
-                        targetAccountParentID = int(_rawParentId)
-                    except (ValueError, TypeError, OverflowError):
-                        targetAccountParentID = None
-                else:
-                    targetAccountParentID = None
-
-            # Clean up path formatting for department/college names
+            # Keep existing formatting cleanup behavior for backwards compatibility.
             if len(accountSavePath.rsplit("\\")) > 3:
                 departmentName = accountSavePath.rsplit("\\")[1]
                 accountSavePath = accountSavePath.replace(f" {departmentName}", "").replace(
@@ -13498,6 +12376,83 @@ class CanvasReport:
                 )
 
             return accountSavePath
+
+        except Exception as Error:
+            localSetup.logger.error(f"Error in {methodName}: {Error}")
+            return ""  # Return empty string on error
+
+    @classmethod
+    def determineCollegeDepartmentDiscipline(cls, localSetup, courseAccountId, accountsDf=None):
+        """
+    Determine the academic structure for a Canvas account.
+
+    Rules:
+    - College: account whose parent canvas account id is 1.
+    - Department: account directly under the college.
+    - Discpline: optional account directly under department
+      (often Undergraduate, Graduate, or Other).
+
+    Returns:
+        dict: {
+            "College": str,
+            "Department": str,
+            "Discpline": str,
+            "Path_Components": list[str]
+        }
+        """
+        methodName = "determineCollegeDepartmentDiscipline"
+
+        structureDict = {
+            "College": "",
+            "Department": "",
+            "Discpline": "",
+            "Path_Components": []
+        }
+
+        try:
+            if courseAccountId == 1:
+                structureDict["College"] = "NNU"
+                structureDict["Department"] = "NNU"
+                structureDict["Path_Components"] = ["NNU"]
+                return structureDict
+
+            if accountsDf is None or accountsDf.empty:
+                accountsDf = cls.getAccountsDf(localSetup)
+
+            if isMissing(accountsDf):
+                return structureDict
+
+            hierarchy = cls.getAccountOrgStructure(localSetup, courseAccountId, accountsDf=accountsDf)
+            hierarchy = [str(item).strip() for item in hierarchy if isPresent(str(item).strip())]
+
+            if not hierarchy:
+                return structureDict
+
+            structureDict["Path_Components"] = hierarchy
+
+            # College is always the first level below root account (id=1)
+            structureDict["College"] = hierarchy[0]
+
+            # Department is directly under college when available
+            if len(hierarchy) > 1:
+                structureDict["Department"] = hierarchy[1]
+            else:
+                structureDict["Department"] = hierarchy[0]
+
+            # Discpline is directly under department when available
+            if len(hierarchy) > 2:
+                rawDiscipline = hierarchy[2]
+                lowerDiscipline = rawDiscipline.lower()
+                if lowerDiscipline.startswith("undergraduate"):
+                    structureDict["Discpline"] = "Undergraduate"
+                elif lowerDiscipline.startswith("graduate"):
+                    structureDict["Discpline"] = "Graduate"
+                elif "other" in lowerDiscipline:
+                    structureDict["Discpline"] = "Other"
+                else:
+                    structureDict["Discpline"] = rawDiscipline
+
+            return structureDict
 
         except Exception as Error:
             localSetup.logger.error(f"Error in {methodName}: {Error}")
@@ -14368,12 +13323,14 @@ if __name__ == "__main__":
 ## Last Updated by: Bryce Miller
 
 ## Import Generic Modules
-import traceback, logging, os, sys
+import traceback, logging, os, sys, threading
 
 try: ## If the module is run directly
     from Core_Microsoft_Api import sendOutlookEmail
+    from Local_Setup import logError
 except ImportError: ## Otherwise as a relative import if the module is imported
     from .Core_Microsoft_Api import sendOutlookEmail
+    from .Local_Setup import logError
 
 ## Import Config Variables
 from Common_Configs import scriptLibrary, serviceEmailAccount, authorContactInformation
@@ -14400,6 +13357,7 @@ class errorEmail:
         self.externalRequirements = externalRequirements
         self.localSetup = p1_localSetup
         self.sentErrors = set()
+        self._sendErrorLock = threading.RLock()
 
     ## This class method creates a formatted error email
     def _createErrorEmailBody(self, p1_functionName, p1_errorInfo):
@@ -14426,75 +13384,76 @@ Error Description/Code: {p1_errorInfo}
     ## This method sends an error email for a specific function
     def sendError(self, p1_functionName, p1_errorInfo):
         functionName = "Send Error"
-        
-        ## Log the error
-        self.localSetup.logger.error(f"\nA script error occurred while running {p1_functionName}. Error: {str(p1_errorInfo)}")
+        with self._sendErrorLock:
+            ## Log the error
+            logError(self.localSetup, f"\nA script error occurred while running {p1_functionName}. Error: {str(p1_errorInfo)}")
 
-        ## If the function has already triggered an error email, skip sending again
-        if p1_functionName in self.sentErrors:
-            self.localSetup.logger.error(f"\nError email already sent for {p1_functionName}")
-            return
+            ## If the function has already triggered an error email, skip sending again
+            if p1_functionName in self.sentErrors:
+                logError(self.localSetup, f"\nError email already sent for {p1_functionName}")
+                return
 
-        ## ---- Sensitive-keyword list (lowercase) ----
-        _SENSITIVE_KEYS = {"password", "passwd", "secret", "token", "api_key",
-                           "apikey", "access_token", "refresh_token", "credential",
-                           "client_secret", "authorization", "auth"}
+            ## ---- Sensitive-keyword list (lowercase) ----
+            _SENSITIVE_KEYS = {"password", "passwd", "secret", "token", "api_key",
+                            "apikey", "access_token", "refresh_token", "credential",
+                            "client_secret", "authorization", "auth"}
 
-        
-        # Try to get the actual exception object
-        exc = p1_errorInfo if isinstance(p1_errorInfo, BaseException) else None
+            
+            # Try to get the actual exception object
+            exc = p1_errorInfo if isinstance(p1_errorInfo, BaseException) else None
 
-        if exc is None:
-            # Fall back to the currently handled exception (if any)
-            excType, excValue, excTb = sys.exc_info()
-            if excValue is not None:
-                exc = excValue
+            if exc is None:
+                # Fall back to the currently handled exception (if any)
+                excType, excValue, excTb = sys.exc_info()
+                if excValue is not None:
+                    exc = excValue
 
-        if exc is not None:
-            # Build traceback WITH locals for the full log file
-            tbExcFull = traceback.TracebackException.from_exception(exc, capture_locals=True)
-            traceWithLocals = ''.join(tbExcFull.format())
+            if exc is not None:
+                # Build traceback WITH locals for the full log file
+                tbExcFull = traceback.TracebackException.from_exception(exc, capture_locals=True)
+                traceWithLocals = ''.join(tbExcFull.format())
 
-            # Build a sanitized version for the email (no locals)
-            tbExcSafe = traceback.TracebackException.from_exception(exc, capture_locals=False)
-            traceSafe = ''.join(tbExcSafe.format())
-        else:
-            # Fallback: no specific exception object
-            traceWithLocals = traceback.format_exc()
-            traceSafe = traceWithLocals
+                # Build a sanitized version for the email (no locals)
+                tbExcSafe = traceback.TracebackException.from_exception(exc, capture_locals=False)
+                traceSafe = ''.join(tbExcSafe.format())
+            else:
+                # Fallback: no specific exception object
+                traceWithLocals = traceback.format_exc()
+                traceSafe = traceWithLocals
 
 
-        ## ---- Redact sensitive values from the safe trace ----
-        for line in traceSafe.splitlines():
-            for key in _SENSITIVE_KEYS:
-                if key in line.lower():
-                    traceSafe = traceSafe.replace(line, f"  {key}=<REDACTED>")
-                    break
+            ## ---- Redact sensitive values from the safe trace ----
+            for line in traceSafe.splitlines():
+                for key in _SENSITIVE_KEYS:
+                    if key in line.lower():
+                        traceSafe = traceSafe.replace(line, f"  {key}=<REDACTED>")
+                        break
 
-        ## Full info for the LOCAL log only (includes locals for debugging)
-        fullErrorInfo = f"{p1_errorInfo}: \n\n{traceWithLocals}"
+            ## Full info for the LOCAL log only (includes locals for debugging)
+            fullErrorInfo = f"{p1_errorInfo}: \n\n{traceWithLocals}"
 
-        ## Log the full (unsanitized) error info locally
-        self.localSetup.logger.error(f"\nFull Error Info:\n{fullErrorInfo}")
+            ## Log the full (unsanitized) error info locally
+            logError(self.localSetup, f"\nFull Error Info:\n{fullErrorInfo}")
 
-        ## Save the sanitized error info for the email (no locals, sensitive info redacted)
-        safeErrorInfo = f"{p1_errorInfo}: \n\n{traceSafe}"
+            ## Save the sanitized error info for the email (no locals, sensitive info redacted)
+            safeErrorInfo = f"{p1_errorInfo}: \n\n{traceSafe}"
 
-        ## Create the formatted email body
-        emailBody = self._createErrorEmailBody(p1_functionName, safeErrorInfo)
+            ## Create the formatted email body
+            emailBody = self._createErrorEmailBody(p1_functionName, safeErrorInfo)
 
-        ## Send the error alert email
-        sendOutlookEmail(
-            p1_microsoftUserName=serviceEmailAccount,
-            p1_subject=f"{self.scriptName}: Error in \"{p1_functionName}\"",
-            p1_body=emailBody,
-            p1_recipientEmailList=f"{scriptLibrary}@nnu.edu",
-            p1_shared_mailbox=f"{scriptLibrary}@nnu.edu"
-        )
+            ## Send the error alert email
+            sendOutlookEmail(
+                p1_microsoftUserName=serviceEmailAccount,
+                p1_subject=f"{self.scriptName}: Error in \"{p1_functionName}\"",
+                p1_body=emailBody,
+                p1_recipientEmailList=f"{scriptLibrary}@nnu.edu",
+                p1_shared_mailbox=f"{scriptLibrary}@nnu.edu"
+            )
 
-        ## Track that an error email has been sent for this function
-        self.sentErrors.add(p1_functionName)
-        self.localSetup.logger.error(f"\nError Email Sent for {p1_functionName}")
+            ## Track that an error email has been sent for this function
+            self.sentErrors.add(p1_functionName)
+            logError(self.localSetup, f"\nError Email Sent for {p1_functionName}")
+
 
 ## ===========================================================================
 ## FILE: ResourceModules\Get_Slate_Info.py
@@ -14691,7 +13650,7 @@ four character format (FA20, SU20, SP20): "))
 ## Last Updated by: Bryce Miller
 
 ## Import Generic Modules
-import os, json, sys, logging, calendar, re, requests
+import os, json, sys, logging, calendar, re, requests, threading
 from datetime import datetime
 from requests.adapters import HTTPAdapter
 ## Add the config path
@@ -14755,6 +13714,7 @@ class LocalSetup:
         ## Setup paths and logging
         self.absolutePath, self.baseLogPath, self.configPath = self._setupCommonPaths()
         self.logger = self._setupLogger()
+        self._threadSafeLogLock = threading.RLock()
         ## Path Storage
         self.internalResourcePathDict = {}
         self.externalResourcePaths = externalResourcePathsDict
@@ -14806,6 +13766,16 @@ class LocalSetup:
         logger = logging.getLogger(self.__scriptName)
         FORMAT = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
         logging.basicConfig(format="%(asctime)s %(levelname)s %(message)s", encoding='utf-8', filemode="a", level=logging.INFO)
+        logger.setLevel(logging.INFO)
+        logger.propagate = False
+
+        if logger.handlers:
+            for existingHandler in list(logger.handlers):
+                logger.removeHandler(existingHandler)
+                try:
+                    existingHandler.close()
+                except Exception:
+                    pass
 
         ## Info Log
         infoLogFile = os.path.join(self.baseLogPath, "Info Log.txt")
@@ -14828,7 +13798,27 @@ class LocalSetup:
         logError.setFormatter(FORMAT)
         logger.addHandler(logError)
 
+        ## Console handler — mirror all log messages to stdout so they are
+        ## visible when scripts are run interactively or in CI pipelines
+        consoleHandler = logging.StreamHandler()
+        consoleHandler.setLevel(logging.INFO)
+        consoleHandler.setFormatter(FORMAT)
+        logger.addHandler(consoleHandler)
+
         return logger
+
+    def logThreadSafe(self, level, msg):
+        with self._threadSafeLogLock:
+            self.logger.log(level, msg)
+
+    def logInfoThreadSafe(self, msg):
+        self.logThreadSafe(logging.INFO, msg)
+
+    def logWarningThreadSafe(self, msg):
+        self.logThreadSafe(logging.WARNING, msg)
+
+    def logErrorThreadSafe(self, msg):
+        self.logThreadSafe(logging.ERROR, msg)
     
     ## Validate term input
     def _validateTerm(self, term: str):
@@ -15085,12 +14075,12 @@ class LocalSetup:
         termCodes = set()
         for term, logic in termSchoolYearLogic.items():
             decadeForTerm = startDecade if logic == "current-next" else endDecade
-            startMonth = termMonthRanges[term][0]
-            termCodes.update(self.getTermCodes(startMonth, decadeForTerm))
+            midMonth = (termMonthRanges[term][0] + termMonthRanges[term][1]) / 2
+            termCodes.update(self.getTermCodes(midMonth, decadeForTerm))
         return termCodes
 
     ## Return the most recent completed terms
-    def getMostRecentCompletedTerms(self) -> set:
+    def getPreviousTerms(self) -> set:
         """
         Return the most recently completed full-year term codes based on the current date.
         ## e.g. ["SU2024", "SG2024"]
@@ -15110,7 +14100,7 @@ class LocalSetup:
         return self.getTerms(termMonthRanges[previousTerm][0], yearForPreviousTerm)
 
     ## Return the most recent completed term codes
-    def getMostRecentCompletedTermCodes(self) -> set:
+    def getPreviousTermCodes(self) -> set:
         """
         Return the most recently completed decade term codes based on the current date.
         ## e.g. ["SU24", "SG24"]
@@ -15123,7 +14113,8 @@ class LocalSetup:
         previousTermYear = currentYear - 1 if termSchoolYearLogic[previousTerm] == 'current-next' else currentYear
         startYear, endYear = self._getSchoolYearRange(previousTerm, previousTermYear)
         decadeForPreviousTerm = (startYear % 100) if termSchoolYearLogic[previousTerm] == "current-next" else (endYear % 100)
-        return self.getTermCodes(termMonthRanges[previousTerm][0], decadeForPreviousTerm)
+        previousTermMidMonth = (termMonthRanges[previousTerm][0] + termMonthRanges[previousTerm][1]) / 2
+        return self.getTermCodes(previousTermMidMonth, decadeForPreviousTerm)
 
     ## Return the most recent completed decade term codes        
     def getPreviousSchoolYearTerms(self) -> set:
@@ -15162,8 +14153,8 @@ class LocalSetup:
         termCodes = set()
         for term, logic in termSchoolYearLogic.items():
             decadeForTerm = prevStartDecade if logic == "current-next" else prevEndDecade
-            startMonth = termMonthRanges[term][0]
-            termCodes.update(self.getTermCodes(startMonth, decadeForTerm))
+            midMonth = (termMonthRanges[term][0] + termMonthRanges[term][1]) / 2
+            termCodes.update(self.getTermCodes(midMonth, decadeForTerm))
         return termCodes
 
     ## Return the next term
@@ -15191,9 +14182,10 @@ class LocalSetup:
         currentTerm = self._determineCurrentTerm(currentMonth)
         nextTerm = self._determineNextTerm(currentTerm)
         ## Determine the correct year for the next term
-        nextTermYear = currentYear if termSchoolYearLogic[nextTerm] == 'current-next' else currentYear + 1
+        nextTermYear = currentYear if currentTerm != "Fall" else currentYear + 1
         nextTermDecade = nextTermYear % 100
-        return self.getTermCodes(termMonthRanges[nextTerm][0], nextTermDecade)
+        nextTermMidMonth = (termMonthRanges[nextTerm][0] + termMonthRanges[nextTerm][1]) / 2
+        return self.getTermCodes(nextTermMidMonth, nextTermDecade)
 
 
     ## Return all terms for the next school year
@@ -15235,6 +14227,43 @@ class LocalSetup:
             termCodes.update(self.getTermCodes(startMonth, decadeForTerm))
         return termCodes
 
+
+## ─────────────────────────────────────────────────────────────────────────────
+## Module-level thread-safe logging helpers
+##
+## These are the single canonical implementations.  Both TLC_Common and
+## Api_Caller import them from here instead of defining their own copies.
+##
+## Priority:  LocalSetup wrapper methods  >  direct logger call (with lock)
+## ─────────────────────────────────────────────────────────────────────────────
+
+_fallbackLogLock = threading.RLock()
+
+def logInfo(localSetup, message):
+    """Thread-safe info log.  Prefers localSetup.logInfoThreadSafe; falls back with lock."""
+    if hasattr(localSetup, "logInfoThreadSafe"):
+        localSetup.logInfoThreadSafe(message)
+    elif getattr(localSetup, "logger", None):
+        with _fallbackLogLock:
+            localSetup.logger.info(message)
+
+def logWarning(localSetup, message):
+    """Thread-safe warning log.  Prefers localSetup.logWarningThreadSafe; falls back with lock."""
+    if hasattr(localSetup, "logWarningThreadSafe"):
+        localSetup.logWarningThreadSafe(message)
+    elif getattr(localSetup, "logger", None):
+        with _fallbackLogLock:
+            localSetup.logger.warning(message)
+
+def logError(localSetup, message):
+    """Thread-safe error log.  Prefers localSetup.logErrorThreadSafe; falls back with lock."""
+    if hasattr(localSetup, "logErrorThreadSafe"):
+        localSetup.logErrorThreadSafe(message)
+    elif getattr(localSetup, "logger", None):
+        with _fallbackLogLock:
+            localSetup.logger.error(message)
+
+
 ## ===========================================================================
 ## FILE: ResourceModules\TLC_Action.py
 ## ===========================================================================
@@ -15244,16 +14273,17 @@ class LocalSetup:
 
 ## Import Generic Modules
 import os, sys, re, time, math, pandas as pd, paramiko
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from dateutil import parser
 
 try: ## If the module is run directly
     from Local_Setup import LocalSetup
-    from TLC_Common import getEncryptionKey, makeApiCall, flattenApiObjectToJsonList, isPresent, isMissing, isFileRecent
+    from TLC_Common import getEncryptionKey, makeApiCall, flattenApiObjectToJsonList, isPresent, isMissing, isFileRecent, readTargetCsv, runThreadedRows
     from Canvas_Report import CanvasReport
 except ImportError: ## Otherwise as a relative import if the module is imported
     from .Local_Setup import LocalSetup
-    from .TLC_Common import getEncryptionKey, makeApiCall, flattenApiObjectToJsonList, isPresent, isMissing, isFileRecent
+    from .TLC_Common import getEncryptionKey, makeApiCall, flattenApiObjectToJsonList, isPresent, isMissing, isFileRecent, readTargetCsv, runThreadedRows
     from .Canvas_Report import CanvasReport
 
 ## Add the config path
@@ -15280,9 +14310,9 @@ Requires access to the config path for SSH key files and encrypted password stor
 """
 
 
-## ══════════════════════════════════════════════════════════════════════════════
+## ==============================================================================
 ## CSV Helpers
-## ══════════════════════════════════════════════════════════════════════════════
+## ==============================================================================
 
 ## Helper function to read CSV with encoding fallback
 def readCsvWithEncoding(filePath: str, **kwargs) -> pd.DataFrame:
@@ -15330,9 +14360,9 @@ def sanitizeCsvHeaders(p1_filePath: str, p1_localSetup: LocalSetup):
     p1_localSetup.logger.info(f"{functionName}: Sanitized CSV headers and re-saved to {p1_filePath}")
 
 
-## ══════════════════════════════════════════════════════════════════════════════
+## ==============================================================================
 ## SFTP Private Key Password Management
-## ══════════════════════════════════════════════════════════════════════════════
+## ==============================================================================
 
 ## This function retrieves the Simple Syllabus SFTP private key password.
 ## On first run it reads the plaintext password from SSPrivKP.txt, encrypts it
@@ -15389,9 +14419,9 @@ def getSimpleSyllabusPrivateKeyPassword(p1_localSetup: LocalSetup):
     return None
 
 
-## ══════════════════════════════════════════════════════════════════════════════
+## ==============================================================================
 ## SFTP Upload Function
-## ══════════════════════════════════════════════════════════════════════════════
+## ==============================================================================
 
 ## This function uploads a CSV file to Simple Syllabus via SFTP
 def uploadToSimpleSyllabus(p1_filePath: str, p1_localSetup: LocalSetup, p1_errorHandler=None, p1_writeSuccessTag: bool = True):
@@ -15548,9 +14578,9 @@ def uploadToSimpleSyllabus(p1_filePath: str, p1_localSetup: LocalSetup, p1_error
         raise
 
 
-## ══════════════════════════════════════════════════════════════════════════════
+## ==============================================================================
 ## Change Detection Helpers
-## ══════════════════════════════════════════════════════════════════════════════
+## ==============================================================================
 
 def hasChangedSinceLastUpload(p1_newDf: pd.DataFrame, p1_previousCsvPath: str, p1_successTagPath: str, p1_localSetup: LocalSetup) -> bool:
     """
@@ -15627,9 +14657,9 @@ def removeStaleSuccessTag(p1_successTagPath: str, p1_localSetup: LocalSetup):
         p1_localSetup.logger.info(f"{functionName}: Removed stale success tag at {p1_successTagPath}")
 
 
-## ══════════════════════════════════════════════════════════════════════════════
+## ==============================================================================
 ## Outcome Management Functions
-## ══════════════════════════════════════════════════════════════════════════════
+## ==============================================================================
 
 ## This function takes in a start date and end date and returns what course week the course is currently in and what week the final week is
 def determineCourseWeek (p1_startDate, p2_endDate, p1_referenceDate=None):      
@@ -15986,7 +15016,7 @@ def addOutcomeToCourse (p1_localSetup
             targetCourseSisId = targetCourseDataDict['course_id']
 
         ## Log the start of the process
-        p1_localSetup.logger.info("\n     Course:" + targetCourseDataDict['course_id'])
+        p1_localSetup.logInfoThreadSafe("\n     Course:" + targetCourseDataDict['course_id'])
 
         ## Create the base course API urls
         baseCourseApiUrl = f"{coreCanvasApiUrl}courses/sis_course_id:{targetCourseSisId}"
@@ -16015,9 +15045,9 @@ def addOutcomeToCourse (p1_localSetup
 
             ## If the API status code is anything other than 200 it is an error, so log it and skip
             if (courseOutcomeGroupsObject.status_code != 200):
-                p1_localSetup.logger.error("\nCourse Error: " + str(courseOutcomeGroupsObject.status_code))
-                p1_localSetup.logger.error(courseOutcomeGroupsApiUrl)
-                p1_localSetup.logger.error(courseOutcomeGroupsObject.url)
+                p1_localSetup.logErrorThreadSafe("\nCourse Error: " + str(courseOutcomeGroupsObject.status_code))
+                p1_localSetup.logErrorThreadSafe(courseOutcomeGroupsApiUrl)
+                p1_localSetup.logErrorThreadSafe(courseOutcomeGroupsObject.url)
                 continue
 
             ## Define a variable to hold the whether the course already has the outcome group and another to hold its canvas id
@@ -16053,9 +15083,9 @@ def addOutcomeToCourse (p1_localSetup
                 rootOutcomeGroupObject, _ = makeApiCall(p1_localSetup, p1_apiUrl=rootOutcomeGroupApiUrl)
 
                 if (rootOutcomeGroupObject.status_code != 200):
-                    p1_localSetup.logger.error("\nCourse Error: " + str(rootOutcomeGroupObject.status_code))
-                    p1_localSetup.logger.error(rootOutcomeGroupApiUrl)
-                    p1_localSetup.logger.error(rootOutcomeGroupObject.url)
+                    p1_localSetup.logErrorThreadSafe("\nCourse Error: " + str(rootOutcomeGroupObject.status_code))
+                    p1_localSetup.logErrorThreadSafe(rootOutcomeGroupApiUrl)
+                    p1_localSetup.logErrorThreadSafe(rootOutcomeGroupObject.url)
                     continue
 
                 courseOutcomeGroupCanvasId = rootOutcomeGroupObject.json()['id']
@@ -16081,13 +15111,13 @@ def addOutcomeToCourse (p1_localSetup
 
                 ## If the API status code is anything other than 200 it is an error, so log it and skip
                 if (addOutcomeGroupToCourseObject.status_code != 200):
-                    p1_localSetup.logger.error("\nCourse Error: " + str(addOutcomeGroupToCourseObject.status_code))
-                    p1_localSetup.logger.error(addOutcomeGroupToCourseApiUrl)
-                    p1_localSetup.logger.error(addOutcomeGroupToCourseObject.url)
+                    p1_localSetup.logErrorThreadSafe("\nCourse Error: " + str(addOutcomeGroupToCourseObject.status_code))
+                    p1_localSetup.logErrorThreadSafe(addOutcomeGroupToCourseApiUrl)
+                    p1_localSetup.logErrorThreadSafe(addOutcomeGroupToCourseObject.url)
                     continue
 
                 ## Log the fact that the outcome group has been added to the course
-                p1_localSetup.logger.info(f"\n {targetCourseSisId} has been added outcome group {outcomeCanvasData['Outcome Group Title']}")
+                p1_localSetup.logInfoThreadSafe(f"\n {targetCourseSisId} has been added outcome group {outcomeCanvasData['Outcome Group Title']}")
 
                 ## Retrieve the ooutcomeGroupCanvasIdInCourse from the API call response
                 outcomeGroupCanvasIdInCourse = addOutcomeGroupToCourseObject.json()['id']
@@ -16100,13 +15130,13 @@ def addOutcomeToCourse (p1_localSetup
 
             ## If the API status code is anything other than 200 it is an error, so log it and skip
             if (addOutcomeToCourseObject.status_code != 200):
-                p1_localSetup.logger.error("\nCourse Error: " + str(addOutcomeToCourseObject.status_code))
-                p1_localSetup.logger.error(addOutcomeToCourseApiUrl)
-                p1_localSetup.logger.error(addOutcomeToCourseObject.url)
+                p1_localSetup.logErrorThreadSafe("\nCourse Error: " + str(addOutcomeToCourseObject.status_code))
+                p1_localSetup.logErrorThreadSafe(addOutcomeToCourseApiUrl)
+                p1_localSetup.logErrorThreadSafe(addOutcomeToCourseObject.url)
                 continue
 
             ## Log the fact that the outcome has been added to the course
-            p1_localSetup.logger.info(f"\n {targetCourseSisId} has had outcome {targetCourseActiveOutcomeCourseDataDict[outcome]} added")
+            p1_localSetup.logInfoThreadSafe(f"\n {targetCourseSisId} has had outcome {targetCourseActiveOutcomeCourseDataDict[outcome]} added")
 
     except Exception as Error:
         p1_errorHandler.sendError (functionName, Error)
@@ -16354,6 +15384,205 @@ def getUniqueOutcomesAndOutcomeCoursesDict (p1_localSetup, p1_errorHandler, p3_i
         return [], {}
 
 
+## ══════════════════════════════════════════════════════════════════════════════
+## Canvas Action Helpers
+## Shared primitives used by multiple ActionModule scripts so the
+## per-script duplicates can be removed.
+## ══════════════════════════════════════════════════════════════════════════════
+
+## Update a single field on a Canvas course via the Courses API
+def updateCourseField(
+    localSetup: LocalSetup,
+    errorHandler,
+    courseId: str,
+    fieldName: str,
+    fieldValue,
+) -> bool:
+    """
+    Set one field on a Canvas course with PUT /api/v1/courses/:id.
+
+    Args:
+        localSetup:   LocalSetup instance for logging and API auth.
+        errorHandler: errorEmail instance for error reporting.
+        courseId:     Canvas numeric course ID (string).
+        fieldName:    Course field key (e.g. "name", "account_id", "enrollment_term_id").
+        fieldValue:   Value to assign; caller is responsible for the correct Python type.
+
+    Returns:
+        True on HTTP 200, False otherwise.
+    """
+    functionName = "updateCourseField"
+    try:
+        updateUrl = f"{coreCanvasApiUrl}courses/{courseId}"
+        payload = {"course": {fieldName: fieldValue}}
+        response, _ = makeApiCall(
+            localSetup=localSetup,
+            p1_apiUrl=updateUrl,
+            p1_payload=payload,
+            p1_apiCallType="put",
+        )
+        statusCode = getattr(response, "status_code", None)
+        if statusCode == 200:
+            localSetup.logInfoThreadSafe(
+                f"Successfully set {fieldName}={fieldValue!r} for course {courseId}"
+            )
+            return True
+        localSetup.logWarningThreadSafe(
+            f"Failed to set {fieldName} for course {courseId}. Status code: {statusCode}"
+        )
+        return False
+    except Exception as Error:
+        errorHandler.sendError(functionName, Error)
+        return False
+
+
+## Delete a Canvas course via the Courses API
+def deleteCourse(
+    localSetup: LocalSetup,
+    errorHandler,
+    courseId: str,
+) -> bool:
+    """
+    Delete a Canvas course with DELETE /api/v1/courses/:id.
+
+    Args:
+        localSetup:   LocalSetup instance for logging and API auth.
+        errorHandler: errorEmail instance for error reporting.
+        courseId:     Canvas numeric course ID (string).
+
+    Returns:
+        True on HTTP 200, False otherwise.
+    """
+    functionName = "deleteCourse"
+    try:
+        deleteUrl = f"{coreCanvasApiUrl}courses/{courseId}"
+        payload = {"event": "delete"}
+        response, _ = makeApiCall(
+            localSetup=localSetup,
+            p1_apiUrl=deleteUrl,
+            p1_payload=payload,
+            p1_apiCallType="delete",
+        )
+        statusCode = getattr(response, "status_code", None)
+        if statusCode == 200:
+            localSetup.logInfoThreadSafe(f"Successfully deleted course {courseId}")
+            return True
+        localSetup.logWarningThreadSafe(
+            f"Failed to delete course {courseId}. Status code: {statusCode}"
+        )
+        return False
+    except Exception as Error:
+        errorHandler.sendError(functionName, Error)
+        return False
+
+
+## Delete a Canvas enrollment via the Enrollments API
+def deleteEnrollment(
+    localSetup: LocalSetup,
+    errorHandler,
+    courseId: str,
+    enrollmentId: str,
+) -> bool:
+    """
+    Delete a Canvas enrollment with DELETE /api/v1/courses/:course_id/enrollments/:id.
+
+    Args:
+        localSetup:    LocalSetup instance for logging and API auth.
+        errorHandler:  errorEmail instance for error reporting.
+        courseId:      Canvas numeric course ID (string).
+        enrollmentId:  Canvas numeric enrollment ID (string).
+
+    Returns:
+        True on HTTP 200, False otherwise.
+    """
+    functionName = "deleteEnrollment"
+    try:
+        deleteUrl = f"{coreCanvasApiUrl}courses/{courseId}/enrollments/{enrollmentId}"
+        response, _ = makeApiCall(
+            localSetup=localSetup,
+            p1_apiUrl=deleteUrl,
+            p1_apiCallType="delete",
+        )
+        statusCode = getattr(response, "status_code", None)
+        if statusCode == 200:
+            localSetup.logInfoThreadSafe(
+                f"Successfully deleted enrollment {enrollmentId} from course {courseId}"
+            )
+            return True
+        localSetup.logWarningThreadSafe(
+            f"Failed to delete enrollment {enrollmentId} from course {courseId}. "
+            f"Status code: {statusCode}"
+        )
+        return False
+    except Exception as Error:
+        errorHandler.sendError(functionName, Error)
+        return False
+
+
+## Enroll a user in a Canvas course via the Enrollments API
+def enrollUser(
+    localSetup: LocalSetup,
+    errorHandler,
+    courseId: str,
+    userId: str,
+    enrollmentType: str,
+    roleId: str = None,
+    enrollmentState: str = "active",
+) -> bool:
+    """
+    Enroll a user in a Canvas course with POST /api/v1/courses/:id/enrollments.
+
+    Args:
+        localSetup:      LocalSetup instance for logging and API auth.
+        errorHandler:    errorEmail instance for error reporting.
+        courseId:        Canvas numeric course ID (string).
+        userId:          Canvas numeric user ID (string).
+        enrollmentType:  Base role type (e.g. "StudentEnrollment", "TeacherEnrollment").
+        roleId:          Optional Canvas role ID for a custom role override.
+        enrollmentState: Enrollment state; defaults to "active".
+
+    Returns:
+        True on HTTP 200, False otherwise.
+    """
+    functionName = "enrollUser"
+    try:
+        enrollUrl = f"{coreCanvasApiUrl}courses/{courseId}/enrollments"
+        payload = {
+            "enrollment[user_id]": userId,
+            "enrollment[type]": enrollmentType,
+            "enrollment[enrollment_state]": enrollmentState,
+        }
+        if roleId:
+            payload["enrollment[role_id]"] = roleId
+        response, _ = makeApiCall(
+            localSetup=localSetup,
+            p1_apiUrl=enrollUrl,
+            p1_payload=payload,
+            p1_apiCallType="post",
+        )
+        statusCode = getattr(response, "status_code", None)
+        if statusCode == 200:
+            localSetup.logInfoThreadSafe(
+                f"Successfully enrolled user {userId} in course {courseId} as {enrollmentType}"
+            )
+            return True
+        localSetup.logWarningThreadSafe(
+            f"Failed to enroll user {userId} in course {courseId}. Status code: {statusCode}"
+        )
+        return False
+    except Exception as Error:
+        errorHandler.sendError(functionName, Error)
+        return False
+
+
+## Read a target CSV and validate that required columns are present
+## ══════════════════════════════════════════════════════════════════════════════
+## Threading / CSV helpers — canonical definitions live in TLC_Common.
+## Re-exported here for backward compatibility with existing action-module imports.
+## ══════════════════════════════════════════════════════════════════════════════
+## readTargetCsv and runThreadedRows are imported from TLC_Common above and are
+## available on this module for any code that imports them from TLC_Action.
+
 
 ## ===========================================================================
 ## FILE: ResourceModules\TLC_Common.py
@@ -16363,14 +15592,15 @@ def getUniqueOutcomesAndOutcomeCoursesDict (p1_localSetup, p1_errorHandler, p3_i
 ## Last Updated by: Bryce Miller
 
 import os, sys, zipfile, requests, pandas as pd
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from dotenv import load_dotenv
 
 try: ## If the module is run directly
-    from Local_Setup import LocalSetup
+    from Local_Setup import LocalSetup, logInfo as _logInfo, logWarning as _logWarning, logError
     from Api_Caller import retry, RateLimitExceeded, makeApiCall
 except ImportError: ## Otherwise as a relative import if the module is imported
-    from .Local_Setup import LocalSetup
+    from .Local_Setup import LocalSetup, logInfo as _logInfo, logWarning as _logWarning, logError
     from .Api_Caller import retry, RateLimitExceeded, makeApiCall
 
 ## Define the script name, purpose, and external requirements for logging and error reporting purposes
@@ -16400,7 +15630,7 @@ def getEncryptionKey(localSetup: LocalSetup):
     
     ## If the encryption key is not found, raise an error
     if not encryptionKey:
-        localSetup.logger.error("ENCRYPTION_KEY not found in environment variables.")
+        logError(localSetup, "ENCRYPTION_KEY not found in environment variables.")
         raise ValueError("ENCRYPTION_KEY not found in environment variables.")
 
     return encryptionKey
@@ -16439,21 +15669,21 @@ def downloadFile(localSetup: LocalSetup, fileLink, filePathWithName, mode = 'w')
     try:
         if finalFilePathWithName.lower().endswith(".xlsx"):
             if not zipfile.is_zipfile(finalFilePathWithName):
-                localSetup.logger.warning(f"Downloaded file is not a valid Excel file. Attempting repair...")
+                _logWarning(localSetup, f"Downloaded file is not a valid Excel file. Attempting repair...")
                 ## Try reading as CSV and resave as proper Excel
                 try:
                     fileDataframe = pd.read_csv(finalFilePathWithName)
                     with pd.ExcelWriter(finalFilePathWithName, engine="openpyxl") as writer:
                         fileDataframe.to_excel(writer, index=False)
-                    localSetup.logger.info(f"File repaired")
+                    _logInfo(localSetup, f"File repaired")
                     return finalFilePathWithName
                 except Exception as e:
-                    localSetup.logger.error(f"Repair failed: {e}")
+                    logError(localSetup, f"Repair failed: {e}")
                     raise
         ## If valid or not Excel, return original path
         return finalFilePathWithName
     except Exception as e:
-        localSetup.logger.error(f"Validation/repair step failed: {e}")
+        logError(localSetup, f"Validation/repair step failed: {e}")
     return finalFilePathWithName
 
 ## This function normalizes a Canvas API response (or list of responses) into a single list of JSON objects.
@@ -16477,7 +15707,7 @@ def flattenApiObjectToJsonList(localSetup, apiObjectList, apiUrl):
 
     except Exception as error:
         ## Log the error here; the calling function can decide whether to send an error email
-        localSetup.logger.error(
+        logError(localSetup,
             f"{functionName}: Error while flattening API responses for URL {apiUrl}: {error}"
         )
         raise
@@ -16490,7 +15720,7 @@ def isFileRecent(localSetup: LocalSetup, filePath, maxAgeHours=3.5):
         ## If the file does not exist, return False
         if not os.path.exists(filePath):
             if localSetup.logger:
-                localSetup.logger.info(f"\n{filePath} does not exist.")
+                _logInfo(localSetup, f"\n{filePath} does not exist.")
             return False
 
         ## Get the last modified time and calculate age in hours
@@ -16500,16 +15730,16 @@ def isFileRecent(localSetup: LocalSetup, filePath, maxAgeHours=3.5):
         ## Log and return based on file age
         if fileAgeHours < maxAgeHours:
             if localSetup.logger:
-                localSetup.logger.info(f"\n{filePath} is recent ({fileAgeHours:.2f} hours old).")
+                _logInfo(localSetup, f"\n{filePath} is recent ({fileAgeHours:.2f} hours old).")
             return True
         else:
             if localSetup.logger:
-                localSetup.logger.info(f"\n{filePath} is outdated ({fileAgeHours:.2f} hours old).")
+                _logInfo(localSetup, f"\n{filePath} is outdated ({fileAgeHours:.2f} hours old).")
             return False
     except Exception as error:
         ## Log any unexpected errors
         if localSetup.logger:
-            localSetup.logger.error(f"Couldn't determine file age. Error: {error}")
+            logError(localSetup, f"Couldn't determine file age. Error: {error}")
         return False
 
 ## Load Excel File with Multiple Strategies
@@ -16599,6 +15829,98 @@ def isMissing(value):
 def isPresent(value):
     """Inverse helper for convenience."""
     return not isMissing(value)
+
+
+## ══════════════════════════════════════════════════════════════════════════════
+## Threading Helpers
+## Generic concurrency utilities shared by both ActionModules and ReportModules.
+## ══════════════════════════════════════════════════════════════════════════════
+
+## Read a target CSV file and return a filtered DataFrame
+def readTargetCsv(
+    localSetup,
+    errorHandler,
+    csvPath: str,
+    requiredColumns: list = None,
+) -> pd.DataFrame:
+    """
+    Read a CSV file and return a filtered DataFrame.
+
+    Raises FileNotFoundError if the file does not exist and KeyError if a
+    required column is absent.  Returns a DataFrame filtered to rows where
+    the first required column is non-null, or the full DataFrame when no
+    required columns are specified.
+
+    Args:
+        localSetup:      LocalSetup instance for logging.
+        errorHandler:    errorEmail instance for error reporting.
+        csvPath:         Absolute path to the CSV file.
+        requiredColumns: List of column names that must be present.
+
+    Returns:
+        Filtered DataFrame, or an empty DataFrame on failure.
+    """
+    functionName = "readTargetCsv"
+    try:
+        if not os.path.exists(csvPath):
+            raise FileNotFoundError(f"Target CSV not found: {csvPath}")
+
+        df = pd.read_csv(csvPath)
+
+        if requiredColumns:
+            for col in requiredColumns:
+                if col not in df.columns:
+                    raise KeyError(f"Required column '{col}' not found in {csvPath}")
+            ## Filter out rows where the first required column is null
+            df = df[df[requiredColumns[0]].notna()].copy()
+
+        localSetup.logInfoThreadSafe(f"Loaded {len(df)} row(s) from {csvPath}")
+        return df
+
+    except Exception as Error:
+        errorHandler.sendError(functionName, Error)
+        return pd.DataFrame()
+
+
+## Run a worker function over each row of a DataFrame using a thread pool
+def runThreadedRows(
+    df: pd.DataFrame,
+    workerFn,
+    maxWorkers: int = 25,
+) -> None:
+    """
+    Submit workerFn(row) for every row in df via a ThreadPoolExecutor and wait
+    for all futures to complete.
+
+    Exceptions raised inside workerFn should be handled there (e.g. via
+    try/except + errorHandler.sendError) to avoid aborting the whole batch.
+
+    Args:
+        df:          DataFrame whose rows are processed.
+        workerFn:    Callable that accepts one argument: a pandas Series (one row).
+        maxWorkers:  Thread-pool size; defaults to 25.
+    """
+    with ThreadPoolExecutor(max_workers=maxWorkers) as executor:
+        futures = [executor.submit(workerFn, row) for _, row in df.iterrows()]
+        for future in as_completed(futures):
+            ## Re-raise unhandled exceptions so callers see failures
+            future.result()
+
+## Run a worker function over each row of a DataFrame sequentially (unthreaded)
+def runUnthreadedRows(
+    df: pd.DataFrame,
+    workerFn,
+) -> None:
+    """
+    Run workerFn(row) for every row in df in a simple for loop.
+
+    Args:
+        df:        DataFrame whose rows are processed.
+        workerFn:  Callable that accepts one argument: a pandas Series (one row).
+    """
+    for _, row in df.iterrows():
+        workerFn(row)
+
 
 ## ===========================================================================
 ## FILE: ResourceModules\__init__.py
