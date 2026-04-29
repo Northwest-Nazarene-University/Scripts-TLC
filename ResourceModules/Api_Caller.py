@@ -420,7 +420,34 @@ def _restoreResponseFromSnapshot(snapshot: Dict[str, Any]) -> requests.Response:
     synthetic.encoding = snapshot.get("encoding", None)
     synthetic.url = snapshot.get("url", "")
     synthetic.reason = snapshot.get("reason", "")
-    synthetic.links = snapshot.get("links", {}) or {}
+
+    # Recreate Link header so requests.Response.links property works (it's read-only).
+    # snapshot['links'] may be a dict like {"next": {"url": "...", ...}, ...} or a list of link dicts.
+    links_snapshot = snapshot.get("links", {}) or {}
+    if links_snapshot:
+        parts = []
+        if isinstance(links_snapshot, dict):
+            for rel, info in links_snapshot.items():
+                url = ""
+                if isinstance(info, dict):
+                    url = info.get("url") or info.get("href") or ""
+                    rel_val = info.get("rel", rel)
+                else:
+                    url = str(info)
+                    rel_val = rel
+                if url:
+                    parts.append(f'<{url}>; rel="{rel_val}"')
+        elif isinstance(links_snapshot, list):
+            for item in links_snapshot:
+                if not isinstance(item, dict):
+                    continue
+                url = item.get("url") or item.get("href") or ""
+                rel_val = item.get("rel")
+                if url and rel_val:
+                    parts.append(f'<{url}>; rel="{rel_val}"')
+        if parts:
+            synthetic.headers["Link"] = ", ".join(parts)
+
     return synthetic
 
 

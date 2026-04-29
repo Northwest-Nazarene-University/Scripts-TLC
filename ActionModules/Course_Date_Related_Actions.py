@@ -166,7 +166,7 @@ def createOutcomeEmailBody (p3_relevantEmail
         elif "Finals" in p3_relevantEmail:
         
             ## Assign the finals reminder to attach outcomes to published assignments string
-            emailBodyDict["timeOfYearReminder"] = f"""As finals week has arrived, please make sure that you have the most recent version of the {singularOrPluralDict['outcome/outcomes']} attached to at least one rubric and that the associated {singularOrPluralDict['rubric/rubrics']} are attached to {singularOrPluralDict['a/']}published {singularOrPluralDict['assignment/assignments']}."""
+            emailBodyDict["timeOfYearReminder"] = f"""As finals are next week, please make sure that you have the most recent version of the {singularOrPluralDict['outcome/outcomes']} attached to at least one rubric and that the associated {singularOrPluralDict['rubric/rubrics']} are attached to {singularOrPluralDict['a/']}published {singularOrPluralDict['assignment/assignments']}."""
 
     elif "Missing" in p3_relevantEmail:
             
@@ -367,11 +367,11 @@ def craftAndSendRelevantEmail(
                                                           )
 
             ## Send the Outcome Email
-            # sendOutlookEmail(p1_subject = emailDetails['Relevant Email']
-            #                  , p1_body = emailDetails['Outcome Email Body']
-            #                  , p1_recipientEmailList = emailDetails['Instructor Email Or Emails String']
-            #                  , p1_shared_mailbox = emailDetails['Client Send/Recieve Email']
-            #                  )
+            sendOutlookEmail(p1_subject = emailDetails['Relevant Email']
+                             , p1_body = emailDetails['Outcome Email Body']
+                             , p1_recipientEmailList = emailDetails['Instructor Email Or Emails String']
+                             , p1_shared_mailbox = emailDetails['Client Send/Recieve Email']
+                             )
             ## info log the test
             localSetup.logger.info(f"Crafted and sent email with subject: {emailDetails['Relevant Email']} to {emailDetails['Instructor Email Or Emails String']} with body: {emailDetails['Outcome Email Body']}")
 

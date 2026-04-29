@@ -256,7 +256,7 @@ def processOrphanedCourse(courseRow, activeEnrollmentsDf, summary):
             )
 
             with _summaryLock:
-                summary["skipped_grades"].append(courseId)
+                summary["skipped_grades"].append({"course_id": courseId, "canvas_course_id": canvasCourseId})
             return
 
         ## ── Step C: Course has NO grades ─────────────────────────────────────
@@ -336,7 +336,7 @@ def processOrphanedCourse(courseRow, activeEnrollmentsDf, summary):
             )
 
             with _summaryLock:
-                summary["deleted_with_enrollments"].append(courseId)
+                summary["deleted_with_enrollments"].append({"course_id": courseId, "canvas_course_id": canvasCourseId, "enrollment_count": enrollmentCount})
 
         else:
             ## No enrollments, no grades — delete silently
@@ -361,7 +361,7 @@ def processOrphanedCourse(courseRow, activeEnrollmentsDf, summary):
                 )
 
             with _summaryLock:
-                summary["deleted_silently"].append(courseId)
+                summary["deleted_silently"].append({"course_id": courseId, "canvas_course_id": canvasCourseId})
 
     except Exception as Error:
         errorHandler.sendError(functionName, Error)
@@ -394,7 +394,7 @@ def processOrphanedEnrollment(enrollRow, summary):
                 f"(user={userId}, course={courseId})"
             )
             with _summaryLock:
-                summary["orphaned_enrollments_deleted"].append(enrollmentId)
+                summary["orphaned_enrollments_deleted"].append({"enrollment_id": enrollmentId, "course_id": courseId, "user_id": userId, "canvas_course_id": canvasCourseId})
         else:
             statusCode = response.status_code if response else "N/A"
             localSetup.logWarningThreadSafe(
@@ -599,9 +599,9 @@ def removeOrphanedSisItems():
             )
 
         ## ======================================================================
-        ## Step 4: Active‑status pre‑filter
+        ## Step 4: Not active/unpublished‑status pre‑filter (unpublished is also active for the purpose)
         ## ======================================================================
-        canvasCoursesDf = canvasCoursesDf[canvasCoursesDf["status"].astype(str).str.lower() == "active"].copy()
+        canvasCoursesDf = canvasCoursesDf[canvasCoursesDf["status"].astype(str).str.lower() != "deleted"].copy()
         if isPresent(canvasEnrollDf):
             canvasEnrollDf = canvasEnrollDf[canvasEnrollDf["status"].astype(str).str.lower() == "active"].copy()
 
@@ -636,6 +636,7 @@ def removeOrphanedSisItems():
         ## because the SIS feed no longer carries historical enrollment records.
         now = datetime.now()
         enrollmentScopeCanvasIds = set()
+        # canvasCoursesDf = canvasCoursesDf[canvasCoursesDf["course_id"] == "FA2026_ACCT3960_01"].copy()
         for _, row in canvasCoursesDf.iterrows():
             _, endDt = resolveCourseDates(row, termDateDict)
             if endDt is None or endDt >= now:
@@ -665,6 +666,7 @@ def removeOrphanedSisItems():
         ## Step 7: Identify orphaned enrollments in still‑active courses
         ## ======================================================================
         orphanedEnrollRows = []
+        # canvasEnrollDf = canvasEnrollDf[canvasEnrollDf["course_id"] == "FA2026_ACCT3960_01"].copy() #testing value, comment out
         if isPresent(canvasEnrollDf):
             for _, eRow in canvasEnrollDf.iterrows():
                 ## Skip any that are not SIS‑created and active
@@ -709,6 +711,47 @@ def removeOrphanedSisItems():
         }
 
         MAX_WORKERS = 25  ## Max concurrent threads in the pool
+
+        ## ───────────────────────────────────────────────────────────────────
+        ## TESTING: Check if a specific course is orphaned
+        ## ───────────────────────────────────────────────────────────────────
+        ## Uncomment the block below to verify whether a specific course
+        ## appears in the orphaned courses list (without processing it).
+        ## Replace "TEST_COURSE_ID" with the actual SIS course_id you want to check.
+        ##
+        # TEST_COURSE_ID = "FA2026_ACCT3960_01"
+        # testCourseRow = orphanedCoursesDf[orphanedCoursesDf["course_id"] == TEST_COURSE_ID]
+        # if isPresent(testCourseRow):
+        #     localSetup.logInfoThreadSafe(f"FOUND: Course {TEST_COURSE_ID} IS in orphaned courses list")
+        #     localSetup.logInfoThreadSafe(f"  Canvas Course ID: {testCourseRow.iloc[0].get('canvas_course_id', 'N/A')}")
+        #     localSetup.logInfoThreadSafe(f"  Short Name: {testCourseRow.iloc[0].get('short_name', 'N/A')}")
+        #     localSetup.logInfoThreadSafe(f"  Long Name: {testCourseRow.iloc[0].get('long_name', 'N/A')}")
+        # else:
+        #     localSetup.logWarningThreadSafe(f"NOT FOUND: Course {TEST_COURSE_ID} is NOT in orphaned courses list")
+        # return
+        ## ───────────────────────────────────────────────────────────────────
+
+        ## ───────────────────────────────────────────────────────────────────
+        ## TESTING: Check for orphaned enrollments in a specific active course
+        ## ───────────────────────────────────────────────────────────────────
+        ## Uncomment the block below to find all orphaned enrollments
+        ## for a specific course (by its SIS course_id) without processing them.
+        ## Replace "TEST_COURSE_ID" with the actual SIS course_id you want to check.
+        ##
+        # TEST_COURSE_ID = "FA2026_ACCT3960_01"
+        # testEnrollments = [e for e in orphanedEnrollRows if e.get("course_id") == TEST_COURSE_ID]
+        # if testEnrollments:
+        #     localSetup.logInfoThreadSafe(f"FOUND: {len(testEnrollments)} orphaned enrollment(s) in course {TEST_COURSE_ID}")
+        #     for idx, enrollRow in enumerate(testEnrollments, 1):
+        #         localSetup.logInfoThreadSafe(
+        #             f"  [{idx}] Enrollment ID: {enrollRow.get('canvas_enrollment_id', 'N/A')}, "
+        #             f"User ID: {enrollRow.get('user_id', 'N/A')}, "
+        #             f"Role: {enrollRow.get('role', 'N/A')}"
+        #         )
+        # else:
+        #     localSetup.logWarningThreadSafe(f"NOT FOUND: No orphaned enrollments in course {TEST_COURSE_ID}")
+        # return
+        ## ───────────────────────────────────────────────────────────────────
 
         ## ── Orphaned courses ─────────────────────────────────────────────────
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
@@ -763,24 +806,47 @@ def removeOrphanedSisItems():
             + len(summary["orphaned_enrollments_deleted"])
         )
         if totalDeleted > 0:
-            def _bulletList(items):
-                return "".join(f"<li>{item}</li>" for item in items) if items else "<li>(none)</li>"
+            def _bulletListCourses(items):
+                if not items:
+                    return "<li>(none)</li>"
+                return "".join(
+                    f"<li><b>{item.get('course_id', 'N/A')}</b> (Canvas: {item.get('canvas_course_id', 'N/A')})</li>"
+                    for item in items
+                )
+
+            def _bulletListEnrollments(items):
+                if not items:
+                    return "<li>(none)</li>"
+                return "".join(
+                    f"<li>Course: <b>{item.get('course_id', 'N/A')}</b>, User: <b>{item.get('user_id', 'N/A')}</b> "
+                    f"(Enrollment ID: {item.get('enrollment_id', 'N/A')})</li>"
+                    for item in items
+                )
+
+            def _bulletListCoursesWithEnrollments(items):
+                if not items:
+                    return "<li>(none)</li>"
+                return "".join(
+                    f"<li><b>{item.get('course_id', 'N/A')}</b> (Canvas: {item.get('canvas_course_id', 'N/A')}) "
+                    f"— {item.get('enrollment_count', 0)} enrollment(s) deleted</li>"
+                    for item in items
+                )
 
             summaryEmailBody = (
                 f"<!DOCTYPE html><html><body>"
                 f"<h2>Remove Orphaned SIS Items — Run Summary</h2>"
                 f"<p><b>Courses deleted silently</b> (no enrollments, no grades): "
                 f"{len(summary['deleted_silently'])}</p>"
-                f"<ul>{_bulletList(summary['deleted_silently'])}</ul>"
+                f"<ul>{_bulletListCourses(summary['deleted_silently'])}</ul>"
                 f"<p><b>Courses deleted after enrollment cleanup:</b> "
                 f"{len(summary['deleted_with_enrollments'])}</p>"
-                f"<ul>{_bulletList(summary['deleted_with_enrollments'])}</ul>"
+                f"<ul>{_bulletListCoursesWithEnrollments(summary['deleted_with_enrollments'])}</ul>"
                 f"<p><b>Courses skipped — grades found (manual review required):</b> "
                 f"{len(summary['skipped_grades'])}</p>"
-                f"<ul>{_bulletList(summary['skipped_grades'])}</ul>"
+                f"<ul>{_bulletListCourses(summary['skipped_grades'])}</ul>"
                 f"<p><b>Orphaned enrollments deleted (in still-active courses):</b> "
                 f"{len(summary['orphaned_enrollments_deleted'])}</p>"
-                f"<ul>{_bulletList(summary['orphaned_enrollments_deleted'])}</ul>"
+                f"<ul>{_bulletListEnrollments(summary['orphaned_enrollments_deleted'])}</ul>"
                 f"</body></html>"
             )
 
