@@ -4,6 +4,7 @@
 ## Import Generic Modules
 import os
 import sys
+import re
 from datetime import datetime
 import pandas as pd
 
@@ -50,6 +51,13 @@ def _safe_str(value):
     return str(value).strip()
 
 
+def _safe_bool(value):
+    if isinstance(value, bool):
+        return value
+    valueString = _safe_str(value).lower()
+    return valueString in ["true", "1", "yes", "y"]
+
+
 def _candidate_template_paths(targetDesignator):
     baseName = f"{targetDesignator}_department_communication"
     fileNames = [baseName, f"{baseName}.txt"]
@@ -82,9 +90,15 @@ def loadDepartmentCommunicationTemplate(targetDesignator):
     try:
         for candidatePath in _candidate_template_paths(targetDesignator):
             if os.path.exists(candidatePath):
-                with open(candidatePath, "r", encoding="utf-8") as templateFile:
-                    localSetup.logger.info(f"{functionName}: Loaded template from {candidatePath}")
-                    return templateFile.read()
+                for encoding in ["utf-8-sig", "cp1252", "utf-8"]:
+                    try:
+                        with open(candidatePath, "r", encoding=encoding) as templateFile:
+                            localSetup.logger.info(
+                                f"{functionName}: Loaded template from {candidatePath} using {encoding}"
+                            )
+                            return templateFile.read()
+                    except UnicodeDecodeError:
+                        continue
     except Exception as Error:
         errorHandler.sendError(functionName, Error)
         raise
@@ -96,10 +110,27 @@ def loadDepartmentCommunicationTemplate(targetDesignator):
     )
 
 
+def _normalize_term_code(inputTerm):
+    inputTerm = _safe_str(inputTerm).upper()
+    if len(inputTerm) == 4:
+        return inputTerm
+    if len(inputTerm) == 6:
+        return f"{inputTerm[:2]}{inputTerm[-2:]}"
+    raise ValueError(f"Invalid term format: {inputTerm}. Expected FA26 or FA2026 style input.")
+
+
+def _term_full_year_prefix(termCode):
+    yearSuffix = termCode[2:]
+    if len(yearSuffix) != 2:
+        raise ValueError(f"Invalid 2-digit term code: {termCode}")
+    return f"{termCode[:2]}{localSetup.dateDict['century']}{yearSuffix}"
+
+
 def _build_course_term_prefixes(inputTerm, courseLevel):
-    undgPrefix = f"{inputTerm[:2]}{localSetup.dateDict['century']}{inputTerm[2:]}"
-    gradTerm = CanvasReport.determineGradTerm(inputTerm)
-    gradPrefix = f"{gradTerm[:2]}{localSetup.dateDict['century']}{gradTerm[2:]}"
+    normalizedInputTerm = _normalize_term_code(inputTerm)
+    undgPrefix = _term_full_year_prefix(normalizedInputTerm)
+    gradTerm = CanvasReport.determineGradTerm(normalizedInputTerm)
+    gradPrefix = _term_full_year_prefix(gradTerm)
 
     if courseLevel == "Undergraduate":
         return [undgPrefix]
@@ -125,11 +156,11 @@ def _collect_instructor_data(courseRow):
     instructorEmails = []
 
     for columnName in courseRow.index:
-        if "Instructor_#" in columnName and "_name" in columnName:
+        if re.fullmatch(r"Instructor_#\d+_name", str(columnName)):
             nameValue = _safe_str(courseRow[columnName])
             if nameValue:
                 instructorNames.append(nameValue)
-        elif "Instructor_#" in columnName and "_email" in columnName:
+        elif re.fullmatch(r"Instructor_#\d+_email", str(columnName)):
             emailValue = _safe_str(courseRow[columnName])
             if emailValue:
                 instructorEmails.append(emailValue)
@@ -161,10 +192,12 @@ def _build_email_body(templateHtml, instructorNames, courseName):
     return emailBody
 
 
-def sendDepartmentCommunication(inputTerm, targetDesignator):
+def sendDepartmentCommunication(inputTerm, targetDesignator, enforceOptIn=False):
     functionName = "Send Department Communication"
 
     try:
+        inputTerm = _normalize_term_code(inputTerm)
+        targetDesignator = _safe_str(targetDesignator).upper()
         templateHtml = loadDepartmentCommunicationTemplate(targetDesignator)
         completeActiveCanvasCoursesDF, auxillaryDFDict = retrieveDataForRelevantCommunication(
             p1_localSetup=localSetup,
@@ -178,12 +211,31 @@ def sendDepartmentCommunication(inputTerm, targetDesignator):
             localSetup.logger.info(
                 f"{functionName}: No active outcome-associated courses found for {inputTerm} / {targetDesignator}."
             )
-            return
+            return {
+                "status": "no_active_outcome_courses",
+                "sent": 0,
+                "skipped": 0,
+                "targetDesignator": targetDesignator,
+                "inputTerm": inputTerm,
+            }
 
         settings = _get_designator_settings(targetDesignator)
         courseLevel = _safe_str(settings.get("Course Level")) or "All"
         courseTermPrefixes = _build_course_term_prefixes(inputTerm, courseLevel)
         sharedMailbox = _safe_str(settings.get("Client Send/Recieve Email"))
+        isOptedIn = _safe_bool(settings.get("Outcome Communication Opt In"))
+
+        if enforceOptIn and not isOptedIn:
+            localSetup.logger.info(
+                f"{functionName}: {targetDesignator} is not opted in for communication. Skipping send."
+            )
+            return {
+                "status": "skipped_not_opted_in",
+                "sent": 0,
+                "skipped": 0,
+                "targetDesignator": targetDesignator,
+                "inputTerm": inputTerm,
+            }
 
         filteredCoursesDf = activeOutcomeCoursesDf[
             activeOutcomeCoursesDf["Course_sis_id"]
@@ -196,7 +248,13 @@ def sendDepartmentCommunication(inputTerm, targetDesignator):
                 f"{functionName}: No courses matched term prefixes {courseTermPrefixes} "
                 f"for {inputTerm} / {targetDesignator}."
             )
-            return
+            return {
+                "status": "no_matching_courses",
+                "sent": 0,
+                "skipped": 0,
+                "targetDesignator": targetDesignator,
+                "inputTerm": inputTerm,
+            }
 
         filteredCoursesDf = filteredCoursesDf.drop_duplicates(subset=["Course_sis_id"], keep="first")
 
@@ -218,12 +276,19 @@ def sendDepartmentCommunication(inputTerm, targetDesignator):
             emailSubject = f"{courseName}: UCTC Course Assessment Survey"
             recipients = ", ".join(instructorEmails)
 
-            sendOutlookEmail(
-                p1_subject=emailSubject,
-                p1_body=emailBody,
-                p1_recipientEmailList=recipients,
-                p1_shared_mailbox=sharedMailbox,
-            )
+            try:
+                sendOutlookEmail(
+                    p1_subject=emailSubject,
+                    p1_body=emailBody,
+                    p1_recipientEmailList=recipients,
+                    p1_shared_mailbox=sharedMailbox,
+                )
+            except Exception as Error:
+                skippedCount += 1
+                localSetup.logger.error(
+                    f"{functionName}: Failed to send communication for {courseName} to {recipients}. Error: {Error}"
+                )
+                continue
 
             sentCount += 1
             localSetup.logger.info(
@@ -235,9 +300,24 @@ def sendDepartmentCommunication(inputTerm, targetDesignator):
             f"TargetDesignator={targetDesignator}, InputTerm={inputTerm}, "
             f"CanvasCoursesLoaded={len(completeActiveCanvasCoursesDF)}"
         )
+        return {
+            "status": "completed",
+            "sent": sentCount,
+            "skipped": skippedCount,
+            "targetDesignator": targetDesignator,
+            "inputTerm": inputTerm,
+        }
 
     except Exception as Error:
         errorHandler.sendError(functionName, Error)
+        return {
+            "status": "error",
+            "sent": 0,
+            "skipped": 0,
+            "targetDesignator": targetDesignator,
+            "inputTerm": inputTerm,
+            "error": str(Error),
+        }
 
 
 if __name__ == "__main__":
