@@ -179,16 +179,13 @@ def _format_instructor_name(instructorNames):
 
 
 def _build_email_body(templateHtml, instructorNames, courseName):
-    surveyLinkHtml = f"<a href='{SURVEY_URL}' target='_blank'>{SURVEY_URL}</a>"
+    surveyLinkHtml = f"<a href='{SURVEY_URL}' target='_blank' rel='noopener noreferrer'>Survey Link</a>"
     instructorNameText = _format_instructor_name(instructorNames)
     emailBody = templateHtml
     emailBody = emailBody.replace("[Instructor Name]", instructorNameText)
     emailBody = emailBody.replace("[Course Name]", courseName)
     emailBody = emailBody.replace("[Survey Link]", surveyLinkHtml)
-    emailBody = emailBody.replace(
-        "{hyperlinked to https://nnu.co1.qualtrics.com/jfe/form/SV_b43fEMvdoOw6WeG}",
-        "",
-    )
+    emailBody = re.sub(r"\{hyperlinked to\s+https://nnu\.co1\.qualtrics\.com/jfe/form/SV_b43fEMvdoOw6WeG\s*\}", "", emailBody)
     return emailBody
 
 
