@@ -185,7 +185,8 @@ def _build_email_body(templateHtml, instructorNames, courseName):
     emailBody = emailBody.replace("[Instructor Name]", instructorNameText)
     emailBody = emailBody.replace("[Course Name]", courseName)
     emailBody = emailBody.replace("[Survey Link]", surveyLinkHtml)
-    emailBody = re.sub(r"\{hyperlinked to\s+https://nnu\.co1\.qualtrics\.com/jfe/form/SV_b43fEMvdoOw6WeG\s*\}", "", emailBody)
+    hyperlinkAnnotationPattern = r"\{hyperlinked to\s*" + re.escape(SURVEY_URL) + r"\s*\}"
+    emailBody = re.sub(hyperlinkAnnotationPattern, "", emailBody)
     return emailBody
 
 
