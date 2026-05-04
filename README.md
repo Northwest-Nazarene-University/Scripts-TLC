@@ -113,6 +113,7 @@ Scripts-TLC/
 │   └── __init__.py
 │
 └── Configs/                              # Configuration files (not tracked in repo)
+    ├── README.md                         #   Config file reference (tracked)
     └── Common_Configs.py                 #   API URLs, tokens, term mappings, paths
 ```
 
@@ -143,6 +144,7 @@ Scripts-TLC/
 
 The repository expects a `Configs/` directory at the project root containing:
 
+- **`README.md`** - Config reference describing expected local files and settings inferred from code usage
 - **`Common_Configs.py`** — Central configuration file that defines:
   - `coreCanvasApiUrl` — Base URL for the Canvas API instance
   - `canvasAccessToken` — Canvas API bearer token
@@ -157,6 +159,7 @@ The repository expects a `Configs/` directory at the project root containing:
 - **`External_Resource_Paths.json`** — File paths to external shared drive resources
 
 > ⚠️ **Note:** The `Configs/` directory contains sensitive credentials and is excluded from version control via `.gitignore`.
+> The `Configs/README.md` file is the only tracked file in that directory.
 
 ### Running the Primary Script
 

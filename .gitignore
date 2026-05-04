@@ -1,4 +1,5 @@
-Configs/
+Configs/**
+!Configs/README.md
 .env
 
 ## Ignore Visual Studio temporary files, build results, and
