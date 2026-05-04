@@ -9,11 +9,35 @@ from dateutil import parser
 
 try: ## If the module is run directly
     from Local_Setup import LocalSetup
-    from TLC_Common import getEncryptionKey, makeApiCall, flattenApiObjectToJsonList, isPresent, isMissing, isFileRecent, readTargetCsv, runThreadedRows
+    from TLC_Common import (
+        getEncryptionKey,
+        makeApiCall,
+        flattenApiObjectToJsonList,
+        isPresent,
+        isMissing,
+        isFileRecent,
+        readTargetCsv,
+        runThreadedRows,
+        getDesignatorSettingsDict,
+        getAutomatedOutcomeToolVariablesDf,
+        getDesignatorFilesByType,
+    )
     from Canvas_Report import CanvasReport
 except ImportError: ## Otherwise as a relative import if the module is imported
     from .Local_Setup import LocalSetup
-    from .TLC_Common import getEncryptionKey, makeApiCall, flattenApiObjectToJsonList, isPresent, isMissing, isFileRecent, readTargetCsv, runThreadedRows
+    from .TLC_Common import (
+        getEncryptionKey,
+        makeApiCall,
+        flattenApiObjectToJsonList,
+        isPresent,
+        isMissing,
+        isFileRecent,
+        readTargetCsv,
+        runThreadedRows,
+        getDesignatorSettingsDict,
+        getAutomatedOutcomeToolVariablesDf,
+        getDesignatorFilesByType,
+    )
     from .Canvas_Report import CanvasReport
 
 ## Add the config path
@@ -442,18 +466,9 @@ def retrieveDataForRelevantCommunication (p1_localSetup
         termWord = p1_localSetup._determineTermName(termPrefix)
 
         ## Get the term and target designator for which the data is being retrieved
-        automatedOutcomeToolVariablesDf = pd.read_excel(
-            os.path.join(
-                p1_localSetup.getExternalResourcePath("TLC"),
-                "Automated Outcome Tool Variables.xlsx"
-            )
-        )
-        designatorRow = automatedOutcomeToolVariablesDf[
-            automatedOutcomeToolVariablesDf["Target Designator"] == p3_targetDesignator
-        ]
-        courseLevel = designatorRow.iloc[0]["Course Level"] if isPresent(designatorRow) else "All"
-
-        targetAccountName = designatorRow.iloc[0]["Outcome Location Account Name"] if isPresent(designatorRow) else "NNU"
+        designatorDict = getDesignatorSettingsDict(p1_localSetup, p3_targetDesignator)
+        courseLevel = "All" if isMissing(designatorDict["Course Level"]) else designatorDict["Course Level"]
+        targetAccountName = "NNU" if isMissing(designatorDict["Outcome Location Account Name"]) else designatorDict["Outcome Location Account Name"]
 
         ## Determine the graduate term equivalent (e.g. FA25 → GF25)
         gradTerm = CanvasReport.determineGradTerm(p2_inputTerm)

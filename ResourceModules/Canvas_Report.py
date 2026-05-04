@@ -10,11 +10,11 @@ from pandas.errors import EmptyDataError
 try: ## Irregular try clause, do not comment out in testing
     ## Import local modules and variables
     from Local_Setup import LocalSetup
-    from TLC_Common import (downloadFile, makeApiCall, isFileRecent, isPresent, isMissing)
+    from TLC_Common import (downloadFile, makeApiCall, isFileRecent, isPresent, isMissing, getDesignatorSettingsDict)
     from Core_Microsoft_Api import downloadSharedMicrosoftFile
 except ImportError: ## Otherwise as a relative import if the module is imported
     from .Local_Setup import LocalSetup
-    from .TLC_Common import (downloadFile, makeApiCall, isFileRecent, isPresent, isMissing)
+    from .TLC_Common import (downloadFile, makeApiCall, isFileRecent, isPresent, isMissing, getDesignatorSettingsDict)
     from .Core_Microsoft_Api import downloadSharedMicrosoftFile
 
 ## Import neccessary config variables
@@ -666,17 +666,15 @@ class CanvasReport:
         localSetup.logger.info(f"Starting {methodName} for term={term}, targetDesignator={targetDesignator}...")
 
         try:
-            # Determine graduate term
-            gradTerm = cls.determineGradTerm(term)
 
             ## Load outcome tool configuration
-            sisResourcePath = localSetup.getExternalResourcePath("SIS")
-            outcomeToolConfigPath = os.path.join(sisResourcePath, "Internal Tool Files", "Automated Outcome Tool Variables.xlsx")
-            outcomeToolConfigDf = pd.read_excel(outcomeToolConfigPath)
+            outcomeToolConfigDict = getDesignatorSettingsDict(localSetup, targetDesignator)
 
             ## Get the designator row to determine course level
-            designatorRow = outcomeToolConfigDf[outcomeToolConfigDf["Target Designator"] == targetDesignator]
-            courseLevel = designatorRow.iloc[0]["Course Level"]
+            courseLevel = outcomeToolConfigDict["Course Level"]
+
+            ## Determine graduate term
+            gradTerm = cls.determineGradTerm(term)
 
             ## Initialize the term variables
             targetTerm = gradTerm if courseLevel == "Graduate" else term ## Use grad term for graduate level designators
@@ -724,7 +722,7 @@ class CanvasReport:
                 outputPath=outputPath,
                 inputTerm=term,
                 targetDesignator=targetDesignator,
-                p1_outcomeToolConfigDf=outcomeToolConfigDf,
+                p1_outcomeToolConfigDict=outcomeToolConfigDict,
             )
             
             if isMissing(outcomeCourseDf):
@@ -1256,7 +1254,7 @@ class CanvasReport:
 
     ## Retrieve the outcome course code list from SharePoint and return as a DataFrame.
     @staticmethod
-    def _getOutcomeAssociatedCourseCodesDf(localSetup, outputPath, inputTerm, targetDesignator, p1_outcomeToolConfigDf):
+    def _getOutcomeAssociatedCourseCodesDf(localSetup, outputPath, inputTerm, targetDesignator, p1_outcomeToolConfigDict):
         """
     Retrieve the outcome course code list from SharePoint and return as a DataFrame.
     Saves a cleaned Excel file locally for reuse.
@@ -1265,7 +1263,7 @@ class CanvasReport:
         outputPath (str): Path for term and target-specific output.
         inputTerm (str): SIS term code (e.g., "FA25").
         targetDesignator (str): Outcome designator (e.g., "GE", "I-EDUC").
-        p1_outcomeToolConfigDf (pd.DataFrame): DataFrame containing outcome tool configuration.
+        p1_outcomeToolConfigDict (dict): Dictionary containing outcome tool configuration.
         localSetup.logger (Logger): Logger instance for logging.
 
     Returns:
@@ -1284,10 +1282,12 @@ class CanvasReport:
                     return pd.read_excel(outputFilePath)
 
             # Retrieve SharePoint URL and sheet name for target designator
-            shareUrl = p1_outcomeToolConfigDf.loc[p1_outcomeToolConfigDf["Target Designator"] == targetDesignator,
-                                               "Outcome Course Association List URL"].values[0]
-            sheetName = p1_outcomeToolConfigDf.loc[p1_outcomeToolConfigDf["Target Designator"] == targetDesignator,
-                                                "Outcome Course Association Target Sheet Name"].values[0]
+            shareUrl = p1_outcomeToolConfigDict.get("Outcome Course Association List URL", "")
+            sheetName = p1_outcomeToolConfigDict.get("Outcome Course Association Target Sheet Name", "")
+
+            if isMissing(shareUrl):
+                localSetup.logger.error(f"Missing Outcome Course Association List URL for targetDesignator={targetDesignator}")
+                return pd.DataFrame()
 
             # Download file from SharePoint
             downloadedFilePath = downloadSharedMicrosoftFile(
@@ -1474,9 +1474,9 @@ if __name__ == "__main__":
                 print(CanvasReport.getTugStudentsDf(localSetup, term))
 
                 # Retrieve outcomeToolConfigDf to get all target designators
-                sisResourcePath = localSetup.getExternalResourcePath("SIS")
-                outcomeToolConfigPath = os.path.join(sisResourcePath, "Internal Tool Files", "Automated Outcome Tool Variables.xlsx")
-                outcomeToolConfigDf = pd.read_excel(outcomeToolConfigPath)
+                outcomeToolConfigDf = pd.read_excel(
+                    os.path.join(localSetup.getExternalResourcePath("TLC"), "Automated Outcome Tool Variables.xlsx")
+                )
 
                 # Get all target designators
                 targetDesignators = outcomeToolConfigDf["Target Designator"].dropna().unique()

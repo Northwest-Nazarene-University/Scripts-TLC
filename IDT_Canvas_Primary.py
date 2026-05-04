@@ -17,6 +17,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules")
 from ResourceModules.Local_Setup import LocalSetup
 from ResourceModules.Canvas_Report import CanvasReport
 from ResourceModules.Error_Email import errorEmail
+from ResourceModules.TLC_Common import getAutomatedOutcomeToolVariablesDf
 from ReportModules.Incoming_Student_Report import termGetIncomingStudentsInfo
 from ReportModules.Outcome_Attachment_Report import termOutcomeAttachmentReport
 from ReportModules.Nighthawk_360_Canvas_Report import Nighthawk360CanvasReport
@@ -67,8 +68,8 @@ def outcomeReportsAndActions (p1_relaventTerm):
     
     try:
     
-        ## Retrieve the Automated Outcome Tool Variables excel file as a df    
-        automatedOutcomeToolVariablesDf = pd.read_excel(os.path.join(localSetup.getExternalResourcePath("SIS"), "Internal Tool Files\\Automated Outcome Tool Variables.xlsx"))
+        ## Retrieve the Automated Outcome Tool Variables excel file as a df
+        automatedOutcomeToolVariablesDf = getAutomatedOutcomeToolVariablesDf(localSetup)
         
         ## Define the output threading objects
         ongoingOutcomeOutput1Threads = []

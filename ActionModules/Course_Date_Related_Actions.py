@@ -16,7 +16,7 @@ try: ## Irregular try clause, do not comment out in testing
     from Canvas_Report import CanvasReport
     from Core_Microsoft_Api import sendOutlookEmail, CoreMicrosoftAPI
     from Error_Email import errorEmail
-    from TLC_Common import isPresent, isMissing
+    from TLC_Common import isPresent, isMissing, getAutomatedOutcomeToolVariablesDf, getFirstName, formatInstructorFirstNames
     from TLC_Action import (
         retrieveDataForRelevantCommunication,
         getUniqueOutcomesAndOutcomeCoursesDict,
@@ -29,7 +29,7 @@ except ImportError:
     from ResourceModules.Canvas_Report import CanvasReport
     from ResourceModules.Core_Microsoft_Api import sendOutlookEmail
     from ResourceModules.Error_Email import errorEmail
-    from ResourceModules.TLC_Common import isPresent, isMissing
+    from ResourceModules.TLC_Common import isPresent, isMissing, getAutomatedOutcomeToolVariablesDf, getFirstName, formatInstructorFirstNames
     from ResourceModules.TLC_Action import (
             retrieveDataForRelevantCommunication,
             getUniqueOutcomesAndOutcomeCoursesDict,
@@ -182,7 +182,7 @@ def createOutcomeEmailBody (p3_relevantEmail
     emailBodyDict["formatedEmaiBody"] = f"""<!DOCTYPE html>
 <html>
 <body>
-<p>Hello {singularOrPluralDict["Professor/Professors"]} {p1_instructorNameOrNames},<br></p>
+<p>Hello {p1_instructorNameOrNames},<br></p>
     
 <p>You are receiving this email because you {emailBodyDict["future/current instructor"]} {singularOrPluralDict["an instructor/instructors"]} of the NNU outcome course {p1_course}, {emailBodyDict["dynamic cause"]}</p>
     
@@ -212,11 +212,8 @@ def craftAndSendRelevantEmail(
     functionName = "craftAndSendRelevantEmail"
     
     try:
-        ## Define baseExternalInputPath in function scope
-        baseExternalInputPath = localSetup.getExternalResourcePath("SIS") or localSetup.configPath
-
-        ## Retrieve the Automated Outcome Tool Variables excel file as a df    
-        automatedOutcomeToolVariablesDf = pd.read_excel(os.path.join(baseExternalInputPath, "Internal Tool Files", "Automated Outcome Tool Variables.xlsx"))
+        ## Retrieve the Automated Outcome Tool Variables excel file as a df
+        automatedOutcomeToolVariablesDf = getAutomatedOutcomeToolVariablesDf(localSetup)
         
         ## Filter the automated outcome tool variables df to only the row with the relevant outcome area
         automatedOutcomeToolVariablesDict = automatedOutcomeToolVariablesDf[
@@ -259,6 +256,10 @@ def craftAndSendRelevantEmail(
             ## Add the outcome area to the email details
             emailDetails["Outcome Area"] = p2_row["Outcome Area"]
     
+            ## Define instructor name and email lists to format first names consistently
+            instructorNameList = []
+            instructorEmailList = []
+
             ## Iterate through the p2_rows datapoints to find the instructor and outcome information
             for key, datapoint in p2_row.items():
         
@@ -267,40 +268,13 @@ def craftAndSendRelevantEmail(
         
                     ## If the datapoint is a teacher name
                     if "name" in key and isPresent(datapoint):
-                
-                        ## If there is already a name in instructorNameOrNamesString
-                        if "Instructor Name Or Names String" in emailDetails.keys():
-
-                            ## Seperate the last name from the datapoint
-                            lastName = datapoint.split(" ")[-1]
-                
-                            ## Add a comma and space and then the additional name
-                            emailDetails["Instructor Name Or Names String"] += f", {lastName}"
-                        
-                        ## Otherwise
-                        else:
-
-                            ## Seperate the last name from the datapoint
-                            lastName = datapoint.split(" ")[-1]
-                        
-                            ## Change the instructor name string to the datapoint name
-                            emailDetails["Instructor Name Or Names String"] = lastName
+                        firstName = getFirstName(datapoint)
+                        if isPresent(firstName):
+                            instructorNameList.append(firstName)
 
                     ## If the datapoint is a teacher email
                     elif "email" in key and isPresent(datapoint):
-
-                        ## If the key does not already exist in the email details
-                        if "Instructor Email Or Emails String" not in emailDetails.keys():
-                            
-                            ## Add the teacher email to the list of instructor emails
-                            emailDetails["Instructor Email Or Emails String"] = f"{datapoint}"
-                        
-                        ## Otherwise
-                        else:
-
-                            ## Add the teacher email to the list of instructor emails
-                            emailDetails["Instructor Email Or Emails String"] += f", {datapoint}"
-
+                        instructorEmailList.append(str(datapoint).strip())
 
                 ## If the datapoint is an outcome
                 elif "Outcome" in key and isPresent(datapoint) and key != "Outcome Area":
@@ -351,6 +325,11 @@ def craftAndSendRelevantEmail(
                         ## Add the outcome to the list of outcomes as an li element
                         emailDetails["Outcome Or Outcomes String"] += f"<li>{datapoint}</li>"
                         
+            ## Finalize instructor names/emails using first names across all outcome communications
+            emailDetails["Instructor Name Or Names String"] = formatInstructorFirstNames(instructorNameList)
+            uniqueInstructorEmails = list(dict.fromkeys([email for email in instructorEmailList if isPresent(email)]))
+            emailDetails["Instructor Email Or Emails String"] = ", ".join(uniqueInstructorEmails)
+
             ## If there are no instructor emails, return from the function without sending an email and log a warning
             if isMissing(emailDetails.get("Instructor Email Or Emails String")):
                 localSetup.logger.warning(f"No instructor email found for course {p2_row['Course_name']} in term {p3_inputTerm} for relevant email {p2_relevantEmail}. Email not sent.")

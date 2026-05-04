@@ -196,6 +196,54 @@ def loadExcelFile(filePath, sheetName=None):
     ## If all attempts fail
     raise RuntimeError(f"Failed to load Excel file after trying all engines. Last error: {lastError}")
 
+
+## Retrieve Automated Outcome Tool Variables as a DataFrame
+def getAutomatedOutcomeToolVariablesDf(localSetup: LocalSetup) -> pd.DataFrame:
+    toolPath = os.path.join(
+        localSetup.getExternalResourcePath("TLC"),
+        "Automated Outcome Tool Variables.xlsx"
+    )
+    return pd.read_excel(toolPath)
+
+
+## Retrieve a target designator settings row as a dictionary
+def getDesignatorSettingsDict(localSetup: LocalSetup, targetDesignator: str) -> dict:
+    toolDf = getAutomatedOutcomeToolVariablesDf(localSetup)
+    matchDf = toolDf[toolDf["Target Designator"] == targetDesignator]
+    if matchDf.empty:
+        return {}
+    return matchDf.iloc[0].to_dict()
+
+
+## Retrieve direct file paths in a target designator tools path that contain the target file type
+def getDesignatorFilesByType(localSetup: LocalSetup, targetDesignator: str, targetFileType: str) -> list:
+    tlcToolsPath = localSetup.getExternalResourcePath("TLC")
+    targDesigToolsPath = os.path.join(tlcToolsPath, targetDesignator)
+
+    if not os.path.isdir(targDesigToolsPath):
+        return []
+
+    targetDesignator = str(targetDesignator).strip().lower()
+    targetFileType = str(targetFileType).strip().lower()
+    matchedPaths = []
+    for fileName in os.listdir(targDesigToolsPath):
+        fullPath = os.path.join(targDesigToolsPath, fileName)
+        if not os.path.isfile(fullPath):
+            continue
+
+        fileStem = os.path.splitext(fileName)[0]
+        fileStemLower = fileStem.lower()
+
+        ## Naming convention: {targetDesignator}_{Email Subject}_{FileType}
+        if not fileStemLower.startswith(f"{targetDesignator}_"):
+            continue
+        if not fileStemLower.endswith(f"_{targetFileType}"):
+            continue
+
+        matchedPaths.append(fullPath)
+
+    return sorted(matchedPaths)
+
 ## Helper function to determine if a value is missing/NA based on multiple criteria
 def isMissing(value):
     """
@@ -239,6 +287,29 @@ def isMissing(value):
 def isPresent(value):
     """Inverse helper for convenience."""
     return not isMissing(value)
+
+
+## Return a first-name-only value from a full name string
+def getFirstName(nameValue) -> str:
+    if isMissing(nameValue):
+        return ""
+    nameText = str(nameValue).strip()
+    if not nameText:
+        return ""
+    return nameText.split()[0]
+
+
+## Format instructor names using first names only
+def formatInstructorFirstNames(instructorNames: list, defaultName: str = "Instructor") -> str:
+    firstNames = [getFirstName(name) for name in instructorNames if not isMissing(name)]
+    firstNames = [name for name in firstNames if name]
+    uniqueFirstNames = list(dict.fromkeys(firstNames))
+
+    if not uniqueFirstNames:
+        return defaultName
+    if len(uniqueFirstNames) == 1:
+        return uniqueFirstNames[0]
+    return ", ".join(uniqueFirstNames[:-1]) + f", and {uniqueFirstNames[-1]}"
 
 
 ## ══════════════════════════════════════════════════════════════════════════════

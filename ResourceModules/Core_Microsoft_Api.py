@@ -126,7 +126,7 @@ class CoreMicrosoftAPI:
         self.userClient = GraphServiceClient(self.device_code_credential, graph_scopes)
 
     ## This function sends an email asynchroniously with the option of using a shared mailbox 
-    async def send_mail_async(self, subject: str, body: str, recipientEmailList: list, shared_mailbox: str = None, attempt = 1):
+    async def send_mail_async(self, subject: str, body: str, recipientEmailCommaSeparatedString: str, shared_mailbox: str | None = None, attempt = 1):
         
         ## Create the message
         message = Message()
@@ -144,10 +144,10 @@ class CoreMicrosoftAPI:
 
         ## The code takes email addresses as a single string with email addresses seperated by commas
         ## so split the email addresses into a list and remove any spaces
-        recipientEmailList = [email.strip() for email in recipientEmailList.split(',')]
+        recipientEmailAddressList = [email.strip() for email in recipientEmailCommaSeparatedString.split(',')]
         
         ## For each recipient
-        for recipientEmail in recipientEmailList:
+        for recipientEmail in recipientEmailAddressList:
 
             ## Create a recipient object
             intendedRecipient = Recipient()
@@ -405,7 +405,7 @@ def runAsASubprocess ():
         outlookApi = CoreMicrosoftAPI(localSetup, graphConfigType = configType, microsoftUserName = MicrosoftUserName)
         
         ## Send the email using the async method
-        emailerResult = asyncio.run(outlookApi.send_mail_async(subject, body, recipientEmailList, shared_mailbox))
+        emailerResult = asyncio.run(outlookApi.send_mail_async(subject, body, recipientEmailCommaSeparatedString=recipientEmailList, shared_mailbox=shared_mailbox))
         
         ## self.localSetup.logger.info and return the emailer result
         localSetup.logger.info (emailerResult)
@@ -564,7 +564,7 @@ if __name__ == "__main__":
         ## Email Send test, file upload test, file download test ##
         ## MAKE SURE TO ONLY RUN ONE AT A TIME (the second one will always error out due to the event loop already running)
 
-        #asyncioResult = asyncio.run(outlookApi.send_mail_async(subject = 'Testing Microsoft Graph New!', body = 'Hello world!!!!', recipientEmailList = 'brycezmiller@nnu.edu', shared_mailbox = "tlc@nnu.edu"))
+        #asyncioResult = asyncio.run(outlookApi.send_mail_async(subject = 'Testing Microsoft Graph New!', body = 'Hello world!!!!', recipientEmailCommaSeparatedString = 'brycezmiller@nnu.edu', shared_mailbox = "tlc@nnu.edu"))
         ##asyncioResult = asyncio.run(oneDriveAndSharepointApi.uploadSharedMicrosoftFileAsync(tlcUploadUrlPath, uploadfilepath))
         ##asyncioResult = asyncio.run(oneDriveAndSharepointApi.downloadSharedMicrosoftFileAsync(tlcDownloadUrlPath, downloadfilepath, 'Test Doc'))
 
@@ -577,7 +577,7 @@ if __name__ == "__main__":
         ## Create a oneDriveAndSharepointApi object
         ## oneDriveAndSharepointApi = CoreMicrosoftAPI(graphConfigType = "Onedrive", microsoftUserName = serviceEmailAccount)
     
-        ## asyncio.run(outlookApi.send_mail_async(subject = 'Testing Microsoft Graph New!', body = 'Hello world!!!!', recipientEmailList = 'brycezmiller@nnu.edu', shared_mailbox = "ie@nnu.edu"))
+        ## asyncio.run(outlookApi.send_mail_async(subject = 'Testing Microsoft Graph New!', body = 'Hello world!!!!', recipientEmailCommaSeparatedString = 'brycezmiller@nnu.edu', shared_mailbox = "ie@nnu.edu"))
         ## asyncio.run(outlookApi.send_mail_async(subject = "prime test"
         ##                      , body = "hey"
         ##                      , recipientEmailList = "tlc@nnu.edu, brycezmiller@nnu.edu"
