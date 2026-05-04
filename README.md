@@ -20,6 +20,7 @@ A Python-based automation suite that manages Canvas LMS operations, data reporti
   - [Resource Modules](#resource-modules)
   - [Report Modules](#report-modules)
   - [Action Modules](#action-modules)
+- [Module README Files](#module-readme-files)
 - [Scheduling & Execution Flow](#scheduling--execution-flow)
 - [Author](#author)
 
@@ -63,6 +64,7 @@ Scripts-TLC/
 ├── pyrightconfig.json                    # Pyright type-checking config
 │
 ├── ResourceModules/                      # Shared utilities and API clients
+│   ├── README.md                         #   Resource module documentation
 │   ├── Local_Setup.py                    #   Environment setup, paths, logging, date context
 │   ├── TLC_Common.py                     #   Common helpers (API calls, file checks, encryption)
 │   ├── TLC_Action.py                     #   Shared action utilities (CSV ops, SFTP uploads, course logic)
@@ -73,6 +75,7 @@ Scripts-TLC/
 │   └── __init__.py
 │
 ├── ReportModules/                        # Report generation scripts
+│   ├── README.md                         #   Report module documentation
 │   ├── Outcome_Results_Report.py         #   GE/program outcome results processing
 │   ├── Outcome_Attachment_Report.py      #   Outcome attachment verification
 │   ├── Syllabi_Report.py                 #   University syllabi retrieval and compliance
@@ -84,6 +87,7 @@ Scripts-TLC/
 │   └── __init__.py
 │
 ├── ActionModules/                        # Canvas write operations and integrations
+│   ├── README.md                         #   Action module documentation
 │   ├── Course_Date_Related_Actions.py    #   Term-based course lifecycle actions
 │   ├── Add_Outcomes_to_Active_Courses.py #   Attach outcomes to courses
 │   ├── Change_Syllabus_Tab.py            #   Update course syllabus tab settings
@@ -223,6 +227,14 @@ Scripts that perform write operations against Canvas and external systems:
 | **Bulk Operation Scripts** | `Change_Account_For_Listed_Courses.py`, `Change_Grading_Scheme_For_Listed_Courses.py`, `Change_Long_Name_For_Listed_Courses.py`, `Change_Role_For_Listed_Enrollments.py`, `Change_Term_For_Listed_Courses.py`, `Delete_Listed_Courses.py` — CSV-driven bulk Canvas operations. (`Update_Grading_Standard_For_Listed_Courses.py` is deprecated; use `Change_Grading_Scheme_For_Listed_Courses.py` instead.) |
 | **`Count_Respondus_Quizzes_and_Users.py`** | Counts Respondus LockDown Browser quiz usage and unique student submissions |
 | **`Turn_Off_Disallow_Threaded_Replies_In_Discussions.py`** | Fixes discussion threading settings across courses |
+
+## Module README Files
+
+Each module directory has its own README for focused documentation:
+
+- `ResourceModules/README.md` - shared utilities, API clients, and setup helpers
+- `ReportModules/README.md` - report generation modules and outputs
+- `ActionModules/README.md` - write-action modules and operational scripts
 
 ---
 
