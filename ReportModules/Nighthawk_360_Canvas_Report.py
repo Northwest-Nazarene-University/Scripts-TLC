@@ -908,6 +908,30 @@ def Nighthawk360CanvasReport():
         activityFilePath = os.path.join (localSetup.getInternalResourcePaths("Canvas"), "Enrollment_Data_Activity.csv")
         submissionFilePath = os.path.join (localSetup.getInternalResourcePaths("Canvas"), "Enrollment_Data_Submissions.csv")
 
+        ## Check for reportable course data before writing files
+        hasReportableData = False
+        if isinstance(enrollmentDataDict, dict):
+            for _, dataPoints in enrollmentDataDict.items():
+                if not isinstance(dataPoints, dict):
+                    continue
+                for courseKey, courseValue in dataPoints.items():
+                    if courseKey in ["Last Canvas Activity", "stuCanvasId"]:
+                        continue
+                    if courseValue:
+                        hasReportableData = True
+                        break
+                if hasReportableData:
+                    break
+
+        if not hasReportableData:
+            blankMessage = (
+                "Nighthawk 360 report has no reportable enrollment data. "
+                "No internal output files were written and no external files were copied."
+            )
+            localSetup.logger.warning(blankMessage)
+            ErrorHandler.sendError(functionName, blankMessage)
+            return
+
         with open(activityFilePath, 'w', newline='') as activityCsv, \
              open(submissionFilePath, 'w', newline='') as submissionCsv:
 
