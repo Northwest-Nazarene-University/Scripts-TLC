@@ -268,7 +268,7 @@ Each module directory has its own README for focused documentation:
 │  └── Fetch Nighthawk 360 data                           │
 │                                                         │
 │  Monthly/Weekly triggers                                │
-│  ├── Course date-related lifecycle actions               │
+│  ├── Course date-related lifecycle actions              │
 │  └── Orphaned SIS item cleanup                          │
 │                                                         │
 └─────────────────────────────────────────────────────────┘
