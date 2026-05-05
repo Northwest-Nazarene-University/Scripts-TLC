@@ -258,7 +258,7 @@ Each module directory has its own README for focused documentation:
 │  ├── Send course editors to Simple Syllabus             │
 │  └── Additional first-run-only processes                │
 │                                                         │
-│  2nd & 3rd Runs (midday)                                │
+│  2nd, 3rd & 4th Runs (morning & midday)                 │
 │  ├── Create partial Canvas inputs (courses/enrollments) │
 │  └── Run four-times-daily processes                     │
 │                                                         │
