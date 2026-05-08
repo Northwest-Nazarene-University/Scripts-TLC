@@ -75,8 +75,6 @@ def _get_canvas_term_candidates_from_course_ids(courseIds: pd.Series) -> list[st
         if len(term) < 4:
             continue
         candidates.add(term)
-        if len(term) >= 6 and term[:2].isalpha() and term[-4:].isdigit():
-            candidates.add(f"{term[:2]}{term[-2:]}")
 
     return sorted(candidates)
 
@@ -124,7 +122,11 @@ def _build_course_output_path(
     courseCodeNorm = ""
     section = ""
     if sisCourseRow is not None:
-        termId = str(sisCourseRow.get("term_id", "")).strip()
+        termId = str(
+            sisCourseRow.get("term_id", "")
+            or sisCourseRow.get("sis_term_id", "")
+            or sisCourseRow.get("enrollment_term_id", "")
+        ).strip()
         courseCodeNorm = str(sisCourseRow.get("course_code_norm", "")).strip()
 
     splitCourseId = str(courseId).split("_")
