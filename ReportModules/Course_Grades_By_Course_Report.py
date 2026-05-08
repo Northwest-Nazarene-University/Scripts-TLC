@@ -214,7 +214,8 @@ def generateCourseGradesByCourseReport() -> dict[str, str]:
         accountsDf = CanvasReport.getAccountsDf(localSetup).fillna("")
 
         usersByCanvasId = usersDf.set_index("canvas_user_id", drop=False) if "canvas_user_id" in usersDf.columns else pd.DataFrame()
-        sisCoursesByCourseId = sisCoursesDf.set_index("course_id", drop=False) if "course_id" in sisCoursesDf.columns else pd.DataFrame()
+        sisCourseIdColumn = "course_id" if "course_id" in sisCoursesDf.columns else "sis_course_id" if "sis_course_id" in sisCoursesDf.columns else ""
+        sisCoursesByCourseId = sisCoursesDf.set_index(sisCourseIdColumn, drop=False) if sisCourseIdColumn else pd.DataFrame()
         canvasCoursesBySisId = coursesDf.set_index("course_id", drop=False) if "course_id" in coursesDf.columns else pd.DataFrame()
 
         outputFilesByCourseId: dict[str, str] = {}
