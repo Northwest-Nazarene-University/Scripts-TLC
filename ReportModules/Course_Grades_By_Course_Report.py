@@ -239,46 +239,13 @@ def buildCourseOutputPath(
         fallback="Unknown Instructor Name",
     )
 
-    termId = ""
-    courseCodeNorm = ""
-    section = ""
-    if sisCourseRow is not None:
-        termId = str(
-            sisCourseRow.get("term_id", "")
-            or sisCourseRow.get("sis_term_id", "")
-            or sisCourseRow.get("enrollment_term_id", "")
-        ).strip()
-        courseCodeNorm = str(
-            sisCourseRow.get("course_code_norm", "")
-        ).strip()
-
-    splitCourseId = str(courseId).split("_")
-    if len(splitCourseId) >= 3:
-        if not termId:
-            termId = splitCourseId[0]
-        if not courseCodeNorm:
-            courseCodeNorm = splitCourseId[1]
-        section = splitCourseId[2]
-
-    if not termId:
-        termId = "Unknown_Term"
-    if not courseCodeNorm:
-        courseCodeNorm = "Unknown_Course"
-    if not section:
-        section = "Unknown_Section"
-
-    sisMetadataFolder = sanitizePathComponent(f"{termId}_{courseCodeNorm}_{section}", fallback="Unknown_Metadata")
-
-    return safeJoinUnderRoot(rootOutputPath, *hierarchyComponents, instructorFolder, sisMetadataFolder)
+    return safeJoinUnderRoot(rootOutputPath, *hierarchyComponents, instructorFolder)
 
 
 ## Generate one grades CSV per course for active SIS student enrollments
 def CourseGradesByCourseReport() -> dict[str, str]:
     """
     Build per-course grade export Excel files for active SIS student enrollments.
-
-    Returns:
-        dict[str, str]: Mapping of course_id to generated output CSV file path.
     """
     functionName = "Generate Course Grades By Course Report"
     try:
@@ -337,12 +304,21 @@ def CourseGradesByCourseReport() -> dict[str, str]:
         canvasEnrollmentsDf["role"] = canvasEnrollmentsDf["role"].astype(str).str.lower()
         canvasEnrollmentsDf["status"] = canvasEnrollmentsDf["status"].astype(str).str.lower()
 
+        baseStudentCols = ["course_id", "user_id", "canvas_user_id", "canvas_course_id", "status"]
+        finalGradeCols = [
+            "computed_current_score",
+            "computed_final_score",
+            "computed_current_grade",
+            "computed_final_grade",
+        ]
+        keepCols = [col for col in (baseStudentCols + finalGradeCols) if col in canvasEnrollmentsDf.columns]
+
         matchingCanvasStudentEnrollmentsDf = canvasEnrollmentsDf[
             (canvasEnrollmentsDf["role"] == "student")
             & (canvasEnrollmentsDf["status"].isin(["active", "completed", "concluded"]))
             & (canvasEnrollmentsDf["course_id"].str.strip() != "")
             & (canvasEnrollmentsDf["user_id"].str.strip() != "")
-        ][["course_id", "user_id", "canvas_user_id", "canvas_course_id", "status"]].drop_duplicates()
+        ][keepCols].drop_duplicates()
 
         mergedStudentEnrollmentsDf = activeSisEnrollmentsDf.merge(
             matchingCanvasStudentEnrollmentsDf,
@@ -356,7 +332,6 @@ def CourseGradesByCourseReport() -> dict[str, str]:
             return {}
 
         ## Step 6: Load supporting datasets (courses, users, accounts)
-        ## Get the courses df for the current terms, concatenating if necessary, to support finals week filtering and course metadata in output path
         coursesDf = pd.DataFrame()
         for termCode in currentTerms:
             termCoursesDf = CanvasReport.getCoursesDf(localSetup, term=termCode).fillna("")
@@ -391,7 +366,7 @@ def CourseGradesByCourseReport() -> dict[str, str]:
             localSetup.logger.warning("No matched SIS/Canvas enrollments found for current terms. No files created.")
             return {}
 
-        ## Step 8: Build lookup tables for faster row-level enrichment
+        ## Step 7: Build lookup tables
         usersByCanvasId = usersDf.set_index("canvas_user_id", drop=False) if "canvas_user_id" in usersDf.columns else pd.DataFrame()
         sisCourseIdColumn = ""
         if "course_id" in sisCoursesDf.columns:
@@ -401,26 +376,27 @@ def CourseGradesByCourseReport() -> dict[str, str]:
         sisCoursesByCourseId = sisCoursesDf.set_index(sisCourseIdColumn, drop=False) if sisCourseIdColumn else pd.DataFrame()
         canvasCoursesBySisId = coursesDf.set_index("course_id", drop=False) if "course_id" in coursesDf.columns else pd.DataFrame()
 
-        ## Step 9: Build and write one output Excel file per course using threaded helper actions
+        ## Step 8: Build and write one output Excel file per course using threaded helper actions
         outputFilesByCourseId = runCourseGradeExportsThreaded(
             p1_localSetup=localSetup,
             p1_errorHandler=errorHandler,
             p2_mergedStudentEnrollmentsDf=mergedStudentEnrollmentsDf,
-            p3_canvasEnrollmentsDf=canvasEnrollmentsDf,
-            p4_usersByCanvasId=usersByCanvasId,
-            p5_sisCoursesByCourseId=sisCoursesByCourseId,
-            p6_canvasCoursesBySisId=canvasCoursesBySisId,
-            p7_accountsDf=accountsDf,
-            p8_maxWorkers = 100
+            p2_canvasEnrollmentsDf=canvasEnrollmentsDf,
+            p2_usersByCanvasId=usersByCanvasId,
+            p2_sisCoursesByCourseId=sisCoursesByCourseId,
+            p2_canvasCoursesBySisId=canvasCoursesBySisId,
+            p2_accountsDf=accountsDf,
+            p2_maxWorkers=100,
         )
 
-        ## Step 10: Return file map for downstream usage/logging
+        ## Step 9: Return file map for downstream usage/logging
         localSetup.logger.info(f"Completed course grade CSV pipeline with {len(outputFilesByCourseId)} files.")
         return outputFilesByCourseId
 
     except Exception as Error:
         errorHandler.sendError(functionName, Error)
         return {}
+
 
 if __name__ == "__main__":
     CourseGradesByCourseReport()

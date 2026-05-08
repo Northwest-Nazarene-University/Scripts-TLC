@@ -1154,7 +1154,6 @@ def _sanitizePathComponentForGrades(p1_rawValue, p2_fallback: str = "Unknown") -
     return sanitized or p2_fallback
 
 
-## Format instructor folder text using complete instructor names
 def _formatInstructorFullNamesForGrades(p1_instructorNames: list[str], p2_defaultName: str = "Unknown Instructor Name") -> str:
     """
     Format instructor names using full names while preserving input order and uniqueness.
@@ -1180,7 +1179,6 @@ def _formatInstructorFullNamesForGrades(p1_instructorNames: list[str], p2_defaul
     return ", ".join(uniqueFullNames[:-1]) + f", and {uniqueFullNames[-1]}"
 
 
-## Join path components under a trusted root and reject path traversal
 def _safeJoinUnderRootForGrades(p1_rootPath: str, *p2_components: str) -> str:
     """
     Safely join path components under a fixed root directory.
@@ -1202,7 +1200,6 @@ def _safeJoinUnderRootForGrades(p1_rootPath: str, *p2_components: str) -> str:
     return candidatePath
 
 
-## Build unique assignment column names so duplicate assignment titles do not collide
 def _uniqueAssignmentColumnNamesForGrades(p1_assignments: list[dict]) -> list[str]:
     """
     Create unique, sanitized output column names for assignment titles.
@@ -1234,7 +1231,6 @@ def _uniqueAssignmentColumnNamesForGrades(p1_assignments: list[dict]) -> list[st
     return columnNames
 
 
-## Retrieve all published assignments for a Canvas SIS course
 def _getCourseAssignmentsForGrades(p1_localSetup: LocalSetup, p2_courseId: str) -> list[dict]:
     """
     Retrieve published assignments for a Canvas course identified by SIS course ID.
@@ -1258,7 +1254,6 @@ def _getCourseAssignmentsForGrades(p1_localSetup: LocalSetup, p2_courseId: str) 
     return [assignment for assignment in assignmentList if assignment.get("published") is True]
 
 
-## Retrieve all submissions for one assignment in a Canvas SIS course
 def _getAssignmentSubmissionsForGrades(p1_localSetup: LocalSetup, p2_courseId: str, p3_assignmentId) -> list[dict]:
     """
     Retrieve submissions for a single assignment in a Canvas SIS course.
@@ -1287,7 +1282,23 @@ def _getAssignmentSubmissionsForGrades(p1_localSetup: LocalSetup, p2_courseId: s
     return flattenApiObjectToJsonList(p1_localSetup, submissionObjects, submissionsUrl)
 
 
-## Build the final output folder path for a course export file
+def _getAssignmentGroupsForGrades(p1_localSetup: LocalSetup, p2_courseId: str) -> list[dict]:
+    assignmentGroupsUrl = f"{coreCanvasApiUrl}courses/sis_course_id:{p2_courseId}/assignment_groups"
+    payload = {"include[]": ["assignments"]}
+    apiCallResult = makeApiCall(
+        p1_localSetup,
+        p1_apiUrl=assignmentGroupsUrl,
+        p1_payload=payload,
+    )
+    if apiCallResult is None:
+        return []
+    groupsResponse, groupPages = apiCallResult
+    groupObjects = [groupsResponse]
+    if groupPages is not None and len(groupPages) > 0:
+        groupObjects.extend(groupPages)
+    return flattenApiObjectToJsonList(p1_localSetup, groupObjects, assignmentGroupsUrl)
+
+
 def _buildCourseOutputPathForGrades(
     p1_localSetup: LocalSetup,
     p2_courseId: str,
@@ -1340,7 +1351,15 @@ def _buildCourseOutputPathForGrades(
     )
 
 
-## Process one course and return the output file path when an export is created
+def _safeFloat(value, default=0.0):
+    try:
+        if value in [None, "", "nan", "None"]:
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _processSingleCourseGradeExport(
     p1_localSetup: LocalSetup,
     p2_errorHandler,
@@ -1380,10 +1399,24 @@ def _processSingleCourseGradeExport(
         if courseStudentEnrollmentsDf.empty:
             return p3_courseId, None
 
-        ## Step 2: Gather assignments and initialize student rows
+        ## Step 2: Gather assignments and assignment groups
         assignments = _getCourseAssignmentsForGrades(p1_localSetup, p3_courseId)
         assignments = sorted(assignments, key=lambda assignment: str(assignment.get("position", assignment.get("id", ""))))
         assignmentColumnNames = _uniqueAssignmentColumnNamesForGrades(assignments)
+
+        assignmentGroups = _getAssignmentGroupsForGrades(p1_localSetup, p3_courseId)
+        groupById = {}
+        assignmentToGroup = {}
+        for group in assignmentGroups:
+            groupId = group.get("id")
+            if groupId in [None, ""]:
+                continue
+            groupName = _sanitizePathComponentForGrades(group.get("name", ""), p2_fallback="Ungrouped")
+            groupWeight = _safeFloat(group.get("group_weight", 0.0), 0.0)
+            groupById[groupId] = {"name": groupName, "weight": groupWeight}
+            for groupAssignment in group.get("assignments", []) or []:
+                assignmentToGroup[groupAssignment.get("id")] = groupId
+
         if not assignmentColumnNames:
             p1_localSetup.logger.info(f"Skipping course {p3_courseId}: no published assignments found.")
             return p3_courseId, None
@@ -1393,6 +1426,7 @@ def _processSingleCourseGradeExport(
             for assignment, assignmentColumn in zip(assignments, assignmentColumnNames)
         }
 
+        ## Step 3: Build starter student rows with final grade columns
         studentRows = []
         for _, enrollmentRow in courseStudentEnrollmentsDf.iterrows():
             sisUserId = str(enrollmentRow["user_id"]).strip()
@@ -1410,19 +1444,41 @@ def _processSingleCourseGradeExport(
                 "student_sis_id": sisUserId,
                 "student_canvas_id": canvasUserId,
                 "student_name": studentName,
+                "computed_current_score": enrollmentRow.get("computed_current_score", ""),
+                "computed_final_score": enrollmentRow.get("computed_final_score", ""),
+                "computed_current_grade": enrollmentRow.get("computed_current_grade", ""),
+                "computed_final_grade": enrollmentRow.get("computed_final_grade", ""),
             }
             for assignmentColumn in assignmentColumnNames:
                 rowData[assignmentColumn] = ""
             studentRows.append(rowData)
 
         outputDf = pd.DataFrame(studentRows)
+
+        ## Step 4: Dynamic assignment group columns
+        groupIdsInCourse = list(groupById.keys())
+        groupPercentCol = {}
+
+        for groupId in groupIdsInCourse:
+            gName = groupById[groupId]["name"]
+            percentCol = f"AG_{gName}_percent"
+            groupPercentCol[groupId] = percentCol
+            outputDf[percentCol] = ""
+
         rowIndexByCanvasUserId: dict[str, int] = {
             str(outputDf.at[idx, "student_canvas_id"]).strip(): int(idx)
             for idx in range(len(outputDf))
             if str(outputDf.at[idx, "student_canvas_id"]).strip()
         }
 
-        ## Step 3: Populate assignment grades
+        ## Aggregation storage
+        groupTotals = {}
+        for canvasUserId in rowIndexByCanvasUserId.keys():
+            groupTotals[canvasUserId] = {}
+            for groupId in groupIdsInCourse:
+                groupTotals[canvasUserId][groupId] = {"earned": 0.0, "possible": 0.0}
+
+        ## Step 5: Populate assignment grades and group aggregates
         for assignment in assignments:
             assignmentId = assignment.get("id")
             if assignmentId in [None, ""]:
@@ -1431,30 +1487,55 @@ def _processSingleCourseGradeExport(
             if not assignmentColumn:
                 continue
 
+            pointsPossible = _safeFloat(assignment.get("points_possible", 0.0), 0.0)
+            groupId = assignmentToGroup.get(assignmentId)
+
             assignmentSubmissions = _getAssignmentSubmissionsForGrades(p1_localSetup, p3_courseId, assignmentId)
             for submission in assignmentSubmissions:
                 submissionCanvasUserId = str(submission.get("user_id", "")).strip()
                 if not submissionCanvasUserId or submissionCanvasUserId not in rowIndexByCanvasUserId:
                     continue
 
-                gradeValue = submission.get("score")
+                scoreValue = submission.get("score")
+                enteredScoreValue = submission.get("entered_score")
+                gradeValue = scoreValue
                 if gradeValue in [None, ""]:
-                    gradeValue = submission.get("entered_score")
+                    gradeValue = enteredScoreValue
                 if gradeValue in [None, ""]:
                     gradeValue = submission.get("grade")
 
                 targetRowIndex = rowIndexByCanvasUserId[submissionCanvasUserId]
                 outputDf.at[targetRowIndex, assignmentColumn] = gradeValue if gradeValue is not None else ""
 
-        ## Step 4: Skip courses that have no populated grades
-        courseHasAnyGrades = outputDf[assignmentColumnNames].apply(
+                if groupId in groupById:
+                    numericScore = _safeFloat(scoreValue, _safeFloat(enteredScoreValue, 0.0))
+                    groupTotals[submissionCanvasUserId][groupId]["earned"] += numericScore
+                    if pointsPossible > 0:
+                        groupTotals[submissionCanvasUserId][groupId]["possible"] += pointsPossible
+
+        ## Step 6: Write computed group totals to row columns
+        for canvasUserId, rowIndex in rowIndexByCanvasUserId.items():
+            for groupId in groupIdsInCourse:
+                earned = groupTotals[canvasUserId][groupId]["earned"]
+                possible = groupTotals[canvasUserId][groupId]["possible"]
+                percent = (earned / possible) * 100.0 if possible > 0 else 0.0
+                outputDf.at[rowIndex, groupPercentCol[groupId]] = round(percent, 4)
+
+        ## Step 7: Skip courses that have no populated grades and no final grades
+        hasAssignmentGrades = outputDf[assignmentColumnNames].apply(
             lambda series: series.astype(str).str.strip().ne("")
         ).any().any()
-        if not courseHasAnyGrades:
+
+        finalGradeCols = ["computed_current_score", "computed_final_score", "computed_current_grade", "computed_final_grade"]
+        hasFinalGrades = outputDf[finalGradeCols].apply(
+            lambda series: series.astype(str).str.strip().ne("")
+        ).any().any()
+
+        if not hasAssignmentGrades and not hasFinalGrades:
             p1_localSetup.logger.info(f"Skipping course {p3_courseId}: no grades found.")
             return p3_courseId, None
 
-        ## Step 5: Resolve instructor names for path metadata
+        ## Step 8: Resolve instructor names for path metadata
         instructorNames = []
         courseInstructorEnrollmentsDf = p5_canvasEnrollmentsDf[
             (p5_canvasEnrollmentsDf["course_id"] == p3_courseId)
@@ -1472,7 +1553,7 @@ def _processSingleCourseGradeExport(
                     if instructorName:
                         instructorNames.append(instructorName)
 
-        ## Step 6: Resolve course/account metadata for folder path
+        ## Step 9: Resolve course/account metadata for folder path
         sisCourseRow = None
         if isPresent(p7_sisCoursesByCourseId) and p3_courseId in p7_sisCoursesByCourseId.index:
             sisCourseRow = p7_sisCoursesByCourseId.loc[p3_courseId]
@@ -1492,7 +1573,7 @@ def _processSingleCourseGradeExport(
             except (TypeError, ValueError):
                 courseAccountId = None
 
-        ## Step 7: Write Excel output
+        ## Step 10: Write Excel output
         outputFolder = _buildCourseOutputPathForGrades(
             p1_localSetup=p1_localSetup,
             p2_courseId=p3_courseId,
@@ -1512,7 +1593,6 @@ def _processSingleCourseGradeExport(
         return p3_courseId, None
 
 
-## Build course-grade exports using threaded course workers
 def runCourseGradeExportsThreaded(
     p1_localSetup: LocalSetup,
     p1_errorHandler,
@@ -1524,28 +1604,10 @@ def runCourseGradeExportsThreaded(
     p2_accountsDf: pd.DataFrame,
     p2_maxWorkers: int = 15,
 ) -> dict[str, str]:
-    """
-    Build course grade export files using threaded per-course workers.
-
-    Args:
-        p1_localSetup (LocalSetup): Local setup for logging and paths.
-        p1_errorHandler: Error handler for exception reporting.
-        p2_mergedStudentEnrollmentsDf (pd.DataFrame): Joined SIS/Canvas student enrollments.
-        p2_canvasEnrollmentsDf (pd.DataFrame): Canvas enrollments dataframe.
-        p2_usersByCanvasId (pd.DataFrame): Users lookup indexed by canvas_user_id.
-        p2_sisCoursesByCourseId (pd.DataFrame): SIS courses indexed by course id.
-        p2_canvasCoursesBySisId (pd.DataFrame): Canvas courses indexed by SIS course id.
-        p2_accountsDf (pd.DataFrame): Accounts dataframe for hierarchy lookup.
-        p2_maxWorkers (int): Thread-pool size for course workers.
-
-    Returns:
-        dict[str, str]: Mapping of course_id to output export path.
-    """
     functionName = "runCourseGradeExportsThreaded"
     outputFilesByCourseId: dict[str, str] = {}
 
     try:
-        ## Step 1: Build deterministic unique course list from merged enrollments
         uniqueCourseIds = sorted(
             p2_mergedStudentEnrollmentsDf["course_id"]
             .dropna()
@@ -1558,7 +1620,6 @@ def runCourseGradeExportsThreaded(
         if not uniqueCourseIds:
             return outputFilesByCourseId
 
-        ## Step 2: Submit one worker per course
         with ThreadPoolExecutor(max_workers=p2_maxWorkers) as executor:
             futureByCourseId = {
                 executor.submit(
@@ -1576,7 +1637,6 @@ def runCourseGradeExportsThreaded(
                 for courseId in uniqueCourseIds
             }
 
-            ## Step 3: Collect worker results
             for future in as_completed(futureByCourseId):
                 courseId = futureByCourseId[future]
                 try:
