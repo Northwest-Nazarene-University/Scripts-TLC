@@ -149,7 +149,7 @@ def _build_course_output_path(
     return os.path.join(rootOutputPath, *hierarchyComponents, instructorFolder, sisMetadataFolder)
 
 
-def generateCourseGradesByCourseReport() -> dict[str, str]:
+def CourseGradesByCourseReport() -> dict[str, str]:
     functionName = "Generate Course Grades By Course Report"
     try:
         localSetup.logger.info("Beginning course grade CSV pipeline.")
@@ -348,5 +348,9 @@ def generateCourseGradesByCourseReport() -> dict[str, str]:
         return {}
 
 
+def generateCourseGradesByCourseReport() -> dict[str, str]:
+    return CourseGradesByCourseReport()
+
+
 if __name__ == "__main__":
-    generateCourseGradesByCourseReport()
+    CourseGradesByCourseReport()
