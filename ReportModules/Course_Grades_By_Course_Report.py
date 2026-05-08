@@ -53,13 +53,12 @@ def uniqueAssignmentColumnNames(assignments: list[dict]) -> list[str]:
     columnNames: list[str] = []
 
     for assignment in assignments:
-        assignmentId = assignment.get("id")
-        assignmentName = sanitizePathComponent(assignment.get("name", ""), fallback=f"Assignment_{assignmentId}")
+        assignmentName = sanitizePathComponent(assignment.get("name", ""), fallback="Unnamed Assignment")
         baseName = assignmentName
 
         if baseName in seen:
             seen[baseName] += 1
-            assignmentName = f"{baseName}_{seen[baseName]}_{assignmentId}"
+            assignmentName = f"{baseName}_{seen[baseName]}"
         else:
             seen[baseName] = 1
 
