@@ -377,17 +377,33 @@ def CourseGradesByCourseReport() -> dict[str, str]:
         canvasCoursesBySisId = coursesDf.set_index("course_id", drop=False) if "course_id" in coursesDf.columns else pd.DataFrame()
 
         ## Step 8: Build and write one output Excel file per course using threaded helper actions
-        outputFilesByCourseId = runCourseGradeExportsThreaded(
+        # outputFilesByCourseId = runCourseGradeExportsThreaded(
+        #     p1_localSetup=localSetup,
+        #     p1_errorHandler=errorHandler,
+        #     p2_mergedStudentEnrollmentsDf=mergedStudentEnrollmentsDf,
+        #     p2_canvasEnrollmentsDf=canvasEnrollmentsDf,
+        #     p2_usersByCanvasId=usersByCanvasId,
+        #     p2_sisCoursesByCourseId=sisCoursesByCourseId,
+        #     p2_canvasCoursesBySisId=canvasCoursesBySisId,
+        #     p2_accountsDf=accountsDf,
+        #     p2_maxWorkers=100,
+        # )
+
+        # Non-threaded testing call (single course) - keep commented out unless actively testing
+        from TLC_Action import _processSingleCourseGradeExport
+        testCourseId = "GS2026_BSNS6902_2N"
+        resultCourseId, outputFilePath = _processSingleCourseGradeExport(
             p1_localSetup=localSetup,
-            p1_errorHandler=errorHandler,
-            p2_mergedStudentEnrollmentsDf=mergedStudentEnrollmentsDf,
-            p2_canvasEnrollmentsDf=canvasEnrollmentsDf,
-            p2_usersByCanvasId=usersByCanvasId,
-            p2_sisCoursesByCourseId=sisCoursesByCourseId,
-            p2_canvasCoursesBySisId=canvasCoursesBySisId,
-            p2_accountsDf=accountsDf,
-            p2_maxWorkers=100,
+            p2_errorHandler=errorHandler,
+            p3_courseId=testCourseId,
+            p4_mergedStudentEnrollmentsDf=mergedStudentEnrollmentsDf,
+            p5_canvasEnrollmentsDf=canvasEnrollmentsDf,
+            p6_usersByCanvasId=usersByCanvasId,
+            p7_sisCoursesByCourseId=sisCoursesByCourseId,
+            p8_canvasCoursesBySisId=canvasCoursesBySisId,
+            p9_accountsDf=accountsDf,
         )
+        outputFilesByCourseId = {resultCourseId: outputFilePath} if outputFilePath else {}
 
         ## Step 9: Return file map for downstream usage/logging
         localSetup.logger.info(f"Completed course grade CSV pipeline with {len(outputFilesByCourseId)} files.")

@@ -1444,10 +1444,22 @@ def _processSingleCourseGradeExport(
                 "student_sis_id": sisUserId,
                 "student_canvas_id": canvasUserId,
                 "student_name": studentName,
+
+                # Existing values
                 "computed_current_score": enrollmentRow.get("computed_current_score", ""),
                 "computed_final_score": enrollmentRow.get("computed_final_score", ""),
                 "computed_current_grade": enrollmentRow.get("computed_current_grade", ""),
                 "computed_final_grade": enrollmentRow.get("computed_final_grade", ""),
+
+                # New explicit gradebook total percentage columns
+                "gradebook_current_total_percent": enrollmentRow.get(
+                    "current_score",
+                    enrollmentRow.get("computed_current_score", "")
+                ),
+                "gradebook_final_total_percent": enrollmentRow.get(
+                    "final_score",
+                    enrollmentRow.get("computed_final_score", "")
+                ),
             }
             for assignmentColumn in assignmentColumnNames:
                 rowData[assignmentColumn] = ""
