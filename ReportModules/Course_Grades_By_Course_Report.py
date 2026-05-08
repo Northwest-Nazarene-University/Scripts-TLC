@@ -141,8 +141,6 @@ def buildCourseOutputPath(
         ).strip()
         courseCodeNorm = str(
             sisCourseRow.get("course_code_norm", "")
-            or sisCourseRow.get("course_code", "")
-            or sisCourseRow.get("Course Code", "")
         ).strip()
 
     splitCourseId = str(courseId).split("_")
@@ -264,7 +262,11 @@ def CourseGradesByCourseReport() -> dict[str, str]:
             return {}
 
         usersByCanvasId = usersDf.set_index("canvas_user_id", drop=False) if "canvas_user_id" in usersDf.columns else pd.DataFrame()
-        sisCourseIdColumn = "course_id" if "course_id" in sisCoursesDf.columns else "sis_course_id" if "sis_course_id" in sisCoursesDf.columns else ""
+        sisCourseIdColumn = ""
+        if "course_id" in sisCoursesDf.columns:
+            sisCourseIdColumn = "course_id"
+        elif "sis_course_id" in sisCoursesDf.columns:
+            sisCourseIdColumn = "sis_course_id"
         sisCoursesByCourseId = sisCoursesDf.set_index(sisCourseIdColumn, drop=False) if sisCourseIdColumn else pd.DataFrame()
         canvasCoursesBySisId = coursesDf.set_index("course_id", drop=False) if "course_id" in coursesDf.columns else pd.DataFrame()
 
