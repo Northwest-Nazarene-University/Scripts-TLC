@@ -2,7 +2,7 @@
 ## Last Updated by: Bryce Miller
 
 ## Import Generic Modules
-import os, sys, re, time, math, pandas as pd, paramiko
+import os, sys, re, time, math, pandas as pd, paramiko, secrets, string
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from dateutil import parser
@@ -1135,16 +1135,6 @@ def getUniqueOutcomesAndOutcomeCoursesDict (p1_localSetup, p1_errorHandler, p3_i
 
 ## Sanitize a value for safe use as a file-system path component
 def _sanitizePathComponentForGrades(p1_rawValue, p2_fallback: str = "Unknown") -> str:
-    """
-    Sanitize a raw value so it can be used as a folder or file name component.
-
-    Args:
-        p1_rawValue: Source value to sanitize.
-        p2_fallback (str): Default value used when the source is blank.
-
-    Returns:
-        str: Sanitized path-safe text.
-    """
     rawText = str(p1_rawValue).strip() if p1_rawValue is not None else ""
     if not rawText:
         rawText = p2_fallback
@@ -1155,16 +1145,6 @@ def _sanitizePathComponentForGrades(p1_rawValue, p2_fallback: str = "Unknown") -
 
 
 def _formatInstructorFullNamesForGrades(p1_instructorNames: list[str], p2_defaultName: str = "Unknown Instructor Name") -> str:
-    """
-    Format instructor names using full names while preserving input order and uniqueness.
-
-    Args:
-        p1_instructorNames (list[str]): Instructor full names.
-        p2_defaultName (str): Fallback text when no valid names are available.
-
-    Returns:
-        str: Human-readable full-name list for folder naming.
-    """
     fullNames = [
         str(name).strip()
         for name in p1_instructorNames
@@ -1180,19 +1160,6 @@ def _formatInstructorFullNamesForGrades(p1_instructorNames: list[str], p2_defaul
 
 
 def _safeJoinUnderRootForGrades(p1_rootPath: str, *p2_components: str) -> str:
-    """
-    Safely join path components under a fixed root directory.
-
-    Args:
-        p1_rootPath (str): Root directory that output paths must stay under.
-        *p2_components (str): Child path components to join.
-
-    Returns:
-        str: Absolute safe path under p1_rootPath.
-
-    Raises:
-        ValueError: If the resolved path escapes p1_rootPath.
-    """
     absoluteRoot = os.path.abspath(p1_rootPath)
     candidatePath = os.path.abspath(os.path.join(absoluteRoot, *p2_components))
     if not candidatePath.startswith(absoluteRoot + os.sep):
@@ -1201,15 +1168,6 @@ def _safeJoinUnderRootForGrades(p1_rootPath: str, *p2_components: str) -> str:
 
 
 def _uniqueAssignmentColumnNamesForGrades(p1_assignments: list[dict]) -> list[str]:
-    """
-    Create unique, sanitized output column names for assignment titles.
-
-    Args:
-        p1_assignments (list[dict]): Assignment objects returned by Canvas.
-
-    Returns:
-        list[str]: Unique assignment column names in input order.
-    """
     seen: dict[str, int] = {}
     columnNames: list[str] = []
 
@@ -1299,6 +1257,62 @@ def _getAssignmentGroupsForGrades(p1_localSetup: LocalSetup, p2_courseId: str) -
     return flattenApiObjectToJsonList(p1_localSetup, groupObjects, assignmentGroupsUrl)
 
 
+def _getCourseEnrollmentsForGrades(p1_localSetup: LocalSetup, p2_courseId: str) -> list[dict]:
+    """
+    Retrieve live student enrollments (with grades hash) for one Canvas SIS course.
+    """
+    enrollmentsUrl = f"{coreCanvasApiUrl}courses/sis_course_id:{p2_courseId}/enrollments"
+    payload = {
+        "type[]": ["StudentEnrollment"],
+        "state[]": ["active", "completed", "concluded"],
+    }
+
+    apiCallResult = makeApiCall(
+        p1_localSetup,
+        p1_apiUrl=enrollmentsUrl,
+        p1_payload=payload,
+    )
+    if apiCallResult is None:
+        return []
+
+    enrollmentsResponse, enrollmentPages = apiCallResult
+    enrollmentObjects = [enrollmentsResponse]
+    if enrollmentPages is not None and len(enrollmentPages) > 0:
+        enrollmentObjects.extend(enrollmentPages)
+
+    return flattenApiObjectToJsonList(p1_localSetup, enrollmentObjects, enrollmentsUrl)
+
+
+def _getLiveEnrollmentGradesByCanvasUserIdForCourse(
+    p1_localSetup: LocalSetup,
+    p2_courseId: str,
+) -> dict[str, dict]:
+    """
+    Build a lookup: canvas_user_id -> live enrollment grade fields from Canvas.
+    """
+    enrollments = _getCourseEnrollmentsForGrades(p1_localSetup, p2_courseId)
+    gradeLookup: dict[str, dict] = {}
+
+    for enrollment in enrollments:
+        canvasUserId = str(enrollment.get("user_id", "")).strip()
+        if not canvasUserId:
+            continue
+
+        grades = enrollment.get("grades", {}) or {}
+        gradeLookup[canvasUserId] = {
+            "current_score": grades.get("current_score", ""),
+            "final_score": grades.get("final_score", ""),
+            "current_grade": grades.get("current_grade", ""),
+            "final_grade": grades.get("final_grade", ""),
+            "unposted_current_score": grades.get("unposted_current_score", ""),
+            "unposted_final_score": grades.get("unposted_final_score", ""),
+            "unposted_current_grade": grades.get("unposted_current_grade", ""),
+            "unposted_final_grade": grades.get("unposted_final_grade", ""),
+        }
+
+    return gradeLookup
+
+
 def _buildCourseOutputPathForGrades(
     p1_localSetup: LocalSetup,
     p2_courseId: str,
@@ -1344,11 +1358,7 @@ def _buildCourseOutputPathForGrades(
         p2_fallback="Unknown Instructor Name",
     )
 
-    return _safeJoinUnderRootForGrades(
-        rootOutputPath,
-        *hierarchyComponents,
-        instructorFolder,
-    )
+    return _safeJoinUnderRootForGrades(rootOutputPath, *hierarchyComponents, instructorFolder)
 
 
 def _safeFloat(value, default=0.0):
@@ -1358,6 +1368,10 @@ def _safeFloat(value, default=0.0):
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _pickGradeValue(primary, fallback):
+    return primary if str(primary).strip() not in ["", "nan", "None"] else fallback
 
 
 def _processSingleCourseGradeExport(
@@ -1399,6 +1413,9 @@ def _processSingleCourseGradeExport(
         if courseStudentEnrollmentsDf.empty:
             return p3_courseId, None
 
+        ## Step 1.5: Live Canvas grade enrichment lookup for this course
+        liveGradeLookup = _getLiveEnrollmentGradesByCanvasUserIdForCourse(p1_localSetup, p3_courseId)
+
         ## Step 2: Gather assignments and assignment groups
         assignments = _getCourseAssignmentsForGrades(p1_localSetup, p3_courseId)
         assignments = sorted(assignments, key=lambda assignment: str(assignment.get("position", assignment.get("id", ""))))
@@ -1426,7 +1443,7 @@ def _processSingleCourseGradeExport(
             for assignment, assignmentColumn in zip(assignments, assignmentColumnNames)
         }
 
-        ## Step 3: Build starter student rows with final grade columns
+        ## Step 3: Build starter student rows with live-enriched final grade columns
         studentRows = []
         for _, enrollmentRow in courseStudentEnrollmentsDf.iterrows():
             sisUserId = str(enrollmentRow["user_id"]).strip()
@@ -1439,28 +1456,45 @@ def _processSingleCourseGradeExport(
                     userRow = userRow.iloc[0]
                 studentName = str(userRow.get("full_name", "")).strip()
 
+            liveGrades = liveGradeLookup.get(canvasUserId, {})
+
+            currentScore = _pickGradeValue(
+                liveGrades.get("current_score", ""),
+                enrollmentRow.get("current_score", ""),
+            )
+
+            finalScore = _pickGradeValue(
+                liveGrades.get("final_score", ""),
+                enrollmentRow.get("final_score", ""),
+            )
+
+            currentGrade = _pickGradeValue(
+                liveGrades.get("current_grade", ""),
+                enrollmentRow.get("current_grade", ""),
+            )
+
+            finalGrade = _pickGradeValue(
+                liveGrades.get("final_grade", ""),
+                enrollmentRow.get("final_grade", ""),
+            )
+
             rowData = {
                 "course_id": p3_courseId,
                 "student_sis_id": sisUserId,
                 "student_canvas_id": canvasUserId,
                 "student_name": studentName,
 
-                # Existing values
-                "computed_current_score": enrollmentRow.get("computed_current_score", ""),
-                "computed_final_score": enrollmentRow.get("computed_final_score", ""),
-                "computed_current_grade": enrollmentRow.get("computed_current_grade", ""),
-                "computed_final_grade": enrollmentRow.get("computed_final_grade", ""),
+                "gradebook_current_total_percent": currentScore,
+                "gradebook_final_total_percent": finalScore,
+                "gradebook_current_total_grade": currentGrade,
+                "gradebook_final_total_grade": finalGrade,
 
-                # New explicit gradebook total percentage columns
-                "gradebook_current_total_percent": enrollmentRow.get(
-                    "current_score",
-                    enrollmentRow.get("computed_current_score", "")
-                ),
-                "gradebook_final_total_percent": enrollmentRow.get(
-                    "final_score",
-                    enrollmentRow.get("computed_final_score", "")
-                ),
+                "unposted_current_score": liveGrades.get("unposted_current_score", ""),
+                "unposted_final_score": liveGrades.get("unposted_final_score", ""),
+                "unposted_current_grade": liveGrades.get("unposted_current_grade", ""),
+                "unposted_final_grade": liveGrades.get("unposted_final_grade", ""),
             }
+
             for assignmentColumn in assignmentColumnNames:
                 rowData[assignmentColumn] = ""
             studentRows.append(rowData)
@@ -1533,12 +1567,48 @@ def _processSingleCourseGradeExport(
                 percent = (earned / possible) * 100.0 if possible > 0 else 0.0
                 outputDf.at[rowIndex, groupPercentCol[groupId]] = round(percent, 4)
 
+        ## Step 6.5: Remove unposted total columns when values are identical to gradebook totals
+        gradebookToUnpostedColumnPairs = [
+            ("gradebook_current_total_percent", "unposted_current_score"),
+            ("gradebook_final_total_percent", "unposted_final_score"),
+            ("gradebook_current_total_grade", "unposted_current_grade"),
+            ("gradebook_final_total_grade", "unposted_final_grade"),
+        ]
+
+        requiredComparisonColumns = [
+            columnName
+            for columnPair in gradebookToUnpostedColumnPairs
+            for columnName in columnPair
+        ]
+
+        if all(columnName in outputDf.columns for columnName in requiredComparisonColumns):
+            areAllPairsIdentical = True
+
+            for gradebookColumnName, unpostedColumnName in gradebookToUnpostedColumnPairs:
+                gradebookSeries = outputDf[gradebookColumnName].fillna("").astype(str).str.strip()
+                unpostedSeries = outputDf[unpostedColumnName].fillna("").astype(str).str.strip()
+                if not gradebookSeries.equals(unpostedSeries):
+                    areAllPairsIdentical = False
+                    break
+
+            if areAllPairsIdentical:
+                outputDf.drop(
+                    columns=[columnPair[1] for columnPair in gradebookToUnpostedColumnPairs],
+                    inplace=True,
+                    errors="ignore",
+                )
+
         ## Step 7: Skip courses that have no populated grades and no final grades
         hasAssignmentGrades = outputDf[assignmentColumnNames].apply(
             lambda series: series.astype(str).str.strip().ne("")
         ).any().any()
 
-        finalGradeCols = ["computed_current_score", "computed_final_score", "computed_current_grade", "computed_final_grade"]
+        finalGradeCols = [
+            "gradebook_current_total_percent",
+            "gradebook_final_total_percent",
+            "gradebook_current_total_grade",
+            "gradebook_final_total_grade",
+        ]
         hasFinalGrades = outputDf[finalGradeCols].apply(
             lambda series: series.astype(str).str.strip().ne("")
         ).any().any()
@@ -1855,107 +1925,21 @@ def enrollUser(
         errorHandler.sendError(functionName, Error)
         return False
 
-## Require a Canvas user to reset their password at next login by updating a pseudonym/login via the Users API
-def requirePasswordReset(
-    localSetup: LocalSetup,
-    errorHandler,
-    userId: str,
-) -> bool:
+def _generateSecureTempPassword(length: int = 20) -> str:
     """
-    Require a Canvas user to reset password at next login by updating a pseudonym.
-
-    The function:
-        1. Normalizes and validates the input user ID.
-        2. Retrieves the user's Canvas logins/pseudonyms.
-        3. Selects a target pseudonym (preferring non-SIS authentication).
-        4. Sends a login update with a temporary password and
-           login[change_password_at_next_login]=True.
-
-    Args:
-        localSetup (LocalSetup): LocalSetup instance for logging and API auth.
-        errorHandler: errorEmail instance for error reporting.
-        userId (str): Canvas numeric user ID as a string.
-
-    Returns:
-        bool: True on HTTP 200 from the login update call, False otherwise.
+    Generate a strong temporary password.
     """
-    functionName = "requirePasswordReset"
-    try:
-        ## Normalize and validate the user ID
-        userId = str(userId).replace(".0", "").strip()
-        if not userId:
-            localSetup.logWarningThreadSafe(f"{functionName}: Missing userId")
-            return False
+    alphabet = string.ascii_letters + string.digits + "!@#$%^&*()-_=+"
+    chars = [
+        secrets.choice(string.ascii_lowercase),
+        secrets.choice(string.ascii_uppercase),
+        secrets.choice(string.digits),
+        secrets.choice("!@#$%^&*()-_=+"),
+    ]
+    chars.extend(secrets.choice(alphabet) for _ in range(max(0, length - 4)))
+    secrets.SystemRandom().shuffle(chars)
+    return "".join(chars)
 
-        ## Step 1: Retrieve user logins/pseudonyms
-        getLoginsUrl = f"{coreCanvasApiUrl}users/{userId}/logins"
-        loginsResponse, _ = makeApiCall(
-            localSetup=localSetup,
-            p1_apiUrl=getLoginsUrl,
-            p1_apiCallType="get",
-        )
-        if getattr(loginsResponse, "status_code", None) != 200:
-            localSetup.logWarningThreadSafe(
-                f"{functionName}: Failed to get logins for user {userId}. "
-                f"Status code: {getattr(loginsResponse, 'status_code', None)}"
-            )
-            return False
-
-        logins = loginsResponse.json() or []
-        if not logins:
-            localSetup.logWarningThreadSafe(
-                f"{functionName}: No logins found for user {userId}"
-            )
-            return False
-
-        ## Step 2: Select login to update (prefer non-SIS pseudonym; fallback to first row)
-        selectedLogin = None
-        for login in logins:
-            authProviderId = login.get("authentication_provider_id")
-            if authProviderId is None:
-                selectedLogin = login
-                break
-        if selectedLogin is None:
-            selectedLogin = logins[0]
-
-        pseudonymId = selectedLogin.get("id")
-        if not pseudonymId:
-            localSetup.logWarningThreadSafe(
-                f"{functionName}: Could not determine pseudonym ID for user {userId}"
-            )
-            return False
-
-        ## Step 3: Set temp password + force reset at next login
-        ## Note: Canvas requires login[password] when setting change_password_at_next_login.
-        tempPassword = f"TempReset!{userId[-6:]}" if len(userId) >= 6 else "TempReset!123456"
-        updateLoginUrl = f"{coreCanvasApiUrl}users/{userId}/logins/{pseudonymId}"
-        payload = {
-            "login[password]": tempPassword,
-            "login[change_password_at_next_login]": True,
-        }
-
-        updateResponse, _ = makeApiCall(
-            localSetup=localSetup,
-            p1_apiUrl=updateLoginUrl,
-            p1_payload=payload,
-            p1_apiCallType="put",
-        )
-        statusCode = getattr(updateResponse, "status_code", None)
-        if statusCode == 200:
-            localSetup.logInfoThreadSafe(
-                f"{functionName}: Required password reset for user {userId} (login {pseudonymId})"
-            )
-            return True
-
-        localSetup.logWarningThreadSafe(
-            f"{functionName}: Failed to require password reset for user {userId}. "
-            f"Status code: {statusCode}"
-        )
-        return False
-
-    except Exception as Error:
-        errorHandler.sendError(functionName, Error)
-        return False
 
 def terminateAllUserSessions(
     localSetup: LocalSetup,
@@ -2008,6 +1992,220 @@ def terminateAllUserSessions(
     except Exception as Error:
         errorHandler.sendError(functionName, Error)
         return False
+
+
+## Require a Canvas user to reset password by:
+## 1) changing login password, 2) ending sessions, 3) kicking off password recovery
+def requirePasswordReset(
+    localSetup: LocalSetup,
+    errorHandler,
+    userId: str,
+) -> bool:
+    """
+    Require Canvas password reset flow for a user.
+
+    The function:
+        1. Normalizes/validates user ID.
+        2. Retrieves user logins/pseudonyms.
+        3. Selects a target login (prefers active).
+        4. Sets a secure temporary password via:
+           PUT /api/v1/accounts/:account_id/logins/:id
+        5. Terminates all sessions via:
+           DELETE /api/v1/users/:user_id/sessions
+        6. Triggers recovery email via:
+           POST /api/v1/users/reset_password
+
+    Returns:
+        bool: True if all required steps succeed, False otherwise.
+    """
+    functionName = "requirePasswordReset"
+    try:
+        ## Step 1: Normalize and validate the user ID
+        userId = str(userId).replace(".0", "").strip()
+        if not userId:
+            localSetup.logWarningThreadSafe(f"{functionName}: Missing userId")
+            return False
+
+        ## Step 2: Retrieve user logins/pseudonyms
+        getLoginsUrl = f"{coreCanvasApiUrl}users/{userId}/logins"
+        loginsResponse, _ = makeApiCall(
+            localSetup=localSetup,
+            p1_apiUrl=getLoginsUrl,
+            p1_apiCallType="get",
+        )
+        if getattr(loginsResponse, "status_code", None) != 200:
+            localSetup.logWarningThreadSafe(
+                f"{functionName}: Failed to get logins for user {userId}. "
+                f"Status code: {getattr(loginsResponse, 'status_code', None)}"
+            )
+            return False
+
+        logins = loginsResponse.json() or []
+        if not logins:
+            localSetup.logWarningThreadSafe(
+                f"{functionName}: No logins found for user {userId}"
+            )
+            return False
+
+        ## Step 3: Select login (prefer active; fallback first)
+        selectedLogin = next(
+            (l for l in logins if l.get("workflow_state") == "active"),
+            logins[0],
+        )
+
+        pseudonymId = selectedLogin.get("id")
+        accountId = selectedLogin.get("account_id")
+        identifier = (selectedLogin.get("unique_id") or "").strip()
+        validEmailPattern = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
+        ## If identifier is missing or not a valid email, pull fallback values from users df
+        if not identifier or not re.match(validEmailPattern, identifier):
+            usersDf = CanvasReport.getUsersDf(localSetup)
+            if isPresent(usersDf) and "canvas_user_id" in usersDf.columns:
+                matchingUsersDf = usersDf[
+                    usersDf["canvas_user_id"].astype(str).str.strip() == str(userId).strip()
+                ]
+
+                if isPresent(matchingUsersDf):
+                    matchingUserRow = matchingUsersDf.iloc[0]
+                    fallbackCandidates = [
+                        str(matchingUserRow.get("email", "")).strip(),
+                        str(matchingUserRow.get("login_id", "")).strip(),
+                        str(matchingUserRow.get("unique_id", "")).strip(),
+                    ]
+                    for candidate in fallbackCandidates:
+                        if candidate and re.match(validEmailPattern, candidate):
+                            identifier = candidate
+                            break
+            if not identifier or not re.match(validEmailPattern, identifier):
+                localSetup.logWarningThreadSafe(
+                    f"{functionName}: Could not retrieve a valid fallback email from users df for user {userId}"
+                )
+
+
+        if not pseudonymId:
+            localSetup.logWarningThreadSafe(
+                f"{functionName}: Could not determine pseudonym ID for user {userId}"
+            )
+            return False
+        if not accountId:
+            localSetup.logWarningThreadSafe(
+                f"{functionName}: Could not determine account ID for user {userId}"
+            )
+            return False
+        if not identifier or not re.match(validEmailPattern, identifier):
+            localSetup.logWarningThreadSafe(
+                f"{functionName}: Could not determine a valid email identifier for user {userId}"
+            )
+            return False
+
+        ## Step 4: Set temporary password (invalidates old password)
+        tempPassword = _generateSecureTempPassword()
+        updateLoginUrl = f"{coreCanvasApiUrl}accounts/{accountId}/logins/{pseudonymId}"
+        updatePayload = {
+            "login": {
+                "password": tempPassword
+            }
+        }
+
+        updateResponse, _ = makeApiCall(
+            localSetup=localSetup,
+            p1_apiUrl=updateLoginUrl,
+            p1_payload=updatePayload,
+            p1_apiCallType="put",
+        )
+        updateStatus = getattr(updateResponse, "status_code", None)
+        if updateStatus != 200:
+            localSetup.logWarningThreadSafe(
+                f"{functionName}: Failed to change password for user {userId}. "
+                f"Status code: {updateStatus}"
+            )
+            return False
+
+        ## Step 5: End all active sessions/tokens
+        sessionsTerminated = terminateAllUserSessions(
+            localSetup=localSetup,
+            errorHandler=errorHandler,
+            userId=userId,
+        )
+        if not sessionsTerminated:
+            localSetup.logWarningThreadSafe(
+                f"{functionName}: Password changed but failed to terminate sessions for user {userId}"
+            )
+            return False
+
+        ## Step 6: Kick off password recovery flow
+        resetPasswordUrl = f"{coreCanvasApiUrl}users/reset_password"
+        resetPayload = {"email": identifier}
+
+        resetResponse, _ = makeApiCall(
+            localSetup=localSetup,
+            p1_apiUrl=resetPasswordUrl,
+            p1_payload=resetPayload,
+            p1_apiCallType="post",
+        )
+        resetStatus = getattr(resetResponse, "status_code", None)
+
+        resetJson = {}
+        try:
+            resetJson = resetResponse.json() if resetResponse is not None else {}
+        except Exception:
+            resetJson = {}
+
+        if resetStatus in [200, 201] and resetJson.get("requested") is True:
+            localSetup.logInfoThreadSafe(
+                f"{functionName}: Completed password reset flow for user {userId} "
+                f"(login {pseudonymId})"
+            )
+            return True
+
+        localSetup.logWarningThreadSafe(
+            f"{functionName}: Password changed and sessions terminated, but recovery kickoff failed "
+            f"for user {userId}. Status code: {resetStatus}, response: {resetJson}"
+        )
+        return False
+
+    except Exception as Error:
+        errorHandler.sendError(functionName, Error)
+        return False
+    
+def kickoffPasswordRecovery(self, userIdentifier):
+    """
+    Kick off Canvas forgot-password flow for a user identifier (usually email / login unique_id).
+
+    Canvas endpoint:
+      POST /api/v1/users/reset_password
+
+    Returns:
+      (responseObject, responseJsonOrList)
+    """
+    functionName = "kickoffPasswordRecovery"
+
+    if not userIdentifier:
+        raise Exception(f"{functionName}: userIdentifier is required")
+
+    # Keep this consistent with your existing URL construction style
+    resetPasswordUrl = f"{self.localSetup.canvasBaseUrl}/api/v1/users/reset_password"
+
+    # Canvas forgot_password expects email in API mode
+    payload = {
+        "email": userIdentifier
+    }
+
+    # Reuse your existing API wrapper
+    resetResponse, resetJson = makeApiCall(
+        localSetup=self.localSetup,
+        p1_apiUrl=resetPasswordUrl,
+        p1_payload=payload,
+        p1_apiCallType="post"
+    )
+
+    # Optional sanity check
+    # Expected JSON shape is typically: {"requested": true}
+    if isinstance(resetJson, dict) and resetJson.get("requested") is True:
+        return resetResponse, resetJson
+
+    # If Canvas returns something unexpected, still return it for caller handling
+    return resetResponse, resetJson
 
 ## Read a target CSV and validate that required columns are present
 ## ══════════════════════════════════════════════════════════════════════════════
