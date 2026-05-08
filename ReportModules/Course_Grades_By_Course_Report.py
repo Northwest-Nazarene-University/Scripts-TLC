@@ -16,6 +16,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules")
 from Local_Setup import LocalSetup
 from TLC_Common import makeApiCall, flattenApiObjectToJsonList, formatInstructorFirstNames, isPresent
 from Canvas_Report import CanvasReport
+from TLC_Action import determineCourseWeek
 from Common_Configs import coreCanvasApiUrl
 from Error_Email import errorEmail
 
@@ -67,17 +68,19 @@ def uniqueAssignmentColumnNames(assignments: list[dict]) -> list[str]:
     return columnNames
 
 
-def getCanvasTermCandidatesFromCourseIds(courseIds: pd.Series) -> list[str]:
-    rawTerms = sorted({str(courseId).split("_")[0] for courseId in courseIds.dropna().tolist() if "_" in str(courseId)})
-    candidates: set[str] = set()
-
-    for term in rawTerms:
-        term = term.strip().upper()
-        if not re.fullmatch(r"[A-Z]{2}\d{2,4}", term):
-            continue
-        candidates.add(term)
-
-    return sorted(candidates)
+def isWithinFinalsWindow(p1_startDate: str, p2_endDate: str, p1_referenceDate: datetime | None = None) -> bool:
+    if not str(p1_startDate).strip() or not str(p2_endDate).strip():
+        return False
+    try:
+        courseWeek, courseFinalWeek = determineCourseWeek(
+            p1_startDate,
+            p2_endDate,
+            p1_referenceDate=p1_referenceDate,
+        )
+    except Exception:
+        return False
+    weeksUntilFinals = courseFinalWeek - courseWeek
+    return 0 <= weeksUntilFinals <= 4
 
 
 def safeJoinUnderRoot(rootPath: str, *components: str) -> str:
@@ -185,10 +188,20 @@ def CourseGradesByCourseReport() -> dict[str, str]:
             localSetup.logger.warning("No active SIS student enrollments found. No files created.")
             return {}
 
-        candidateTerms = getCanvasTermCandidatesFromCourseIds(activeSisEnrollmentsDf["course_id"])
+        currentTerms = sorted(localSetup.getCurrentTerms())
+        if currentTerms:
+            termPattern = "|".join(re.escape(term) for term in currentTerms)
+            activeSisEnrollmentsDf = activeSisEnrollmentsDf[
+                activeSisEnrollmentsDf["course_id"].str.contains(termPattern, na=False)
+            ].copy()
+
+        if activeSisEnrollmentsDf.empty:
+            localSetup.logger.warning("No active SIS student enrollments found for current terms. No files created.")
+            return {}
+
         canvasEnrollmentFrames: list[pd.DataFrame] = []
 
-        for termCode in candidateTerms:
+        for termCode in currentTerms:
             termEnrollmentsDf = CanvasReport.getEnrollmentsDf(localSetup, term=termCode, includeDeleted=True)
             if isPresent(termEnrollmentsDf):
                 canvasEnrollmentFrames.append(termEnrollmentsDf)
@@ -225,6 +238,30 @@ def CourseGradesByCourseReport() -> dict[str, str]:
         coursesDf = CanvasReport.getCoursesDf(localSetup, term="All").fillna("")
         usersDf = CanvasReport.getUsersDf(localSetup).fillna("")
         accountsDf = CanvasReport.getAccountsDf(localSetup).fillna("")
+
+        referenceDate = localSetup.initialDateTime
+        if {"course_id", "start_date", "end_date"}.issubset(coursesDf.columns):
+            finalsWindowCoursesDf = coursesDf[
+                coursesDf["course_id"].astype(str).str.contains("|".join(re.escape(term) for term in currentTerms), na=False)
+            ].copy() if currentTerms else coursesDf.copy()
+            finalsWindowCoursesDf = finalsWindowCoursesDf[
+                finalsWindowCoursesDf.apply(
+                    lambda row: isWithinFinalsWindow(
+                        row.get("start_date", ""),
+                        row.get("end_date", ""),
+                        p1_referenceDate=referenceDate,
+                    ),
+                    axis=1,
+                )
+            ]
+            finalsWindowCourseIds = set(finalsWindowCoursesDf["course_id"].astype(str).str.strip().tolist())
+            mergedStudentEnrollmentsDf = mergedStudentEnrollmentsDf[
+                mergedStudentEnrollmentsDf["course_id"].isin(finalsWindowCourseIds)
+            ].copy()
+
+        if mergedStudentEnrollmentsDf.empty:
+            localSetup.logger.warning("No matched enrollments are within four weeks of finals week. No files created.")
+            return {}
 
         usersByCanvasId = usersDf.set_index("canvas_user_id", drop=False) if "canvas_user_id" in usersDf.columns else pd.DataFrame()
         sisCourseIdColumn = "course_id" if "course_id" in sisCoursesDf.columns else "sis_course_id" if "sis_course_id" in sisCoursesDf.columns else ""
