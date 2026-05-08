@@ -42,6 +42,7 @@ def _sanitize_path_component(rawValue: Any, fallback: str = "Unknown") -> str:
     if not rawText:
         rawText = fallback
     sanitized = re.sub(r'[<>:"/\\|?*]+', "_", rawText)
+    sanitized = sanitized.replace("..", "_")
     sanitized = re.sub(r"\s+", " ", sanitized).strip().strip(".")
     return sanitized or fallback
 
@@ -72,11 +73,19 @@ def _get_canvas_term_candidates_from_course_ids(courseIds: pd.Series) -> list[st
 
     for term in rawTerms:
         term = term.strip().upper()
-        if len(term) < 4:
+        if not re.fullmatch(r"[A-Z]{2}\d{2,4}", term):
             continue
         candidates.add(term)
 
     return sorted(candidates)
+
+
+def _safe_join_under_root(rootPath: str, *components: str) -> str:
+    absoluteRoot = os.path.abspath(rootPath)
+    candidatePath = os.path.abspath(os.path.join(absoluteRoot, *components))
+    if not candidatePath.startswith(absoluteRoot + os.sep):
+        raise ValueError(f"Unsafe output path resolved outside root: {candidatePath}")
+    return candidatePath
 
 
 def _get_course_assignments(courseId: str) -> list[dict]:
@@ -127,7 +136,11 @@ def _build_course_output_path(
             or sisCourseRow.get("sis_term_id", "")
             or sisCourseRow.get("enrollment_term_id", "")
         ).strip()
-        courseCodeNorm = str(sisCourseRow.get("course_code_norm", "")).strip()
+        courseCodeNorm = str(
+            sisCourseRow.get("course_code_norm", "")
+            or sisCourseRow.get("course_code", "")
+            or sisCourseRow.get("Course Code", "")
+        ).strip()
 
     splitCourseId = str(courseId).split("_")
     if len(splitCourseId) >= 3:
@@ -146,7 +159,7 @@ def _build_course_output_path(
 
     sisMetadataFolder = _sanitize_path_component(f"{termId}_{courseCodeNorm}_{section}", fallback="Unknown_Metadata")
 
-    return os.path.join(rootOutputPath, *hierarchyComponents, instructorFolder, sisMetadataFolder)
+    return _safe_join_under_root(rootOutputPath, *hierarchyComponents, instructorFolder, sisMetadataFolder)
 
 
 def CourseGradesByCourseReport() -> dict[str, str]:
