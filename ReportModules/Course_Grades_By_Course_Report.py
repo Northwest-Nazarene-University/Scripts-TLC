@@ -37,7 +37,7 @@ localSetup = LocalSetup(datetime.now(), __file__)
 errorHandler = errorEmail(scriptName, scriptPurpose, externalRequirements, localSetup)
 
 
-def _sanitize_path_component(rawValue: Any, fallback: str = "Unknown") -> str:
+def sanitizePathComponent(rawValue: Any, fallback: str = "Unknown") -> str:
     rawText = str(rawValue).strip() if rawValue is not None else ""
     if not rawText:
         rawText = fallback
@@ -47,13 +47,13 @@ def _sanitize_path_component(rawValue: Any, fallback: str = "Unknown") -> str:
     return sanitized or fallback
 
 
-def _unique_assignment_column_names(assignments: list[dict]) -> list[str]:
+def uniqueAssignmentColumnNames(assignments: list[dict]) -> list[str]:
     seen: dict[str, int] = {}
     columnNames: list[str] = []
 
     for assignment in assignments:
         assignmentId = assignment.get("id")
-        assignmentName = _sanitize_path_component(assignment.get("name", ""), fallback=f"Assignment_{assignmentId}")
+        assignmentName = sanitizePathComponent(assignment.get("name", ""), fallback=f"Assignment_{assignmentId}")
         baseName = assignmentName
 
         if baseName in seen:
@@ -67,7 +67,7 @@ def _unique_assignment_column_names(assignments: list[dict]) -> list[str]:
     return columnNames
 
 
-def _get_canvas_term_candidates_from_course_ids(courseIds: pd.Series) -> list[str]:
+def getCanvasTermCandidatesFromCourseIds(courseIds: pd.Series) -> list[str]:
     rawTerms = sorted({str(courseId).split("_")[0] for courseId in courseIds.dropna().tolist() if "_" in str(courseId)})
     candidates: set[str] = set()
 
@@ -80,7 +80,7 @@ def _get_canvas_term_candidates_from_course_ids(courseIds: pd.Series) -> list[st
     return sorted(candidates)
 
 
-def _safe_join_under_root(rootPath: str, *components: str) -> str:
+def safeJoinUnderRoot(rootPath: str, *components: str) -> str:
     absoluteRoot = os.path.abspath(rootPath)
     candidatePath = os.path.abspath(os.path.join(absoluteRoot, *components))
     if not candidatePath.startswith(absoluteRoot + os.sep):
@@ -88,7 +88,7 @@ def _safe_join_under_root(rootPath: str, *components: str) -> str:
     return candidatePath
 
 
-def _get_course_assignments(courseId: str) -> list[dict]:
+def getCourseAssignments(courseId: str) -> list[dict]:
     assignmentsUrl = f"{coreCanvasApiUrl}courses/sis_course_id:{courseId}/assignments"
     assignmentsResponse, assignmentResponsePages = makeApiCall(localSetup, p1_apiUrl=assignmentsUrl)
     assignmentObjects = [assignmentsResponse] + assignmentResponsePages if isPresent(assignmentResponsePages) else [assignmentsResponse]
@@ -96,7 +96,7 @@ def _get_course_assignments(courseId: str) -> list[dict]:
     return [assignment for assignment in assignmentList if assignment.get("published") is True]
 
 
-def _get_assignment_submissions(courseId: str, assignmentId: int) -> list[dict]:
+def getAssignmentSubmissions(courseId: str, assignmentId: int) -> list[dict]:
     submissionsUrl = f"{coreCanvasApiUrl}courses/sis_course_id:{courseId}/assignments/{assignmentId}/submissions"
     submissionsPayload = {"include[]": ["user"]}
     submissionsResponse, submissionsPages = makeApiCall(
@@ -108,7 +108,7 @@ def _get_assignment_submissions(courseId: str, assignmentId: int) -> list[dict]:
     return flattenApiObjectToJsonList(localSetup, submissionObjects, submissionsUrl)
 
 
-def _build_course_output_path(
+def buildCourseOutputPath(
     courseId: str,
     courseAccountId: int | None,
     instructorNames: list[str],
@@ -120,9 +120,9 @@ def _build_course_output_path(
 
     if courseAccountId is not None:
         structureDict = CanvasReport.determineCollegeDepartmentDiscipline(localSetup, courseAccountId, accountsDf=accountsDf)
-        hierarchyComponents = [_sanitize_path_component(component) for component in structureDict.get("Path_Components", []) if str(component).strip()]
+        hierarchyComponents = [sanitizePathComponent(component) for component in structureDict.get("Path_Components", []) if str(component).strip()]
 
-    instructorFolder = _sanitize_path_component(
+    instructorFolder = sanitizePathComponent(
         formatInstructorFirstNames(instructorNames, defaultName="Instructor"),
         fallback="Instructor",
     )
@@ -157,9 +157,9 @@ def _build_course_output_path(
     if not section:
         section = "Unknown_Section"
 
-    sisMetadataFolder = _sanitize_path_component(f"{termId}_{courseCodeNorm}_{section}", fallback="Unknown_Metadata")
+    sisMetadataFolder = sanitizePathComponent(f"{termId}_{courseCodeNorm}_{section}", fallback="Unknown_Metadata")
 
-    return _safe_join_under_root(rootOutputPath, *hierarchyComponents, instructorFolder, sisMetadataFolder)
+    return safeJoinUnderRoot(rootOutputPath, *hierarchyComponents, instructorFolder, sisMetadataFolder)
 
 
 def CourseGradesByCourseReport() -> dict[str, str]:
@@ -185,7 +185,7 @@ def CourseGradesByCourseReport() -> dict[str, str]:
             localSetup.logger.warning("No active SIS student enrollments found. No files created.")
             return {}
 
-        candidateTerms = _get_canvas_term_candidates_from_course_ids(activeSisEnrollmentsDf["course_id"])
+        candidateTerms = getCanvasTermCandidatesFromCourseIds(activeSisEnrollmentsDf["course_id"])
         canvasEnrollmentFrames: list[pd.DataFrame] = []
 
         for termCode in candidateTerms:
@@ -244,9 +244,9 @@ def CourseGradesByCourseReport() -> dict[str, str]:
             if courseStudentEnrollmentsDf.empty:
                 continue
 
-            assignments = _get_course_assignments(courseId)
+            assignments = getCourseAssignments(courseId)
             assignments = sorted(assignments, key=lambda assignment: str(assignment.get("position", assignment.get("id", ""))))
-            assignmentColumnNames = _unique_assignment_column_names(assignments)
+            assignmentColumnNames = uniqueAssignmentColumnNames(assignments)
 
             assignmentColumnById = {
                 assignment.get("id"): assignmentColumn
@@ -290,7 +290,7 @@ def CourseGradesByCourseReport() -> dict[str, str]:
                 if not assignmentColumn:
                     continue
 
-                assignmentSubmissions = _get_assignment_submissions(courseId, assignmentId)
+                assignmentSubmissions = getAssignmentSubmissions(courseId, assignmentId)
                 for submission in assignmentSubmissions:
                     submissionCanvasUserId = str(submission.get("user_id", "")).strip()
                     if not submissionCanvasUserId or submissionCanvasUserId not in rowIndexByCanvasUserId:
@@ -340,7 +340,7 @@ def CourseGradesByCourseReport() -> dict[str, str]:
                 except (TypeError, ValueError):
                     courseAccountId = None
 
-            outputFolder = _build_course_output_path(
+            outputFolder = buildCourseOutputPath(
                 courseId=courseId,
                 courseAccountId=courseAccountId,
                 instructorNames=instructorNames,
@@ -349,7 +349,7 @@ def CourseGradesByCourseReport() -> dict[str, str]:
             )
             os.makedirs(outputFolder, exist_ok=True)
 
-            outputFilePath = os.path.join(outputFolder, f"{_sanitize_path_component(courseId)}.csv")
+            outputFilePath = os.path.join(outputFolder, f"{sanitizePathComponent(courseId)}.csv")
             outputDf.to_csv(outputFilePath, index=False, encoding="utf-8")
             outputFilesByCourseId[courseId] = outputFilePath
 
@@ -359,11 +359,6 @@ def CourseGradesByCourseReport() -> dict[str, str]:
     except Exception as Error:
         errorHandler.sendError(functionName, Error)
         return {}
-
-
-def generateCourseGradesByCourseReport() -> dict[str, str]:
-    return CourseGradesByCourseReport()
-
 
 if __name__ == "__main__":
     CourseGradesByCourseReport()
