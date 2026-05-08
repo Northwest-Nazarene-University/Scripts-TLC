@@ -15,6 +15,7 @@ Read-focused scripts that gather, process, and export institutional reporting da
 
 - `Inactive_Enrollments_Report.py` - identifies inactive enrollments
 - `Incoming_Student_Report.py` - combines Canvas and Slate data for incoming students
+- `Course_Grades_By_Course_Report.py` - exports one grade CSV per course for active SIS-enrolled students
 - `Nighthawk_360_Canvas_Report.py` - prepares data exports for Nighthawk 360
 - `Non_Official_Instructors_Report.py` - identifies non-official instructor enrollments
 - `Outcome_Attachment_Report.py` - checks outcome attachment coverage
