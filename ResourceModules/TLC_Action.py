@@ -460,8 +460,9 @@ def retrieveDataForRelevantCommunication (p1_localSetup
         ## Capture a single reference date for determineCourseWeek consistency
         referenceDate = datetime.now()
 
-        ## Get the year of the term
-        termYear = int(f"{p1_localSetup.dateDict['century']}{p2_inputTerm[2:]}")
+        ## Get the year of the term (supports FA25 and FA2025 input formats)
+        termYearDigits = str(p2_inputTerm[2:]).strip()
+        termYear = int(termYearDigits) if len(termYearDigits) == 4 else int(f"{p1_localSetup.dateDict['century']}{termYearDigits}")
         termPrefix = p2_inputTerm[:2]
         termWord = p1_localSetup._determineTermName(termPrefix)
 
@@ -1319,6 +1320,159 @@ def enrollUser(
         errorHandler.sendError(functionName, Error)
         return False
 
+## Require a Canvas user to reset their password at next login by updating a pseudonym/login via the Users API
+def requirePasswordReset(
+    localSetup: LocalSetup,
+    errorHandler,
+    userId: str,
+) -> bool:
+    """
+    Require a Canvas user to reset password at next login by updating a pseudonym.
+
+    The function:
+        1. Normalizes and validates the input user ID.
+        2. Retrieves the user's Canvas logins/pseudonyms.
+        3. Selects a target pseudonym (preferring non-SIS authentication).
+        4. Sends a login update with a temporary password and
+           login[change_password_at_next_login]=True.
+
+    Args:
+        localSetup (LocalSetup): LocalSetup instance for logging and API auth.
+        errorHandler: errorEmail instance for error reporting.
+        userId (str): Canvas numeric user ID as a string.
+
+    Returns:
+        bool: True on HTTP 200 from the login update call, False otherwise.
+    """
+    functionName = "requirePasswordReset"
+    try:
+        ## Normalize and validate the user ID
+        userId = str(userId).replace(".0", "").strip()
+        if not userId:
+            localSetup.logWarningThreadSafe(f"{functionName}: Missing userId")
+            return False
+
+        ## Step 1: Retrieve user logins/pseudonyms
+        getLoginsUrl = f"{coreCanvasApiUrl}users/{userId}/logins"
+        loginsResponse, _ = makeApiCall(
+            localSetup=localSetup,
+            p1_apiUrl=getLoginsUrl,
+            p1_apiCallType="get",
+        )
+        if getattr(loginsResponse, "status_code", None) != 200:
+            localSetup.logWarningThreadSafe(
+                f"{functionName}: Failed to get logins for user {userId}. "
+                f"Status code: {getattr(loginsResponse, 'status_code', None)}"
+            )
+            return False
+
+        logins = loginsResponse.json() or []
+        if not logins:
+            localSetup.logWarningThreadSafe(
+                f"{functionName}: No logins found for user {userId}"
+            )
+            return False
+
+        ## Step 2: Select login to update (prefer non-SIS pseudonym; fallback to first row)
+        selectedLogin = None
+        for login in logins:
+            authProviderId = login.get("authentication_provider_id")
+            if authProviderId is None:
+                selectedLogin = login
+                break
+        if selectedLogin is None:
+            selectedLogin = logins[0]
+
+        pseudonymId = selectedLogin.get("id")
+        if not pseudonymId:
+            localSetup.logWarningThreadSafe(
+                f"{functionName}: Could not determine pseudonym ID for user {userId}"
+            )
+            return False
+
+        ## Step 3: Set temp password + force reset at next login
+        ## Note: Canvas requires login[password] when setting change_password_at_next_login.
+        tempPassword = f"TempReset!{userId[-6:]}" if len(userId) >= 6 else "TempReset!123456"
+        updateLoginUrl = f"{coreCanvasApiUrl}users/{userId}/logins/{pseudonymId}"
+        payload = {
+            "login[password]": tempPassword,
+            "login[change_password_at_next_login]": True,
+        }
+
+        updateResponse, _ = makeApiCall(
+            localSetup=localSetup,
+            p1_apiUrl=updateLoginUrl,
+            p1_payload=payload,
+            p1_apiCallType="put",
+        )
+        statusCode = getattr(updateResponse, "status_code", None)
+        if statusCode == 200:
+            localSetup.logInfoThreadSafe(
+                f"{functionName}: Required password reset for user {userId} (login {pseudonymId})"
+            )
+            return True
+
+        localSetup.logWarningThreadSafe(
+            f"{functionName}: Failed to require password reset for user {userId}. "
+            f"Status code: {statusCode}"
+        )
+        return False
+
+    except Exception as Error:
+        errorHandler.sendError(functionName, Error)
+        return False
+
+def terminateAllUserSessions(
+    localSetup: LocalSetup,
+    errorHandler,
+    userId: str,
+) -> bool:
+    """
+    Terminate all active Canvas sessions/tokens for a user.
+
+    Uses DELETE /api/v1/users/:user_id/sessions.
+
+    Args:
+        localSetup (LocalSetup): LocalSetup instance for logging and API auth.
+        errorHandler: errorEmail instance for error reporting.
+        userId (str): Canvas numeric user ID as a string.
+
+    Returns:
+        bool: True on HTTP 200/204, False otherwise.
+    """
+    functionName = "terminateAllUserSessions"
+    try:
+        ## Step 1: Normalize and validate the user ID
+        userId = str(userId).replace(".0", "").strip()
+        if not userId:
+            localSetup.logWarningThreadSafe(f"{functionName}: Missing userId")
+            return False
+
+        ## Step 2: Call Canvas sessions endpoint to terminate active sessions
+        terminateUrl = f"{coreCanvasApiUrl}users/{userId}/sessions"
+        response, _ = makeApiCall(
+            localSetup=localSetup,
+            p1_apiUrl=terminateUrl,
+            p1_apiCallType="delete",
+        )
+
+        statusCode = getattr(response, "status_code", None)
+        ## Canvas may return 200/204 depending on endpoint behavior
+        if statusCode in [200, 204]:
+            localSetup.logInfoThreadSafe(
+                f"{functionName}: Terminated all sessions for user {userId}"
+            )
+            return True
+
+        localSetup.logWarningThreadSafe(
+            f"{functionName}: Failed to terminate sessions for user {userId}. "
+            f"Status code: {statusCode}"
+        )
+        return False
+
+    except Exception as Error:
+        errorHandler.sendError(functionName, Error)
+        return False
 
 ## Read a target CSV and validate that required columns are present
 ## ══════════════════════════════════════════════════════════════════════════════

@@ -1,7 +1,7 @@
 ## Author: Bryce Miller - brycezmiller@nnu.edu
 ## Last Updated by: Bryce Miller
 
-import os, sys, zipfile, requests, pandas as pd
+import os, re, sys, zipfile, requests, pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from dotenv import load_dotenv
@@ -123,7 +123,7 @@ def flattenApiObjectToJsonList(localSetup, apiObjectList, apiUrl):
         raise
 
 ## Check if a file exists and was modified within the last X hours
-def isFileRecent(localSetup: LocalSetup, filePath, maxAgeHours=3.5):
+def isFileRecent(localSetup: LocalSetup, filePath, maxAgeHours=3.5, isTermSensitive=False):
     functionName = "isFileRecent"
     try:
 
@@ -132,6 +132,25 @@ def isFileRecent(localSetup: LocalSetup, filePath, maxAgeHours=3.5):
             if localSetup.logger:
                 _logInfo(localSetup, f"\n{filePath} does not exist.")
             return False
+
+        ## If enabled, protect historical term-based files from being overwritten.
+        ## Term-based file naming convention: first 4 stem characters are term code,
+        ## e.g., SP26, GF25.
+        fileStem = os.path.splitext(os.path.basename(filePath))[0]
+        targetTermCode = fileStem[:4].upper() if len(fileStem) >= 4 else ""
+        isTermBasedFile = bool(re.match(r"^[A-Z]{2}\d{2}$", targetTermCode))
+
+        if isTermSensitive and isTermBasedFile:
+            currentSchoolYearTermCodes = {
+                str(termCode).upper() for termCode in localSetup.getCurrentSchoolYearTermCodes()
+            }
+            if targetTermCode not in currentSchoolYearTermCodes:
+                if localSetup.logger:
+                    _logInfo(
+                        localSetup,
+                        f"\n{filePath} treated as recent because it belongs to historical term {targetTermCode}."
+                    )
+                return True
 
         ## Get the last modified time and calculate age in hours
         lastModified = os.path.getmtime(filePath)

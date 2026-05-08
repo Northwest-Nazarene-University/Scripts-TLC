@@ -535,8 +535,8 @@ def main ():
             ## This function includes the four times daily function
             oneTimeDaily(currentTerm, targetTerms)
         
-        ## If it is the last run of the day (determined by being after 3:00 pm)
-        elif currentHour > 15:
+        ## If it is the last run of the day (determined by being after 7:00 pm)
+        elif currentHour > 19:
 
             ## Run the fourTimesDaily script with the 1st (and should be only) target term
             fourTimesDaily (p1_relaventTerm = currentTerm)

@@ -130,8 +130,15 @@ class CanvasReport:
 
 
     ## Check if the existing report file is current based on max age in hours
-    def isCurrent(self, maxAgeHours=3.5):
-        return isFileRecent(self.localSetup, self.filePath, maxAgeHours)
+    def isCurrent(self, maxAgeHours=3.5, isTermSensitive=None):
+        if isTermSensitive is None:
+            isTermSensitive = not self.filePath.lower().endswith("_canvas_outcomes.csv")
+        return isFileRecent(
+            self.localSetup,
+            self.filePath,
+            maxAgeHours,
+            isTermSensitive=isTermSensitive
+        )
 
     ## Request a new report from Canvas and download it
     def getOrCreateReport(self, attempt=0, maxAttempts=3):
@@ -179,15 +186,15 @@ class CanvasReport:
         return self.filePath
 
     ## Get the current report if it's fresh, otherwise request a new one
-    def getCurrentReport(self, maxAgeHours=3.5):
+    def getCurrentReport(self, maxAgeHours=3.5, isTermSensitive=None):
         # Return the current report if it's fresh, otherwise get a new one
-        if self.isCurrent(maxAgeHours):
+        if self.isCurrent(maxAgeHours, isTermSensitive=isTermSensitive):
             return self.filePath
         return self.getOrCreateReport()
 
     ## Get the current report if it's fresh, otherwise request a new one and load it into a pandas DataFrame
-    def getCurrentDataFrame(self, maxAgeHours=3.5):
-        self.getCurrentReport(maxAgeHours)
+    def getCurrentDataFrame(self, maxAgeHours=3.5, isTermSensitive=None):
+        self.getCurrentReport(maxAgeHours, isTermSensitive=isTermSensitive)
         targetDf = None
         attempt = 0
         while targetDf is None and attempt < 10:
@@ -394,7 +401,7 @@ class CanvasReport:
             )
 
             ## Download the file and get the path
-            targetDestination = report.getCurrentReport()
+            targetDestination = report.getCurrentReport(isTermSensitive=False)
             if not targetDestination:
                 localSetup.logger.error(f"{methodName}: Failed to get report for term={term}, account={account}.")
                 return pd.DataFrame()
@@ -687,7 +694,7 @@ class CanvasReport:
             targetDestination = os.path.join(outputFilePath, fileName)
 
             # If file is recent, return it
-            if isFileRecent(localSetup, targetDestination):
+            if isFileRecent(localSetup, targetDestination, isTermSensitive=True):
                 localSetup.logger.info(f"{targetDestination} is up to date.")
                 return pd.read_excel(targetDestination)
 
@@ -1277,7 +1284,7 @@ class CanvasReport:
             rawOutputFilePath = os.path.join(outputPath, rawOutputFileName)
 
             # If file exists and is recent, return it
-            if isFileRecent(localSetup, filePath=outputFilePath):
+            if isFileRecent(localSetup, filePath=outputFilePath, isTermSensitive=True):
                     localSetup.logger.info(f"Outcome file {outcomeFileName} is up to date.")
                     return pd.read_excel(outputFilePath)
 

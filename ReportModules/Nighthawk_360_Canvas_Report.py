@@ -2,7 +2,7 @@
 ## Last Updated by: Bryce Miller
 
 ## External libraries
-import os, sys, json, pandas as pd, shutil, time
+import os, re, sys, json, pandas as pd, shutil, time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from typing import Optional
@@ -722,25 +722,36 @@ def getNighthawk360Data(p1_oldEnrollmentDataDf):
             ]["course_id"].tolist()
 
 
-        ## Load Canvas enrollments
-        undgCanvasEnrollmentsDf = CanvasReport.getEnrollmentsDf(localSetup, term=currentTermCodes[0], includeDeleted=True)
-        gradCanvasEnrollmentsDf = CanvasReport.getEnrollmentsDf(localSetup, term=currentTermCodes[1], includeDeleted=True)
-        combinedCanvasEnrollmentsDf = pd.concat([undgCanvasEnrollmentsDf, gradCanvasEnrollmentsDf], ignore_index=True)
+        ## Load Canvas enrollments for both current and previous term codes
+        canvasEnrollmentDfs = []
+        for termCode in currentTermCodes:
+            termEnrollmentsDf = CanvasReport.getEnrollmentsDf(localSetup, term=termCode, includeDeleted=True)
+            if isPresent(termEnrollmentsDf):
+                canvasEnrollmentDfs.append(termEnrollmentsDf)
+        combinedCanvasEnrollmentsDf = (
+            pd.concat(canvasEnrollmentDfs, ignore_index=True)
+            if canvasEnrollmentDfs else pd.DataFrame()
+        )
+
+        ## Define the term pattern to search for any of the current terms
+        termPattern = "|".join(re.escape(term) for term in currentTerms)
 
         filteredCanvasEnrollmentsDf = combinedCanvasEnrollmentsDf[
             (combinedCanvasEnrollmentsDf["role"] == "student") &
             (~combinedCanvasEnrollmentsDf["course_id"].str.contains("CHPL1000_01", na=False)) &
-            (
-                combinedCanvasEnrollmentsDf["course_id"].str.contains(currentTerms[0]) |
-                combinedCanvasEnrollmentsDf["course_id"].str.contains(currentTerms[1])
-            )
+            (combinedCanvasEnrollmentsDf["course_id"].astype(str).str.contains(termPattern, na=False))
         ]
 
-
-        ## Load unpublished courses
-        undgUnpublishedCoursesDf = CanvasReport.getUnpublishedCoursesDf(localSetup, term=currentTermCodes[0])
-        gradUnpublishedCoursesDf = CanvasReport.getUnpublishedCoursesDf(localSetup, term=currentTermCodes[1])
-        combinedUnpublishedCoursesDf = pd.concat([undgUnpublishedCoursesDf, gradUnpublishedCoursesDf], ignore_index=True)
+        ## Load unpublished courses for both current and previous term codes
+        unpublishedCoursesDfs = []
+        for termCode in currentTermCodes:
+            termUnpublishedDf = CanvasReport.getUnpublishedCoursesDf(localSetup, term=termCode)
+            if isPresent(termUnpublishedDf):
+                unpublishedCoursesDfs.append(termUnpublishedDf)
+        combinedUnpublishedCoursesDf = (
+            pd.concat(unpublishedCoursesDfs, ignore_index=True)
+            if unpublishedCoursesDfs else pd.DataFrame()
+        )
         unpublishedCoursesList = combinedUnpublishedCoursesDf["sis id"].tolist()
 
         ## Load SIS enrollments
@@ -748,10 +759,7 @@ def getNighthawk360Data(p1_oldEnrollmentDataDf):
         filteredSisEnrollmentsDf = sisEnrollmentsDf[
             (sisEnrollmentsDf["role"] == "student") &
             (~sisEnrollmentsDf["course_id"].str.contains("CHPL1000_01")) &
-            (
-                sisEnrollmentsDf["course_id"].str.contains(currentTerms[0]) |
-                sisEnrollmentsDf["course_id"].str.contains(currentTerms[1])
-            )
+            (sisEnrollmentsDf["course_id"].astype(str).str.contains(termPattern, na=False))
         ].drop_duplicates(subset=["course_id", "user_id"]).copy()
 
         ## Set the user_id to string type to avoid mismatches
@@ -981,7 +989,7 @@ def Nighthawk360CanvasReport():
                         localSetup.logger.warning(
                             f"Error: {Error}\nOccurred while processing {p1_courseKey}:{p1_dataPoints[p1_courseKey]} for Student ID: {str(p1_stuId)}"
                         )
-                        ErrorHandler.sendError("functionName", p1_ErrorInfo=...)
+                        ErrorHandler.sendError("functionName", p1_ErrorInfo=str(Error))
 
         ## Copy files to external output path
         shutil.copy(activityFilePath, activityPath)
