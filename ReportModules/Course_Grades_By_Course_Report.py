@@ -188,9 +188,8 @@ def CourseGradesByCourseReport() -> dict[str, str]:
 
         currentTerms = sorted(localSetup.getCurrentTerms())
         if currentTerms:
-            termPattern = "|".join(re.escape(term) for term in currentTerms)
             activeSisEnrollmentsDf = activeSisEnrollmentsDf[
-                activeSisEnrollmentsDf["course_id"].str.contains(termPattern, na=False)
+                activeSisEnrollmentsDf["course_id"].str.startswith(tuple(currentTerms), na=False)
             ].copy()
 
         if activeSisEnrollmentsDf.empty:
@@ -240,7 +239,7 @@ def CourseGradesByCourseReport() -> dict[str, str]:
         referenceDate = localSetup.initialDateTime
         if {"course_id", "start_date", "end_date"}.issubset(coursesDf.columns):
             finalsWindowCoursesDf = coursesDf[
-                coursesDf["course_id"].astype(str).str.contains("|".join(re.escape(term) for term in currentTerms), na=False)
+                coursesDf["course_id"].astype(str).str.startswith(tuple(currentTerms), na=False)
             ].copy() if currentTerms else coursesDf.copy()
             finalsWindowCoursesDf = finalsWindowCoursesDf[
                 finalsWindowCoursesDf.apply(
