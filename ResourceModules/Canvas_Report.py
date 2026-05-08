@@ -45,7 +45,7 @@ class CanvasReport:
         self.reportType = reportType
         self.apiUrl = apiUrl or coreCanvasApiUrl
         self.header = header or {'Authorization' : f"Bearer {canvasAccessToken}"}
-        self.termCode = termCode
+        self.termCode = self._normalizeSisTermCode(termCode)
         self.accountName = accountName
         self.hasIncludeDeletedOption = includeDeleted is not None
         self.requestedIncludeDeleted = bool(includeDeleted) if self.hasIncludeDeletedOption else False
@@ -97,11 +97,46 @@ class CanvasReport:
             suffix += "_including_deleted"
         return f"{self.termCode or 'All'}_{suffix}.csv"
 
+    def _normalizeSisTermCode(self, termCode):
+        """
+        Normalize SIS term code to the canonical short format used by provisioning reports.
+
+        Args:
+            termCode (str | None): The incoming SIS term code.
+
+        Returns:
+            str | None: Canonical SIS term code (e.g., GS26), or original value when no conversion applies.
+        """
+        if termCode is None:
+            return None
+
+        normalizedTermCode = str(termCode).strip()
+        if not normalizedTermCode:
+            return normalizedTermCode
+
+        if len(normalizedTermCode) >= 6 and normalizedTermCode[2:].isdigit():
+            yearPortion = normalizedTermCode[2:]
+            if len(yearPortion) == 4:
+                return f"{normalizedTermCode[:2]}{yearPortion[-2:]}"
+
+        return normalizedTermCode
+
     ## Build the output directory path based on term code and current year
     def _buildOutputPath(self):
         if self.termCode and self.termCode not in ("All", "Default Term"):
             # Extract year and term prefix
-            termYear = int(str(self.localSetup.dateDict['century']) + self.termCode[2:])
+            termSuffix = str(self.termCode[2:]).strip()
+            if len(termSuffix) == 2 and termSuffix.isdigit():
+                termYear = 2000 + int(termSuffix)
+            elif len(termSuffix) == 4 and termSuffix.isdigit():
+                termYear = int(termSuffix)
+            else:
+                centuryValue = str(self.localSetup.dateDict.get('century', '20')).strip()
+                if len(centuryValue) >= 2 and centuryValue.isdigit():
+                    centuryPrefix = centuryValue[:2]
+                else:
+                    centuryPrefix = "20"
+                termYear = int(f"{centuryPrefix}{termSuffix}") if termSuffix.isdigit() else datetime.now().year
             termPrefix = self.termCode[:2]
 
             # Determine term name (Fall, Spring, Summer)
@@ -1073,34 +1108,39 @@ class CanvasReport:
                 targetCol = "canvas_account_id"
 
             # Locate the row for the given account ID
-            rowIdx = accountsDf.index.get_loc(
-                accountsDf[accountsDf[targetCol] == courseAccountId].index[0]
-            )
+            accountMatchesDf = accountsDf[accountsDf[targetCol] == courseAccountId]
+            if accountMatchesDf.empty:
+                return []
+
+            currentRow = accountMatchesDf.iloc[0]
 
             # Collect account names from leaf up to root
-            hierarchy = [accountsDf["name"][rowIdx]]
+            hierarchy = [str(currentRow.get("name", "")).strip()]
 
-            _rawParentId = accountsDf["canvas_parent_id"][rowIdx]
-            parentId: int | None = None
-            if isinstance(_rawParentId, (int, float)):
+            def _toOptionalInt(rawValue):
+                ## Normalize mixed scalar types (including numpy scalar values) to int or None
+                rawText = str(rawValue).strip()
+                if not rawText or rawText.lower() == "nan":
+                    return None
+
                 try:
-                    parentId = int(_rawParentId)
+                    return int(float(rawText))
                 except (ValueError, TypeError, OverflowError):
-                    pass
+                    return None
+
+            parentId: int | None = _toOptionalInt(currentRow.get("canvas_parent_id", None))
 
             while parentId is not None and parentId != 1:
-                parentRowIdx = accountsDf.index.get_loc(
-                    accountsDf[accountsDf["canvas_account_id"] == parentId].index[0]
-                )
-                hierarchy.insert(0, accountsDf["name"][parentRowIdx])
-                _rawParentId = accountsDf["canvas_parent_id"][parentRowIdx]
-                if isinstance(_rawParentId, (int, float)):
-                    try:
-                        parentId = int(_rawParentId)
-                    except (ValueError, TypeError, OverflowError):
-                        parentId = None
-                else:
-                    parentId = None
+                parentMatchesDf = accountsDf[
+                    pd.to_numeric(accountsDf["canvas_account_id"], errors="coerce") == float(parentId)
+                ]
+                if parentMatchesDf.empty:
+                    break
+
+                parentRow = parentMatchesDf.iloc[0]
+                hierarchy.insert(0, str(parentRow.get("name", "")).strip())
+                _rawParentId = parentRow.get("canvas_parent_id", None)
+                parentId = _toOptionalInt(_rawParentId)
 
             return hierarchy
 

@@ -460,9 +460,8 @@ def retrieveDataForRelevantCommunication (p1_localSetup
         ## Capture a single reference date for determineCourseWeek consistency
         referenceDate = datetime.now()
 
-        ## Get the year of the term (supports FA25 and FA2025 input formats)
-        termYearDigits = str(p2_inputTerm[2:]).strip()
-        termYear = int(termYearDigits) if len(termYearDigits) == 4 else int(f"{p1_localSetup.dateDict['century']}{termYearDigits}")
+        ## Get the year of the term
+        termYear = int(f"{p1_localSetup.dateDict['century']}{p2_inputTerm[2:]}")
         termPrefix = p2_inputTerm[:2]
         termWord = p1_localSetup._determineTermName(termPrefix)
 
@@ -1128,6 +1127,470 @@ def getUniqueOutcomesAndOutcomeCoursesDict (p1_localSetup, p1_errorHandler, p3_i
     except Exception as Error:
         p1_errorHandler.sendError (functionName, Error)
         return [], {}
+
+
+## ============================================================================
+## Course Grades By Course Helpers
+## ============================================================================
+
+## Sanitize a value for safe use as a file-system path component
+def _sanitizePathComponentForGrades(p1_rawValue, p2_fallback: str = "Unknown") -> str:
+    """
+    Sanitize a raw value so it can be used as a folder or file name component.
+
+    Args:
+        p1_rawValue: Source value to sanitize.
+        p2_fallback (str): Default value used when the source is blank.
+
+    Returns:
+        str: Sanitized path-safe text.
+    """
+    rawText = str(p1_rawValue).strip() if p1_rawValue is not None else ""
+    if not rawText:
+        rawText = p2_fallback
+    sanitized = re.sub(r'[<>:"/\\|?*]+', "_", rawText)
+    sanitized = sanitized.replace("..", "_")
+    sanitized = re.sub(r"\s+", " ", sanitized).strip().strip(".")
+    return sanitized or p2_fallback
+
+
+## Format instructor folder text using complete instructor names
+def _formatInstructorFullNamesForGrades(p1_instructorNames: list[str], p2_defaultName: str = "Unknown Instructor Name") -> str:
+    """
+    Format instructor names using full names while preserving input order and uniqueness.
+
+    Args:
+        p1_instructorNames (list[str]): Instructor full names.
+        p2_defaultName (str): Fallback text when no valid names are available.
+
+    Returns:
+        str: Human-readable full-name list for folder naming.
+    """
+    fullNames = [
+        str(name).strip()
+        for name in p1_instructorNames
+        if str(name).strip() and str(name).strip().lower() != "nan"
+    ]
+    uniqueFullNames = list(dict.fromkeys(fullNames))
+
+    if not uniqueFullNames:
+        return p2_defaultName
+    if len(uniqueFullNames) == 1:
+        return uniqueFullNames[0]
+    return ", ".join(uniqueFullNames[:-1]) + f", and {uniqueFullNames[-1]}"
+
+
+## Join path components under a trusted root and reject path traversal
+def _safeJoinUnderRootForGrades(p1_rootPath: str, *p2_components: str) -> str:
+    """
+    Safely join path components under a fixed root directory.
+
+    Args:
+        p1_rootPath (str): Root directory that output paths must stay under.
+        *p2_components (str): Child path components to join.
+
+    Returns:
+        str: Absolute safe path under p1_rootPath.
+
+    Raises:
+        ValueError: If the resolved path escapes p1_rootPath.
+    """
+    absoluteRoot = os.path.abspath(p1_rootPath)
+    candidatePath = os.path.abspath(os.path.join(absoluteRoot, *p2_components))
+    if not candidatePath.startswith(absoluteRoot + os.sep):
+        raise ValueError(f"Unsafe output path resolved outside root: {candidatePath}")
+    return candidatePath
+
+
+## Build unique assignment column names so duplicate assignment titles do not collide
+def _uniqueAssignmentColumnNamesForGrades(p1_assignments: list[dict]) -> list[str]:
+    """
+    Create unique, sanitized output column names for assignment titles.
+
+    Args:
+        p1_assignments (list[dict]): Assignment objects returned by Canvas.
+
+    Returns:
+        list[str]: Unique assignment column names in input order.
+    """
+    seen: dict[str, int] = {}
+    columnNames: list[str] = []
+
+    for assignment in p1_assignments:
+        assignmentName = _sanitizePathComponentForGrades(
+            assignment.get("name", ""),
+            p2_fallback="Unnamed Assignment",
+        )
+        baseName = assignmentName
+
+        if baseName in seen:
+            seen[baseName] += 1
+            assignmentName = f"{baseName}_{seen[baseName]}"
+        else:
+            seen[baseName] = 1
+
+        columnNames.append(assignmentName)
+
+    return columnNames
+
+
+## Retrieve all published assignments for a Canvas SIS course
+def _getCourseAssignmentsForGrades(p1_localSetup: LocalSetup, p2_courseId: str) -> list[dict]:
+    """
+    Retrieve published assignments for a Canvas course identified by SIS course ID.
+
+    Args:
+        p1_localSetup (LocalSetup): Local setup for API/logging context.
+        p2_courseId (str): Canvas SIS course ID.
+
+    Returns:
+        list[dict]: Published assignment objects.
+    """
+    assignmentsUrl = f"{coreCanvasApiUrl}courses/sis_course_id:{p2_courseId}/assignments"
+    apiCallResult = makeApiCall(p1_localSetup, p1_apiUrl=assignmentsUrl)
+    if apiCallResult is None:
+        return []
+    assignmentsResponse, assignmentResponsePages = apiCallResult
+    assignmentObjects = [assignmentsResponse]
+    if assignmentResponsePages is not None and len(assignmentResponsePages) > 0:
+        assignmentObjects.extend(assignmentResponsePages)
+    assignmentList = flattenApiObjectToJsonList(p1_localSetup, assignmentObjects, assignmentsUrl)
+    return [assignment for assignment in assignmentList if assignment.get("published") is True]
+
+
+## Retrieve all submissions for one assignment in a Canvas SIS course
+def _getAssignmentSubmissionsForGrades(p1_localSetup: LocalSetup, p2_courseId: str, p3_assignmentId) -> list[dict]:
+    """
+    Retrieve submissions for a single assignment in a Canvas SIS course.
+
+    Args:
+        p1_localSetup (LocalSetup): Local setup for API/logging context.
+        p2_courseId (str): Canvas SIS course ID.
+        p3_assignmentId: Canvas assignment ID.
+
+    Returns:
+        list[dict]: Submission objects for the assignment.
+    """
+    submissionsUrl = f"{coreCanvasApiUrl}courses/sis_course_id:{p2_courseId}/assignments/{p3_assignmentId}/submissions"
+    submissionsPayload = {"include[]": ["user"]}
+    apiCallResult = makeApiCall(
+        p1_localSetup,
+        p1_apiUrl=submissionsUrl,
+        p1_payload=submissionsPayload,
+    )
+    if apiCallResult is None:
+        return []
+    submissionsResponse, submissionsPages = apiCallResult
+    submissionObjects = [submissionsResponse]
+    if submissionsPages is not None and len(submissionsPages) > 0:
+        submissionObjects.extend(submissionsPages)
+    return flattenApiObjectToJsonList(p1_localSetup, submissionObjects, submissionsUrl)
+
+
+## Build the final output folder path for a course export file
+def _buildCourseOutputPathForGrades(
+    p1_localSetup: LocalSetup,
+    p2_courseId: str,
+    p3_courseAccountId: int | None,
+    p4_instructorNames: list[str],
+    p5_sisCourseRow,
+    p6_accountsDf: pd.DataFrame,
+) -> str:
+    """
+    Build a hierarchical output path for a course grade export file.
+
+    Args:
+        p1_localSetup (LocalSetup): Local setup object for path resolution.
+        p2_courseId (str): Canvas SIS course ID.
+        p3_courseAccountId (int | None): Canvas account ID for hierarchy lookup.
+        p4_instructorNames (list[str]): Instructor names associated with the course.
+        p5_sisCourseRow: SIS course row for term/course metadata.
+        p6_accountsDf (pd.DataFrame): Canvas accounts dataframe used for hierarchy resolution.
+
+    Returns:
+        str: Final output folder path under the Canvas internal resources root.
+    """
+    rootOutputPath = os.path.join(p1_localSetup.getInternalResourcePaths("Canvas"), "Course_Grade_Exports")
+    hierarchyComponents: list[str] = []
+
+    if p3_courseAccountId is not None:
+        structureDict = CanvasReport.determineCollegeDepartmentDiscipline(
+            p1_localSetup,
+            p3_courseAccountId,
+            accountsDf=p6_accountsDf,
+        )
+        hierarchyComponents = [
+            _sanitizePathComponentForGrades(component)
+            for component in structureDict.get("Path_Components", [])
+            if str(component).strip()
+        ]
+
+    instructorFolder = _sanitizePathComponentForGrades(
+        _formatInstructorFullNamesForGrades(
+            p4_instructorNames,
+            p2_defaultName="Unknown Instructor Name",
+        ),
+        p2_fallback="Unknown Instructor Name",
+    )
+
+    return _safeJoinUnderRootForGrades(
+        rootOutputPath,
+        *hierarchyComponents,
+        instructorFolder,
+    )
+
+
+## Process one course and return the output file path when an export is created
+def _processSingleCourseGradeExport(
+    p1_localSetup: LocalSetup,
+    p2_errorHandler,
+    p3_courseId: str,
+    p4_mergedStudentEnrollmentsDf: pd.DataFrame,
+    p5_canvasEnrollmentsDf: pd.DataFrame,
+    p6_usersByCanvasId: pd.DataFrame,
+    p7_sisCoursesByCourseId: pd.DataFrame,
+    p8_canvasCoursesBySisId: pd.DataFrame,
+    p9_accountsDf: pd.DataFrame,
+):
+    """
+    Build and write one course grade export file.
+
+    Args:
+        p1_localSetup (LocalSetup): Local setup for logging and paths.
+        p2_errorHandler: Error handler for exception reporting.
+        p3_courseId (str): Target course SIS ID.
+        p4_mergedStudentEnrollmentsDf (pd.DataFrame): Joined SIS/Canvas student enrollments.
+        p5_canvasEnrollmentsDf (pd.DataFrame): Canvas enrollments dataframe.
+        p6_usersByCanvasId (pd.DataFrame): Users lookup indexed by canvas_user_id.
+        p7_sisCoursesByCourseId (pd.DataFrame): SIS courses indexed by course id.
+        p8_canvasCoursesBySisId (pd.DataFrame): Canvas courses indexed by SIS course id.
+        p9_accountsDf (pd.DataFrame): Accounts dataframe for hierarchy lookup.
+
+    Returns:
+        tuple[str, str | None]: course_id and output path (or None when skipped).
+    """
+    functionName = "_processSingleCourseGradeExport"
+    try:
+        p1_localSetup.logger.info(f"Processing course {p3_courseId}")
+
+        ## Step 1: Isolate target course student enrollments
+        courseStudentEnrollmentsDf = p4_mergedStudentEnrollmentsDf[
+            p4_mergedStudentEnrollmentsDf["course_id"] == p3_courseId
+        ].drop_duplicates(subset=["course_id", "user_id"])
+        if courseStudentEnrollmentsDf.empty:
+            return p3_courseId, None
+
+        ## Step 2: Gather assignments and initialize student rows
+        assignments = _getCourseAssignmentsForGrades(p1_localSetup, p3_courseId)
+        assignments = sorted(assignments, key=lambda assignment: str(assignment.get("position", assignment.get("id", ""))))
+        assignmentColumnNames = _uniqueAssignmentColumnNamesForGrades(assignments)
+        if not assignmentColumnNames:
+            p1_localSetup.logger.info(f"Skipping course {p3_courseId}: no published assignments found.")
+            return p3_courseId, None
+
+        assignmentColumnById = {
+            assignment.get("id"): assignmentColumn
+            for assignment, assignmentColumn in zip(assignments, assignmentColumnNames)
+        }
+
+        studentRows = []
+        for _, enrollmentRow in courseStudentEnrollmentsDf.iterrows():
+            sisUserId = str(enrollmentRow["user_id"]).strip()
+            canvasUserId = str(enrollmentRow.get("canvas_user_id", "")).strip()
+            studentName = ""
+
+            if isPresent(p6_usersByCanvasId) and canvasUserId and canvasUserId in p6_usersByCanvasId.index:
+                userRow = p6_usersByCanvasId.loc[canvasUserId]
+                if isinstance(userRow, pd.DataFrame):
+                    userRow = userRow.iloc[0]
+                studentName = str(userRow.get("full_name", "")).strip()
+
+            rowData = {
+                "course_id": p3_courseId,
+                "student_sis_id": sisUserId,
+                "student_canvas_id": canvasUserId,
+                "student_name": studentName,
+            }
+            for assignmentColumn in assignmentColumnNames:
+                rowData[assignmentColumn] = ""
+            studentRows.append(rowData)
+
+        outputDf = pd.DataFrame(studentRows)
+        rowIndexByCanvasUserId: dict[str, int] = {
+            str(outputDf.at[idx, "student_canvas_id"]).strip(): int(idx)
+            for idx in range(len(outputDf))
+            if str(outputDf.at[idx, "student_canvas_id"]).strip()
+        }
+
+        ## Step 3: Populate assignment grades
+        for assignment in assignments:
+            assignmentId = assignment.get("id")
+            if assignmentId in [None, ""]:
+                continue
+            assignmentColumn = assignmentColumnById.get(assignmentId)
+            if not assignmentColumn:
+                continue
+
+            assignmentSubmissions = _getAssignmentSubmissionsForGrades(p1_localSetup, p3_courseId, assignmentId)
+            for submission in assignmentSubmissions:
+                submissionCanvasUserId = str(submission.get("user_id", "")).strip()
+                if not submissionCanvasUserId or submissionCanvasUserId not in rowIndexByCanvasUserId:
+                    continue
+
+                gradeValue = submission.get("score")
+                if gradeValue in [None, ""]:
+                    gradeValue = submission.get("entered_score")
+                if gradeValue in [None, ""]:
+                    gradeValue = submission.get("grade")
+
+                targetRowIndex = rowIndexByCanvasUserId[submissionCanvasUserId]
+                outputDf.at[targetRowIndex, assignmentColumn] = gradeValue if gradeValue is not None else ""
+
+        ## Step 4: Skip courses that have no populated grades
+        courseHasAnyGrades = outputDf[assignmentColumnNames].apply(
+            lambda series: series.astype(str).str.strip().ne("")
+        ).any().any()
+        if not courseHasAnyGrades:
+            p1_localSetup.logger.info(f"Skipping course {p3_courseId}: no grades found.")
+            return p3_courseId, None
+
+        ## Step 5: Resolve instructor names for path metadata
+        instructorNames = []
+        courseInstructorEnrollmentsDf = p5_canvasEnrollmentsDf[
+            (p5_canvasEnrollmentsDf["course_id"] == p3_courseId)
+            & (p5_canvasEnrollmentsDf["role"] == "teacher")
+            & (p5_canvasEnrollmentsDf["status"] != "deleted")
+        ]
+        if isPresent(courseInstructorEnrollmentsDf):
+            for _, instructorEnrollment in courseInstructorEnrollmentsDf.iterrows():
+                instructorCanvasId = str(instructorEnrollment.get("canvas_user_id", "")).strip()
+                if isPresent(p6_usersByCanvasId) and instructorCanvasId and instructorCanvasId in p6_usersByCanvasId.index:
+                    userRow = p6_usersByCanvasId.loc[instructorCanvasId]
+                    if isinstance(userRow, pd.DataFrame):
+                        userRow = userRow.iloc[0]
+                    instructorName = str(userRow.get("full_name", "")).strip() or str(userRow.get("name", "")).strip()
+                    if instructorName:
+                        instructorNames.append(instructorName)
+
+        ## Step 6: Resolve course/account metadata for folder path
+        sisCourseRow = None
+        if isPresent(p7_sisCoursesByCourseId) and p3_courseId in p7_sisCoursesByCourseId.index:
+            sisCourseRow = p7_sisCoursesByCourseId.loc[p3_courseId]
+            if isinstance(sisCourseRow, pd.DataFrame):
+                sisCourseRow = sisCourseRow.iloc[0]
+
+        courseAccountId: int | None = None
+        if isPresent(p8_canvasCoursesBySisId) and p3_courseId in p8_canvasCoursesBySisId.index:
+            canvasCourseRow = p8_canvasCoursesBySisId.loc[p3_courseId]
+            if isinstance(canvasCourseRow, pd.DataFrame):
+                canvasCourseRow = canvasCourseRow.iloc[0]
+            rawAccountId = canvasCourseRow.get("canvas_account_id", "")
+            if rawAccountId in ["", None]:
+                rawAccountId = canvasCourseRow.get("account_id", "")
+            try:
+                courseAccountId = int(float(rawAccountId))
+            except (TypeError, ValueError):
+                courseAccountId = None
+
+        ## Step 7: Write Excel output
+        outputFolder = _buildCourseOutputPathForGrades(
+            p1_localSetup=p1_localSetup,
+            p2_courseId=p3_courseId,
+            p3_courseAccountId=courseAccountId,
+            p4_instructorNames=instructorNames,
+            p5_sisCourseRow=sisCourseRow,
+            p6_accountsDf=p9_accountsDf,
+        )
+        os.makedirs(outputFolder, exist_ok=True)
+
+        outputFilePath = os.path.join(outputFolder, f"{_sanitizePathComponentForGrades(p3_courseId)}.xlsx")
+        outputDf.to_excel(outputFilePath, index=False)
+        return p3_courseId, outputFilePath
+
+    except Exception as Error:
+        p2_errorHandler.sendError(functionName, Error)
+        return p3_courseId, None
+
+
+## Build course-grade exports using threaded course workers
+def runCourseGradeExportsThreaded(
+    p1_localSetup: LocalSetup,
+    p1_errorHandler,
+    p2_mergedStudentEnrollmentsDf: pd.DataFrame,
+    p2_canvasEnrollmentsDf: pd.DataFrame,
+    p2_usersByCanvasId: pd.DataFrame,
+    p2_sisCoursesByCourseId: pd.DataFrame,
+    p2_canvasCoursesBySisId: pd.DataFrame,
+    p2_accountsDf: pd.DataFrame,
+    p2_maxWorkers: int = 15,
+) -> dict[str, str]:
+    """
+    Build course grade export files using threaded per-course workers.
+
+    Args:
+        p1_localSetup (LocalSetup): Local setup for logging and paths.
+        p1_errorHandler: Error handler for exception reporting.
+        p2_mergedStudentEnrollmentsDf (pd.DataFrame): Joined SIS/Canvas student enrollments.
+        p2_canvasEnrollmentsDf (pd.DataFrame): Canvas enrollments dataframe.
+        p2_usersByCanvasId (pd.DataFrame): Users lookup indexed by canvas_user_id.
+        p2_sisCoursesByCourseId (pd.DataFrame): SIS courses indexed by course id.
+        p2_canvasCoursesBySisId (pd.DataFrame): Canvas courses indexed by SIS course id.
+        p2_accountsDf (pd.DataFrame): Accounts dataframe for hierarchy lookup.
+        p2_maxWorkers (int): Thread-pool size for course workers.
+
+    Returns:
+        dict[str, str]: Mapping of course_id to output export path.
+    """
+    functionName = "runCourseGradeExportsThreaded"
+    outputFilesByCourseId: dict[str, str] = {}
+
+    try:
+        ## Step 1: Build deterministic unique course list from merged enrollments
+        uniqueCourseIds = sorted(
+            p2_mergedStudentEnrollmentsDf["course_id"]
+            .dropna()
+            .astype(str)
+            .str.strip()
+            .unique()
+            .tolist()
+        )
+
+        if not uniqueCourseIds:
+            return outputFilesByCourseId
+
+        ## Step 2: Submit one worker per course
+        with ThreadPoolExecutor(max_workers=p2_maxWorkers) as executor:
+            futureByCourseId = {
+                executor.submit(
+                    _processSingleCourseGradeExport,
+                    p1_localSetup,
+                    p1_errorHandler,
+                    courseId,
+                    p2_mergedStudentEnrollmentsDf,
+                    p2_canvasEnrollmentsDf,
+                    p2_usersByCanvasId,
+                    p2_sisCoursesByCourseId,
+                    p2_canvasCoursesBySisId,
+                    p2_accountsDf,
+                ): courseId
+                for courseId in uniqueCourseIds
+            }
+
+            ## Step 3: Collect worker results
+            for future in as_completed(futureByCourseId):
+                courseId = futureByCourseId[future]
+                try:
+                    resultCourseId, outputFilePath = future.result()
+                    if outputFilePath:
+                        outputFilesByCourseId[resultCourseId] = outputFilePath
+                except Exception as Error:
+                    p1_localSetup.logger.error(f"{functionName}: Failed for course {courseId}: {Error}")
+
+        return outputFilesByCourseId
+
+    except Exception as Error:
+        p1_errorHandler.sendError(functionName, Error)
+        return outputFilesByCourseId
 
 
 ## ══════════════════════════════════════════════════════════════════════════════

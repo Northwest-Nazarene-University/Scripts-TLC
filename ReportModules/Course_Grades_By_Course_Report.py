@@ -14,9 +14,9 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules")
 
 ## New resource modules
 from Local_Setup import LocalSetup
-from TLC_Common import makeApiCall, flattenApiObjectToJsonList, formatInstructorFirstNames, isPresent
+from TLC_Common import makeApiCall, flattenApiObjectToJsonList, isPresent
 from Canvas_Report import CanvasReport
-from TLC_Action import determineCourseWeek
+from TLC_Action import determineCourseWeek, runCourseGradeExportsThreaded
 from Common_Configs import coreCanvasApiUrl
 from Error_Email import errorEmail
 
@@ -24,7 +24,7 @@ from Error_Email import errorEmail
 scriptName = os.path.basename(__file__).replace(".py", "")
 
 scriptPurpose = r"""
-Generate one CSV per Canvas SIS course containing grades for all active SIS-enrolled students
+Generate one Excel file per Canvas SIS course containing grades for all active SIS-enrolled students
 across all published assignments, saved to an account/instructor/SIS-metadata path structure.
 """
 externalRequirements = r"""
@@ -86,6 +86,28 @@ def uniqueAssignmentColumnNames(assignments: list[dict]) -> list[str]:
         columnNames.append(assignmentName)
 
     return columnNames
+
+
+## Format instructor folder text using complete instructor names
+def formatInstructorFullNames(instructorNames: list[str], defaultName: str = "Unknown Instructor Name") -> str:
+    """
+    Format instructor names using full names while preserving input order and uniqueness.
+
+    Args:
+        instructorNames (list[str]): Instructor full names.
+        defaultName (str): Fallback text when no valid names are available.
+
+    Returns:
+        str: Human-readable full-name list for folder naming.
+    """
+    fullNames = [str(name).strip() for name in instructorNames if str(name).strip() and str(name).strip().lower() != "nan"]
+    uniqueFullNames = list(dict.fromkeys(fullNames))
+
+    if not uniqueFullNames:
+        return defaultName
+    if len(uniqueFullNames) == 1:
+        return uniqueFullNames[0]
+    return ", ".join(uniqueFullNames[:-1]) + f", and {uniqueFullNames[-1]}"
 
 
 ## Determine if a course is currently within four weeks of finals week
@@ -213,8 +235,8 @@ def buildCourseOutputPath(
         hierarchyComponents = [sanitizePathComponent(component) for component in structureDict.get("Path_Components", []) if str(component).strip()]
 
     instructorFolder = sanitizePathComponent(
-        formatInstructorFirstNames(instructorNames, defaultName="Instructor"),
-        fallback="Instructor",
+        formatInstructorFullNames(instructorNames, defaultName="Unknown Instructor Name"),
+        fallback="Unknown Instructor Name",
     )
 
     termId = ""
@@ -253,7 +275,7 @@ def buildCourseOutputPath(
 ## Generate one grades CSV per course for active SIS student enrollments
 def CourseGradesByCourseReport() -> dict[str, str]:
     """
-    Build per-course grade export CSV files for active SIS student enrollments.
+    Build per-course grade export Excel files for active SIS student enrollments.
 
     Returns:
         dict[str, str]: Mapping of course_id to generated output CSV file path.
@@ -297,7 +319,7 @@ def CourseGradesByCourseReport() -> dict[str, str]:
         canvasEnrollmentFrames: list[pd.DataFrame] = []
 
         for termCode in currentTerms:
-            termEnrollmentsDf = CanvasReport.getEnrollmentsDf(localSetup, term=termCode, includeDeleted=True)
+            termEnrollmentsDf = CanvasReport.getEnrollmentsDf(localSetup, term=termCode, includeDeleted=False)
             if isPresent(termEnrollmentsDf):
                 canvasEnrollmentFrames.append(termEnrollmentsDf)
 
@@ -310,6 +332,8 @@ def CourseGradesByCourseReport() -> dict[str, str]:
         canvasEnrollmentsDf = canvasEnrollmentsDf.fillna("")
         canvasEnrollmentsDf["course_id"] = canvasEnrollmentsDf["course_id"].astype(str).str.strip()
         canvasEnrollmentsDf["user_id"] = canvasEnrollmentsDf["user_id"].astype(str).str.strip()
+        if "canvas_user_id" in canvasEnrollmentsDf.columns:
+            canvasEnrollmentsDf["canvas_user_id"] = canvasEnrollmentsDf["canvas_user_id"].astype(str).str.strip()
         canvasEnrollmentsDf["role"] = canvasEnrollmentsDf["role"].astype(str).str.lower()
         canvasEnrollmentsDf["status"] = canvasEnrollmentsDf["status"].astype(str).str.lower()
 
@@ -332,33 +356,39 @@ def CourseGradesByCourseReport() -> dict[str, str]:
             return {}
 
         ## Step 6: Load supporting datasets (courses, users, accounts)
-        coursesDf = CanvasReport.getCoursesDf(localSetup, term="All").fillna("")
+        ## Get the courses df for the current terms, concatenating if necessary, to support finals week filtering and course metadata in output path
+        coursesDf = pd.DataFrame()
+        for termCode in currentTerms:
+            termCoursesDf = CanvasReport.getCoursesDf(localSetup, term=termCode).fillna("")
+            coursesDf = pd.concat([coursesDf, termCoursesDf], ignore_index=True)
         usersDf = CanvasReport.getUsersDf(localSetup).fillna("")
+        if "canvas_user_id" in usersDf.columns:
+            usersDf["canvas_user_id"] = usersDf["canvas_user_id"].astype(str).str.strip()
         accountsDf = CanvasReport.getAccountsDf(localSetup).fillna("")
 
-        ## Step 7: Keep only courses currently within four weeks of finals week
-        referenceDate = localSetup.initialDateTime
-        if {"course_id", "start_date", "end_date"}.issubset(coursesDf.columns):
-            finalsWindowCoursesDf = coursesDf[
-                coursesDf["course_id"].astype(str).str.startswith(tuple(currentTerms), na=False)
-            ].copy() if currentTerms else coursesDf.copy()
-            finalsWindowCoursesDf = finalsWindowCoursesDf[
-                finalsWindowCoursesDf.apply(
-                    lambda row: isWithinFinalsWindow(
-                        row.get("start_date", ""),
-                        row.get("end_date", ""),
-                        p1_referenceDate=referenceDate,
-                    ),
-                    axis=1,
-                )
-            ]
-            finalsWindowCourseIds = set(finalsWindowCoursesDf["course_id"].astype(str).str.strip().tolist())
-            mergedStudentEnrollmentsDf = mergedStudentEnrollmentsDf[
-                mergedStudentEnrollmentsDf["course_id"].isin(finalsWindowCourseIds)
-            ].copy()
+        ## Step 7: Finals-week filtering disabled to include all current-term courses
+        # referenceDate = localSetup.initialDateTime
+        # if {"course_id", "start_date", "end_date"}.issubset(coursesDf.columns):
+        #     finalsWindowCoursesDf = coursesDf[
+        #         coursesDf["course_id"].astype(str).str.startswith(tuple(currentTerms), na=False)
+        #     ].copy() if currentTerms else coursesDf.copy()
+        #     finalsWindowCoursesDf = finalsWindowCoursesDf[
+        #         finalsWindowCoursesDf.apply(
+        #             lambda row: isWithinFinalsWindow(
+        #                 row.get("start_date", ""),
+        #                 row.get("end_date", ""),
+        #                 p1_referenceDate=referenceDate,
+        #             ),
+        #             axis=1,
+        #         )
+        #     ]
+        #     finalsWindowCourseIds = set(finalsWindowCoursesDf["course_id"].astype(str).str.strip().tolist())
+        #     mergedStudentEnrollmentsDf = mergedStudentEnrollmentsDf[
+        #         mergedStudentEnrollmentsDf["course_id"].isin(finalsWindowCourseIds)
+        #     ].copy()
 
         if mergedStudentEnrollmentsDf.empty:
-            localSetup.logger.warning("No matched enrollments are within four weeks of finals week. No files created.")
+            localSetup.logger.warning("No matched SIS/Canvas enrollments found for current terms. No files created.")
             return {}
 
         ## Step 8: Build lookup tables for faster row-level enrichment
@@ -371,131 +401,18 @@ def CourseGradesByCourseReport() -> dict[str, str]:
         sisCoursesByCourseId = sisCoursesDf.set_index(sisCourseIdColumn, drop=False) if sisCourseIdColumn else pd.DataFrame()
         canvasCoursesBySisId = coursesDf.set_index("course_id", drop=False) if "course_id" in coursesDf.columns else pd.DataFrame()
 
-        outputFilesByCourseId: dict[str, str] = {}
-        uniqueCourseIds = sorted(mergedStudentEnrollmentsDf["course_id"].dropna().astype(str).str.strip().unique().tolist())
-
-        ## Step 9: Build and write one output CSV per course
-        for courseId in uniqueCourseIds:
-            localSetup.logger.info(f"Processing course {courseId}")
-
-            courseStudentEnrollmentsDf = mergedStudentEnrollmentsDf[
-                mergedStudentEnrollmentsDf["course_id"] == courseId
-            ].drop_duplicates(subset=["course_id", "user_id"])
-
-            if courseStudentEnrollmentsDf.empty:
-                continue
-
-            assignments = getCourseAssignments(courseId)
-            assignments = sorted(assignments, key=lambda assignment: str(assignment.get("position", assignment.get("id", ""))))
-            assignmentColumnNames = uniqueAssignmentColumnNames(assignments)
-
-            assignmentColumnById = {
-                assignment.get("id"): assignmentColumn
-                for assignment, assignmentColumn in zip(assignments, assignmentColumnNames)
-            }
-
-            studentRows = []
-            for _, enrollmentRow in courseStudentEnrollmentsDf.iterrows():
-                sisUserId = str(enrollmentRow["user_id"]).strip()
-                canvasUserId = str(enrollmentRow.get("canvas_user_id", "")).strip()
-                studentName = ""
-
-                if isPresent(usersByCanvasId) and canvasUserId and canvasUserId in usersByCanvasId.index:
-                    userRow = usersByCanvasId.loc[canvasUserId]
-                    if isinstance(userRow, pd.DataFrame):
-                        userRow = userRow.iloc[0]
-                    studentName = str(userRow.get("name", "")).strip()
-
-                rowData = {
-                    "course_id": courseId,
-                    "student_sis_id": sisUserId,
-                    "student_canvas_id": canvasUserId,
-                    "student_name": studentName,
-                }
-
-                for assignmentColumn in assignmentColumnNames:
-                    rowData[assignmentColumn] = ""
-
-                studentRows.append(rowData)
-
-            outputDf = pd.DataFrame(studentRows)
-            rowIndexByCanvasUserId: dict[str, int] = {
-                str(outputDf.at[idx, "student_canvas_id"]).strip(): int(idx)
-                for idx in range(len(outputDf))
-                if str(outputDf.at[idx, "student_canvas_id"]).strip()
-            }
-
-            for assignment in assignments:
-                assignmentId = assignment.get("id")
-                if assignmentId in [None, ""]:
-                    continue
-                assignmentColumn = assignmentColumnById.get(assignmentId)
-                if not assignmentColumn:
-                    continue
-
-                assignmentSubmissions = getAssignmentSubmissions(courseId, assignmentId)
-                for submission in assignmentSubmissions:
-                    submissionCanvasUserId = str(submission.get("user_id", "")).strip()
-                    if not submissionCanvasUserId or submissionCanvasUserId not in rowIndexByCanvasUserId:
-                        continue
-
-                    gradeValue = submission.get("score")
-                    if gradeValue in [None, ""]:
-                        gradeValue = submission.get("entered_score")
-                    if gradeValue in [None, ""]:
-                        gradeValue = submission.get("grade")
-
-                    targetRowIndex = rowIndexByCanvasUserId[submissionCanvasUserId]
-                    outputDf.at[targetRowIndex, assignmentColumn] = gradeValue if gradeValue is not None else ""
-
-            instructorNames = []
-            courseInstructorEnrollmentsDf = canvasEnrollmentsDf[
-                (canvasEnrollmentsDf["course_id"] == courseId)
-                & (canvasEnrollmentsDf["role"] == "teacher")
-                & (canvasEnrollmentsDf["status"] != "deleted")
-            ]
-            if isPresent(courseInstructorEnrollmentsDf):
-                for _, instructorEnrollment in courseInstructorEnrollmentsDf.iterrows():
-                    instructorCanvasId = str(instructorEnrollment.get("canvas_user_id", "")).strip()
-                    if isPresent(usersByCanvasId) and instructorCanvasId and instructorCanvasId in usersByCanvasId.index:
-                        userRow = usersByCanvasId.loc[instructorCanvasId]
-                        if isinstance(userRow, pd.DataFrame):
-                            userRow = userRow.iloc[0]
-                        instructorName = str(userRow.get("name", "")).strip()
-                        if instructorName:
-                            instructorNames.append(instructorName)
-
-            sisCourseRow = None
-            if isPresent(sisCoursesByCourseId) and courseId in sisCoursesByCourseId.index:
-                sisCourseRow = sisCoursesByCourseId.loc[courseId]
-                if isinstance(sisCourseRow, pd.DataFrame):
-                    sisCourseRow = sisCourseRow.iloc[0]
-
-            courseAccountId: int | None = None
-            if isPresent(canvasCoursesBySisId) and courseId in canvasCoursesBySisId.index:
-                canvasCourseRow = canvasCoursesBySisId.loc[courseId]
-                if isinstance(canvasCourseRow, pd.DataFrame):
-                    canvasCourseRow = canvasCourseRow.iloc[0]
-                rawAccountId = canvasCourseRow.get("canvas_account_id", "")
-                if rawAccountId in ["", None]:
-                    rawAccountId = canvasCourseRow.get("account_id", "")
-                try:
-                    courseAccountId = int(float(rawAccountId))
-                except (TypeError, ValueError):
-                    courseAccountId = None
-
-            outputFolder = buildCourseOutputPath(
-                courseId=courseId,
-                courseAccountId=courseAccountId,
-                instructorNames=instructorNames,
-                sisCourseRow=sisCourseRow,
-                accountsDf=accountsDf,
-            )
-            os.makedirs(outputFolder, exist_ok=True)
-
-            outputFilePath = os.path.join(outputFolder, f"{sanitizePathComponent(courseId)}.csv")
-            outputDf.to_csv(outputFilePath, index=False, encoding="utf-8")
-            outputFilesByCourseId[courseId] = outputFilePath
+        ## Step 9: Build and write one output Excel file per course using threaded helper actions
+        outputFilesByCourseId = runCourseGradeExportsThreaded(
+            p1_localSetup=localSetup,
+            p1_errorHandler=errorHandler,
+            p2_mergedStudentEnrollmentsDf=mergedStudentEnrollmentsDf,
+            p3_canvasEnrollmentsDf=canvasEnrollmentsDf,
+            p4_usersByCanvasId=usersByCanvasId,
+            p5_sisCoursesByCourseId=sisCoursesByCourseId,
+            p6_canvasCoursesBySisId=canvasCoursesBySisId,
+            p7_accountsDf=accountsDf,
+            p8_maxWorkers = 100
+        )
 
         ## Step 10: Return file map for downstream usage/logging
         localSetup.logger.info(f"Completed course grade CSV pipeline with {len(outputFilesByCourseId)} files.")
