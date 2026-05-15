@@ -370,11 +370,11 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
     try:
 
         ## Run schedule-driven department communications for this term/designator.
-        sendDepartmentCommunication(
-            inputTerm=p1_inputTerm,
-            targetDesignator=p1_targetDesignator,
-            enforceOptIn=True,
-        )
+        # sendDepartmentCommunication(
+        #     inputTerm=p1_inputTerm,
+        #     targetDesignator=p1_targetDesignator,
+        #     enforceOptIn=True,
+        # )
 
         ## Retrieve the data for determining and sending out relevant communication
         completeActiveCanvasCoursesDF, auxiliaryDfDict = retrieveDataForRelevantCommunication(

@@ -617,10 +617,6 @@ def termCompileCourseOutcomesScores (p1_CourseDict
                             assignmentScorePercent = (float(submissionScore) / float(assignmentPointsPossible)) * 100
 
                         outcomeDashboardDataDict.update({
-                            "Assignment_Type" : highestRatingPointsEntry["assessment type"].values[0]
-                            , "Outcome_Mastered" : highestRatingPointsEntry["learning outcome mastered"].values[0]
-                            , "Outcome_rating" : highestRatingPointsEntry["learning outcome rating"].values[0]
-                            , "Outcome_rating points" : highestRatingPointsEntry["learning outcome rating points"].values[0]
                             "Assignment_Type" : highestRatingRow.get("assessment type")
                             , "Outcome_Mastered" : highestRatingRow.get("learning outcome mastered")
                             , "Outcome_rating" : highestRatingRow.get("learning outcome rating")
