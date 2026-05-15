@@ -351,6 +351,66 @@ def termCreateOutcomeComplianceReport(
     except Exception as Error:
         errorHandler.sendError (functionName, Error)
 
+## This function extracts an assignment id from an assignment url
+def getAssignmentIdFromUrl(p1_assignmentUrl):
+    functionName = "Get Assignment Id From Url"
+
+    try:
+        if pd.isna(p1_assignmentUrl):
+            return None
+
+        assignmentUrl = str(p1_assignmentUrl).strip()
+        if assignmentUrl == "":
+            return None
+
+        assignmentIdMatch = re.search(r"/assignments/(\d+)", assignmentUrl)
+        if assignmentIdMatch:
+            return assignmentIdMatch.group(1)
+
+        return None
+
+    except Exception as Error:
+        errorHandler.sendError(functionName, Error)
+
+
+## This function returns assignment points possible from Canvas with cache support
+def getAssignmentPointsPossible(p1_courseSisId, p1_assignmentId, p2_assignmentPointsPossibleCache):
+    functionName = "Get Assignment Points Possible"
+
+    try:
+        if pd.isna(p1_courseSisId) or pd.isna(p1_assignmentId):
+            return None
+
+        courseSisId = str(p1_courseSisId).strip()
+        assignmentId = str(p1_assignmentId).strip()
+        if courseSisId == "" or assignmentId == "":
+            return None
+
+        cacheKey = f"{courseSisId}|{assignmentId}"
+        if cacheKey in p2_assignmentPointsPossibleCache.keys():
+            return p2_assignmentPointsPossibleCache[cacheKey]
+
+        assignmentApiUrl = f"{coreCanvasApiUrl}courses/sis_course_id:{courseSisId}/assignments/{assignmentId}"
+        assignmentApiObject, _ = makeApiCall(localSetup, p1_apiUrl=assignmentApiUrl)
+
+        pointsPossible = None
+        if isPresent(assignmentApiObject) and getattr(assignmentApiObject, "status_code", None) == 200:
+            assignmentApiDict = json.loads(assignmentApiObject.text)
+            pointsPossibleValue = assignmentApiDict.get("points_possible")
+            if pointsPossibleValue is not None:
+                pointsPossible = pd.to_numeric(pointsPossibleValue, errors="coerce")
+                if pd.isna(pointsPossible):
+                    pointsPossible = None
+                else:
+                    pointsPossible = float(pointsPossible)
+
+        p2_assignmentPointsPossibleCache[cacheKey] = pointsPossible
+        return pointsPossible
+
+    except Exception as Error:
+        errorHandler.sendError(functionName, Error)
+
+
 ## This function compiles the outcome scores from the outcome results report into longitudinal data
 def termCompileCourseOutcomesScores (p1_CourseDict
                                     , p1_targetTermEnrollmentDf
@@ -358,6 +418,7 @@ def termCompileCourseOutcomesScores (p1_CourseDict
                                     , p1_targetOutcomeResultReportDf
                                     , p1_outcomeResultsDashboardDataDictList
                                     , p2_uniqueOutcomeInfoDictOfDicts
+                                    , p2_assignmentPointsPossibleCache
                                     ):
         
     functionName = "Term Compile Outcome Scores"
@@ -477,6 +538,8 @@ def termCompileCourseOutcomesScores (p1_CourseDict
                                             , "Discpline" : p1_targetOutcomeResultReportDf["Discpline"].values[0]
                                             , "Department" : p1_targetOutcomeResultReportDf["Department"].values[0]
                                             , "Student Canvas Id" : studentID
+                                            , "Assignment_URL" : ""
+                                            , "Assignment_Score_Percent" : np.nan
                         }
                     
                 ## If the targetStudentOutcomeResults is not empty and the student name dict is not empty
@@ -496,11 +559,37 @@ def termCompileCourseOutcomesScores (p1_CourseDict
 
                     ## Add the highest rating date points to the outcomeDashboardDataDict if a valid entry was found
                     if isPresent(highestRatingPointsEntry):
+                        assignmentUrl = highestRatingPointsEntry["assignment url"].values[0]
+                        assignmentId = getAssignmentIdFromUrl(assignmentUrl)
+
+                        ## Fall back to assignment id if assignment url is unavailable
+                        if assignmentId is None and "assignment id" in highestRatingPointsEntry.columns:
+                            assignmentId = highestRatingPointsEntry["assignment id"].values[0]
+
+                        submissionScore = pd.to_numeric(
+                            highestRatingPointsEntry["submission score"].values[0]
+                            , errors="coerce"
+                            )
+                        assignmentPointsPossible = getAssignmentPointsPossible(
+                            p1_courseSisId = courseID
+                            , p1_assignmentId = assignmentId
+                            , p2_assignmentPointsPossibleCache = p2_assignmentPointsPossibleCache
+                            )
+
+                        assignmentScorePercent = np.nan
+                        if (pd.notna(submissionScore)
+                            and assignmentPointsPossible is not None
+                            and assignmentPointsPossible != 0
+                            ):
+                            assignmentScorePercent = (float(submissionScore) / float(assignmentPointsPossible)) * 100
+
                         outcomeDashboardDataDict.update({
                             "Assignment_Type" : highestRatingPointsEntry["assessment type"].values[0]
                             , "Outcome_Mastered" : highestRatingPointsEntry["learning outcome mastered"].values[0]
                             , "Outcome_rating" : highestRatingPointsEntry["learning outcome rating"].values[0]
                             , "Outcome_rating points" : highestRatingPointsEntry["learning outcome rating points"].values[0]
+                            , "Assignment_URL" : "" if pd.isna(assignmentUrl) else assignmentUrl
+                            , "Assignment_Score_Percent" : assignmentScorePercent
                         })
                         
                     
@@ -684,6 +773,9 @@ def targetDesignatorProcessOutcomeResults(
             ## Make a filtered outcomeResultReportDF for the current course
             targetOutcomeResultReportDf = outcomeResultReportDF[outcomeResultReportDF["Course_name"] == targetCourseName]
 
+            ## Define a course-scoped cache for assignment points possible lookups
+            assignmentPointsPossibleCache = {}
+
             ## Compile the Course outcome scores
             termCompileCourseOutcomesScores(
                 courseDict
@@ -692,6 +784,7 @@ def targetDesignatorProcessOutcomeResults(
                 , targetOutcomeResultReportDf
                 , outcomeResultsDashboardDataDictList
                 , p1_uniqueOutcomeInfoDictOfDicts
+                , assignmentPointsPossibleCache
             )
 
         ## Default threaded run
