@@ -1109,9 +1109,11 @@ def getUniqueOutcomesAndOutcomeCoursesDict (p1_localSetup, p1_errorHandler, p3_i
             ## Use the outcome group index to get the outcome group title 
             ## from the outcome group column in the targetDesignatorCanvasOutcomeDf
             outcomeGroupTitle = (
-                p1_targetAccountName if str(outcomeParentGuid).strip() == "nan" 
-                else targetDesignatorCanvasOutcomeDf.loc[outcomeGroupIndexSearch[0], 'title']
+                targetDesignatorCanvasOutcomeDf.loc[outcomeGroupIndexSearch[0], 'title'] if isPresent(outcomeParentGuid) 
+                else p1_targetAccountName
                 )
+                
+                
 
             ## Make a dict for the outcome with the outcome group title and outcome canvas id
             uniqueOutcomesCanvasData[outcome] = {

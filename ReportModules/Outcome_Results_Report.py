@@ -460,6 +460,18 @@ def termCompileCourseOutcomesScores (p1_CourseDict
             )
             return
 
+        ## Build a lookup from student sis id to Canvas student id from outcome results csv
+        studentSisIdToCanvasIdDict = {}
+        if (
+            isPresent(p1_targetOutcomeResultsDf)
+            and "student sis id" in p1_targetOutcomeResultsDf.columns
+            and "student id" in p1_targetOutcomeResultsDf.columns
+            ):
+            studentIdLookupDf = p1_targetOutcomeResultsDf[["student sis id", "student id"]].copy()
+            studentIdLookupDf["student sis id"] = studentIdLookupDf["student sis id"].astype(str)
+            studentIdLookupDf = studentIdLookupDf.dropna(subset=["student id"]).drop_duplicates(subset=["student sis id"], keep="first")
+            studentSisIdToCanvasIdDict = dict(zip(studentIdLookupDf["student sis id"], studentIdLookupDf["student id"]))
+
         ## For each unique student of the course
         #for studentID in p1_targetTermEnrollmentDf["user_id"].astype(int).unique():
         for studentID in p1_targetTermEnrollmentDf["user_id"].unique():
@@ -563,7 +575,7 @@ def termCompileCourseOutcomesScores (p1_CourseDict
                                             , "College" : p1_targetOutcomeResultReportDf["College"].values[0]
                                             , "Discpline" : p1_targetOutcomeResultReportDf["Discpline"].values[0]
                                             , "Department" : p1_targetOutcomeResultReportDf["Department"].values[0]
-                                            , "Student Canvas Id" : studentID
+                                            , "Student Canvas Id" : studentSisIdToCanvasIdDict.get(str(studentID), np.nan)
                                             , "Assignment_Url" : ""
                                             , "Assignment_Score_Percent" : np.nan
                         }

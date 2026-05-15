@@ -300,6 +300,10 @@ def isMissing(value):
     if pd.isna(value):
         return True
 
+    ## If it is a list like item with len 0, consider it missing
+    if isinstance(value, (list, tuple, set)) and len(value) == 0:
+        return True
+
     return False
 
 ## Inverse helper function to determine if a value is present (not missing)
