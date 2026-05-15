@@ -387,10 +387,10 @@ def getAssignmentPointsPossible(p1_courseSisId, p1_assignmentId, p2_assignmentPo
             return None
 
         cacheKey = f"{courseSisId}|{assignmentId}"
-        if cacheKey in p2_assignmentPointsPossibleCache.keys():
+        if cacheKey in p2_assignmentPointsPossibleCache:
             return p2_assignmentPointsPossibleCache[cacheKey]
 
-        assignmentApiUrl = f"{coreCanvasApiUrl}courses/sis_course_id:{courseSisId}/assignments/{assignmentId}"
+        assignmentApiUrl = f"{coreCanvasApiUrl.rstrip('/')}/courses/sis_course_id:{courseSisId}/assignments/{assignmentId}"
         assignmentApiObject, _ = makeApiCall(localSetup, p1_apiUrl=assignmentApiUrl)
 
         pointsPossible = None
@@ -538,7 +538,7 @@ def termCompileCourseOutcomesScores (p1_CourseDict
                                             , "Discpline" : p1_targetOutcomeResultReportDf["Discpline"].values[0]
                                             , "Department" : p1_targetOutcomeResultReportDf["Department"].values[0]
                                             , "Student Canvas Id" : studentID
-                                            , "Assignment_URL" : ""
+                                            , "Assignment_Url" : ""
                                             , "Assignment_Score_Percent" : np.nan
                         }
                     
@@ -564,7 +564,12 @@ def termCompileCourseOutcomesScores (p1_CourseDict
 
                         ## Fall back to assignment id if assignment url is unavailable
                         if assignmentId is None and "assignment id" in highestRatingPointsEntry.columns:
-                            assignmentId = highestRatingPointsEntry["assignment id"].values[0]
+                            fallbackAssignmentId = pd.to_numeric(
+                                highestRatingPointsEntry["assignment id"].values[0]
+                                , errors="coerce"
+                                )
+                            if pd.notna(fallbackAssignmentId):
+                                assignmentId = str(int(fallbackAssignmentId))
 
                         submissionScore = pd.to_numeric(
                             highestRatingPointsEntry["submission score"].values[0]
@@ -588,7 +593,7 @@ def termCompileCourseOutcomesScores (p1_CourseDict
                             , "Outcome_Mastered" : highestRatingPointsEntry["learning outcome mastered"].values[0]
                             , "Outcome_rating" : highestRatingPointsEntry["learning outcome rating"].values[0]
                             , "Outcome_rating points" : highestRatingPointsEntry["learning outcome rating points"].values[0]
-                            , "Assignment_URL" : "" if pd.isna(assignmentUrl) else assignmentUrl
+                            , "Assignment_Url" : "" if pd.isna(assignmentUrl) else assignmentUrl
                             , "Assignment_Score_Percent" : assignmentScorePercent
                         })
                         
