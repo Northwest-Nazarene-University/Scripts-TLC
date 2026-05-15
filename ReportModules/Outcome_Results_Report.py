@@ -353,20 +353,33 @@ def termCreateOutcomeComplianceReport(
 
 ## This function extracts an assignment id from an assignment url
 def getAssignmentIdFromUrl(p1_assignmentUrl):
+    """
+    Extract assignment id from a Canvas assignment URL.
+
+    Args:
+        p1_assignmentUrl: Assignment URL value from the Outcome Results report.
+
+    Returns:
+        str | None: Assignment id as a string when present; otherwise None.
+    """
     functionName = "Get Assignment Id From Url"
 
     try:
-        if pd.isna(p1_assignmentUrl):
+        ## Step 1) Guard against missing input
+        if isMissing(p1_assignmentUrl):
             return None
 
+        ## Step 2) Normalize and validate URL text
         assignmentUrl = str(p1_assignmentUrl).strip()
-        if assignmentUrl == "":
+        if isMissing(assignmentUrl):
             return None
 
+        ## Step 3) Parse assignment id from URL path
         assignmentIdMatch = re.search(r"/assignments/(\d+)", assignmentUrl)
         if assignmentIdMatch:
             return assignmentIdMatch.group(1)
 
+        ## Step 4) Return None when no assignment id segment is found
         return None
 
     except Exception as Error:
@@ -375,35 +388,52 @@ def getAssignmentIdFromUrl(p1_assignmentUrl):
 
 ## This function returns assignment points possible from Canvas with cache support
 def getAssignmentPointsPossible(p1_courseSisId, p1_assignmentId, p2_assignmentPointsPossibleCache):
+    """
+    Retrieve assignment points possible for a course assignment, with caching.
+
+    Args:
+        p1_courseSisId: Canvas SIS course id.
+        p1_assignmentId: Canvas assignment id.
+        p2_assignmentPointsPossibleCache: Dict cache keyed by course+assignment.
+
+    Returns:
+        float | None: points_possible when found and valid, otherwise None.
+    """
     functionName = "Get Assignment Points Possible"
 
     try:
-        if pd.isna(p1_courseSisId) or pd.isna(p1_assignmentId):
+        ## Step 1) Guard against missing lookup keys
+        if isMissing(p1_courseSisId) or isMissing(p1_assignmentId):
             return None
 
+        ## Step 2) Normalize lookup keys
         courseSisId = str(p1_courseSisId).strip()
         assignmentId = str(p1_assignmentId).strip()
-        if courseSisId == "" or assignmentId == "":
+        if isMissing(courseSisId) or isMissing(assignmentId):
             return None
 
+        ## Step 3) Return cache hit when available
         cacheKey = f"{courseSisId}|{assignmentId}"
         if cacheKey in p2_assignmentPointsPossibleCache:
             return p2_assignmentPointsPossibleCache[cacheKey]
 
+        ## Step 4) Query Canvas assignment endpoint
         assignmentApiUrl = f"{coreCanvasApiUrl.rstrip('/')}/courses/sis_course_id:{courseSisId}/assignments/{assignmentId}"
         assignmentApiObject, _ = makeApiCall(localSetup, p1_apiUrl=assignmentApiUrl)
 
+        ## Step 5) Parse points_possible when response is valid
         pointsPossible = None
         if isPresent(assignmentApiObject) and getattr(assignmentApiObject, "status_code", None) == 200:
             assignmentApiDict = json.loads(assignmentApiObject.text)
             pointsPossibleValue = assignmentApiDict.get("points_possible")
-            if pointsPossibleValue is not None:
+            if isPresent(pointsPossibleValue):
                 pointsPossible = pd.to_numeric(pointsPossibleValue, errors="coerce")
-                if pd.isna(pointsPossible):
+                if isMissing(pointsPossible):
                     pointsPossible = None
                 else:
                     pointsPossible = float(pointsPossible)
 
+        ## Step 6) Cache result (including None) and return
         p2_assignmentPointsPossibleCache[cacheKey] = pointsPossible
         return pointsPossible
 
@@ -559,20 +589,22 @@ def termCompileCourseOutcomesScores (p1_CourseDict
 
                     ## Add the highest rating date points to the outcomeDashboardDataDict if a valid entry was found
                     if isPresent(highestRatingPointsEntry):
-                        assignmentUrl = highestRatingPointsEntry["assignment url"].values[0]
+                        ## Step 1) Safely read the highest-rating row values
+                        highestRatingRow = highestRatingPointsEntry.iloc[0]
+                        assignmentUrl = highestRatingRow.get("assignment url", "")
                         assignmentId = getAssignmentIdFromUrl(assignmentUrl)
 
                         ## Fall back to assignment id if assignment url is unavailable
-                        if assignmentId is None and "assignment id" in highestRatingPointsEntry.columns:
+                        if assignmentId is None and "assignment id" in highestRatingRow.index:
                             fallbackAssignmentId = pd.to_numeric(
-                                highestRatingPointsEntry["assignment id"].values[0]
+                                highestRatingRow.get("assignment id", np.nan)
                                 , errors="coerce"
                                 )
-                            if pd.notna(fallbackAssignmentId):
+                            if isPresent(fallbackAssignmentId):
                                 assignmentId = str(int(fallbackAssignmentId))
 
                         submissionScore = pd.to_numeric(
-                            highestRatingPointsEntry["submission score"].values[0]
+                            highestRatingRow.get("submission score", np.nan)
                             , errors="coerce"
                             )
                         assignmentPointsPossible = getAssignmentPointsPossible(
@@ -589,11 +621,11 @@ def termCompileCourseOutcomesScores (p1_CourseDict
                             assignmentScorePercent = (float(submissionScore) / float(assignmentPointsPossible)) * 100
 
                         outcomeDashboardDataDict.update({
-                            "Assignment_Type" : highestRatingPointsEntry["assessment type"].values[0]
-                            , "Outcome_Mastered" : highestRatingPointsEntry["learning outcome mastered"].values[0]
-                            , "Outcome_rating" : highestRatingPointsEntry["learning outcome rating"].values[0]
-                            , "Outcome_rating points" : highestRatingPointsEntry["learning outcome rating points"].values[0]
-                            , "Assignment_Url" : "" if pd.isna(assignmentUrl) else assignmentUrl
+                            "Assignment_Type" : highestRatingRow.get("assessment type")
+                            , "Outcome_Mastered" : highestRatingRow.get("learning outcome mastered")
+                            , "Outcome_rating" : highestRatingRow.get("learning outcome rating")
+                            , "Outcome_rating points" : highestRatingRow.get("learning outcome rating points")
+                            , "Assignment_Url" : assignmentUrl
                             , "Assignment_Score_Percent" : assignmentScorePercent
                         })
                         
