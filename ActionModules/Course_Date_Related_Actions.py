@@ -16,6 +16,7 @@ try: ## Irregular try clause, do not comment out in testing
     from Canvas_Report import CanvasReport
     from Core_Microsoft_Api import sendOutlookEmail, CoreMicrosoftAPI
     from Error_Email import errorEmail
+    from Send_Department_Communication import sendDepartmentCommunication
     from TLC_Common import isPresent, isMissing, getAutomatedOutcomeToolVariablesDf, getFirstName, formatInstructorFirstNames
     from TLC_Action import (
         retrieveDataForRelevantCommunication,
@@ -23,6 +24,7 @@ try: ## Irregular try clause, do not comment out in testing
         removeMissingOutcomes,
         addOutcomeToCourse,
     )
+
 except ImportError:
     # Fallback to relative imports if package layout differs
     from ResourceModules.Local_Setup import LocalSetup
@@ -30,12 +32,14 @@ except ImportError:
     from ResourceModules.Core_Microsoft_Api import sendOutlookEmail
     from ResourceModules.Error_Email import errorEmail
     from ResourceModules.TLC_Common import isPresent, isMissing, getAutomatedOutcomeToolVariablesDf, getFirstName, formatInstructorFirstNames
+    from ActionModules.Send_Department_Communication import sendDepartmentCommunication
     from ResourceModules.TLC_Action import (
             retrieveDataForRelevantCommunication,
             getUniqueOutcomesAndOutcomeCoursesDict,
             removeMissingOutcomes,
             addOutcomeToCourse,
         )
+    
 
 ## Set working directory
 os.chdir(os.path.dirname(__file__))
@@ -364,6 +368,13 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
     functionName = "Term Determine And Send Relevant Communication"
 
     try:
+
+        ## Run schedule-driven department communications for this term/designator.
+        sendDepartmentCommunication(
+            inputTerm=p1_inputTerm,
+            targetDesignator=p1_targetDesignator,
+            enforceOptIn=True,
+        )
 
         ## Retrieve the data for determining and sending out relevant communication
         completeActiveCanvasCoursesDF, auxiliaryDfDict = retrieveDataForRelevantCommunication(
