@@ -626,7 +626,7 @@ def termCompileCourseOutcomesScores (p1_CourseDict
                             and assignmentPointsPossible is not None
                             and assignmentPointsPossible != 0
                             ):
-                            assignmentScorePercent = (float(submissionScore) / float(assignmentPointsPossible)) * 100
+                            assignmentScorePercent = float(submissionScore) / float(assignmentPointsPossible) / 100
 
                         outcomeDashboardDataDict.update({
                             "Assignment_Type" : highestRatingRow.get("assessment type")

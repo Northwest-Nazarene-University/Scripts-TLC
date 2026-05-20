@@ -580,9 +580,20 @@ def sendDepartmentCommunication(inputTerm, targetDesignator, enforceOptIn=False)
 
         sentCount = 0
         skippedCount = 0
+        processedCourseSendKeys = set()
 
         ## Iterate through each course and send communications to instructors
         for _, courseRow in filteredCoursesDf.iterrows():
+            ## Prevent duplicate sends for the same course when source rows repeat (e.g., multiple outcomes).
+            courseSendKey = _normalizeToken(_safeStr(courseRow.get("Course_sis_id")))
+            if not courseSendKey:
+                courseSendKey = _normalizeToken(_safeStr(courseRow.get("course_id")))
+            if not courseSendKey:
+                courseSendKey = _normalizeToken(_safeStr(courseRow.get("Course_name")))
+
+            if courseSendKey in processedCourseSendKeys:
+                continue
+
             courseName = _safeStr(courseRow.get("Course_name")) or _safeStr(courseRow.get("Course_sis_id"))
             instructorNames, instructorEmails = _collectInstructorData(courseRow)
 
@@ -620,6 +631,7 @@ def sendDepartmentCommunication(inputTerm, targetDesignator, enforceOptIn=False)
 
             ## Skip course when no communications are due.
             if not templatePathsToSend:
+                processedCourseSendKeys.add(courseSendKey)
                 continue
 
             ## Send each due communication file to the course instructors.
@@ -651,6 +663,9 @@ def sendDepartmentCommunication(inputTerm, targetDesignator, enforceOptIn=False)
                 localSetup.logger.info(
                     f"{functionName}: Sent communication file {templatePath} for {courseName} to {recipients}."
                 )
+
+            ## Mark this course processed so only one communication cycle occurs per course.
+            processedCourseSendKeys.add(courseSendKey)
 
         ## Log final results
         localSetup.logger.info(
