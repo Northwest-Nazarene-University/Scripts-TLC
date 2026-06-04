@@ -1066,6 +1066,31 @@ class CanvasReport:
 
             # Save to Excel, replacing all instances of \u200b with ""
             activeCourseDf = pd.DataFrame(activeCourseDict)
+
+            ## For graduate designators, remove duplicate course rows that differ only by term prefix
+            ## (example: SP26_EDUC7535_01 and GS26_EDUC7535_01). Keep the graduate-prefixed row.
+            if (
+                courseLevel == "Graduate"
+                and isPresent(activeCourseDf)
+                and "Course_sis_id" in activeCourseDf.columns
+                ):
+                activeCourseDf["_course_sis_suffix"] = (
+                    activeCourseDf["Course_sis_id"].astype(str).str.split("_", n=1).str[1]
+                    )
+                gradTermPrefixTuple = tuple(gradTermsCodesToWordsDict.keys())
+                activeCourseDf["_is_grad_prefixed_course"] = (
+                    activeCourseDf["Course_sis_id"].astype(str).str.startswith(gradTermPrefixTuple)
+                    )
+                activeCourseDf = (
+                    activeCourseDf
+                    .sort_values(
+                        by=["_course_sis_suffix", "_is_grad_prefixed_course"],
+                        ascending=[True, False]
+                    )
+                    .drop_duplicates(subset=["_course_sis_suffix"], keep="first")
+                    .drop(columns=["_course_sis_suffix", "_is_grad_prefixed_course"])
+                    )
+
             activeCourseDf.replace("\u200b", "", regex=True, inplace=True)
             activeCourseDf.to_excel(targetDestination, index=False)
             localSetup.logger.info(f"Successfully created {fileName}")

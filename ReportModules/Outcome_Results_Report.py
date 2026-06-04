@@ -693,7 +693,7 @@ def termCompileCourseOutcomesScores (p1_CourseDict
                         })
 
                 ## Make the dict df conversion compatible
-                modifiedoutcomeDashboardDataDict = {key: [value] if isinstance(value, (str, int, float, np.int32, np.int64)) else value for key, value in outcomeDashboardDataDict.items()}
+                modifiedoutcomeDashboardDataDict = {key: [value] if isinstance(value, (str, int, float, np.integer, np.floating)) else value for key, value in outcomeDashboardDataDict.items()}
 
                 ## Convert the created dict to a df
                 outcomeDashboardDataDf = pd.DataFrame(modifiedoutcomeDashboardDataDict)
@@ -863,6 +863,36 @@ def termProcessOutcomeResults(p1_inputTerm
     functionName = "Term Get Outcome Results"
 
     try:
+        ## Define a local normalizer for outcome titles so matching is resilient to hidden whitespace characters
+        def normalizeOutcomeTitle(p2_outcomeTitle):
+            """
+            Normalize outcome title strings for reliable cross-source matching.
+
+            Args:
+                p2_outcomeTitle (any): Raw outcome title value.
+
+            Returns:
+                str: Normalized title with invisible characters removed and whitespace collapsed.
+            """
+            if pd.isna(p2_outcomeTitle):
+                return ""
+
+            normalizedTitle = str(p2_outcomeTitle)
+
+            ## Step 1) Remove common invisible characters and normalize special spaces to regular spaces
+            normalizedTitle = (
+                normalizedTitle
+                .replace("\u200b", "")
+                .replace("\u200c", "")
+                .replace("\u200d", "")
+                .replace("\ufeff", "")
+                .replace("\u00a0", " ")
+                .replace("\u202f", " ")
+            )
+
+            ## Step 2) Collapse repeated whitespace and trim edges
+            return re.sub(r"\s+", " ", normalizedTitle).strip()
+
         ## Extract term prefix and decade
         termCodePrefix = p1_inputTerm[:2]  ## e.g., "FA", "SP", "SU"
         termWord = undgTermsCodesToWordsDict.get(termCodePrefix, gradTermsCodesToWordsDict.get(termCodePrefix))
@@ -933,6 +963,12 @@ def termProcessOutcomeResults(p1_inputTerm
         ## Remove the unicode character from the title column
         outcomesCsvDf['title'] = outcomesCsvDf['title'].str.replace('\u200b', '')
 
+        ## Normalize title values for robust matching against active course outcomes
+        outcomesCsvDf["title_normalized"] = outcomesCsvDf["title"].apply(normalizeOutcomeTitle)
+        outcomesCsvDf["title_compact"] = outcomesCsvDf["title_normalized"].apply(
+            lambda p3_title: re.sub(r"[^a-z0-9]+", "", str(p3_title).lower())
+        )
+
         ## Retrieve the active Canvas Outcome Courses excel file as a df, updating it if necessary
         activeCanvasOutcomeCoursesDf = CanvasReport.getActiveOutcomeCoursesDf(localSetup, p1_inputTerm, p1_targetDesignator)
         
@@ -979,31 +1015,45 @@ def termProcessOutcomeResults(p1_inputTerm
                         ## If the unique outcome is not in the uniqueOutcomeVendorGuidDict
                         if uniqueOutcome not in uniqueOutcomeInfoDictOfDicts.keys():
                             
+                            ## Parse outcome title parts while supporting both legacy underscore-delimited
+                            ## titles and newer plain-text titles
+                            uniqueOutcomeParts = uniqueOutcome.split("_")
+                            outcomeCoreText = (
+                                uniqueOutcomeParts[1]
+                                if len(uniqueOutcomeParts) > 1
+                                else uniqueOutcome
+                            )
+                            outcomeVersionText = (
+                                uniqueOutcomeParts[2]
+                                if len(uniqueOutcomeParts) > 2
+                                else ""
+                            )
+
                             ## Add the unique outcome to the dict with a value of an empty list
                             uniqueOutcomeInfoDictOfDicts[uniqueOutcome] = {
                                 "Outcome_Area" : p1_targetDesignator
                                 , "Outcome_Title" : uniqueOutcome
                                 , "Outcome_Name" : (
-                                    uniqueOutcome.split("_")[1].split(":")[1] if (
-                                        ":" in uniqueOutcome
+                                    outcomeCoreText.split(":", 1)[1] if (
+                                        ":" in outcomeCoreText
                                         ) 
-                                    else uniqueOutcome.split("_")[1]
+                                    else outcomeCoreText
                                     )
                                 , "Outcome_Parent" : (
-                                    uniqueOutcome.split("_")[1][:2] if (
+                                    outcomeCoreText[:2] if (
                                         p1_targetDesignator == "GE"
                                         )
-                                    else uniqueOutcome.split("_")[1].split("Standard")[0] if (
+                                    else outcomeCoreText.split("Standard")[0] if (
                                         p1_targetDesignator == "I-EDUC" or p1_targetDesignator == "G-EDUC"
                                         ) 
-                                    else uniqueOutcome.split("_")[1].split(":")[0]
+                                    else outcomeCoreText.split(":", 1)[0]
                                     )
                                 , "Outcome_Root" : (p1_targetDesignator if (
                                         p1_targetDesignator == "GE"
                                         )
-                                        else uniqueOutcome.split("_")[1].split(" ")[0].replace(":", "")
+                                        else outcomeCoreText.split(" ")[0].replace(":", "")
                                         )
-                                , "Outcome_Version" : uniqueOutcome.split("_")[2]
+                                , "Outcome_Version" : outcomeVersionText
                                 }
                             
         ## Make a list to retain unique outcome keys that don't have a vendor guid
@@ -1013,10 +1063,29 @@ def termProcessOutcomeResults(p1_inputTerm
         for uniqueOutcome in uniqueOutcomeInfoDictOfDicts.keys():
             
             ## Find the vendor guid that is associated with the unique outcome within outcomesCsvDf
-            vendorGuidValueList = outcomesCsvDf.loc[outcomesCsvDf["title"] == uniqueOutcome, "vendor_guid"].values
+            normalizedUniqueOutcome = normalizeOutcomeTitle(uniqueOutcome)
+            compactUniqueOutcome = re.sub(r"[^a-z0-9]+", "", normalizedUniqueOutcome.lower())
+            vendorGuidValueList = outcomesCsvDf.loc[
+                outcomesCsvDf["title_normalized"] == normalizedUniqueOutcome,
+                "vendor_guid"
+            ].values
 
             ## Find the learning outcome group title associated with the vendor guid within outcomesCsvDf
-            outcomeParentGuidList = outcomesCsvDf.loc[outcomesCsvDf["title"] == uniqueOutcome, "parent_guids"].values
+            outcomeParentGuidList = outcomesCsvDf.loc[
+                outcomesCsvDf["title_normalized"] == normalizedUniqueOutcome,
+                "parent_guids"
+            ].values
+
+            ## If exact normalized matching fails, fall back to compact matching that ignores punctuation/spacing
+            if vendorGuidValueList.size == 0:
+                vendorGuidValueList = outcomesCsvDf.loc[
+                    outcomesCsvDf["title_compact"] == compactUniqueOutcome,
+                    "vendor_guid"
+                ].values
+                outcomeParentGuidList = outcomesCsvDf.loc[
+                    outcomesCsvDf["title_compact"] == compactUniqueOutcome,
+                    "parent_guids"
+                ].values
             
             ## Create variables for the vendor guid and outcome group title
             vendorGuid = ""
@@ -1046,9 +1115,8 @@ def termProcessOutcomeResults(p1_inputTerm
                 ## Add the unique outcome to the uniqueOutcomesWithoutVendorGuidList
                 uniqueOutcomesWithoutVendorGuidList.append(uniqueOutcome)
 
-                ## Log that the outcome was not found in the outcomes csv and handle the error
+                ## Log that the outcome was not found in the outcomes csv and skip it
                 localSetup.logWarningThreadSafe(f"Outcome {uniqueOutcome} was not found in the Canvas outcomes csv. Skipping it.")
-                errorHandler.sendError (functionName, f"Outcome {uniqueOutcome} was not found in the Canvas outcomes csv. Skipping it.")
 
                 ## Skip the value
                 continue
@@ -1090,12 +1158,21 @@ def termProcessOutcomeResults(p1_inputTerm
                 
             ## Get its outcome title
             outcomeTitle = responseOjbect["outcome"]["title"].replace('\u200b', '')
+            normalizedOutcomeTitle = normalizeOutcomeTitle(outcomeTitle)
 
             ## If that outcome title matches one of the keys in the uniqueOutcomeVendorGuidDict
-            if outcomeTitle in uniqueOutcomeInfoDictOfDicts.keys():
+            matchingUniqueOutcome = next(
+                (
+                    outcomeKey for outcomeKey in uniqueOutcomeInfoDictOfDicts.keys()
+                    if normalizeOutcomeTitle(outcomeKey) == normalizedOutcomeTitle
+                ),
+                None
+            )
+
+            if isPresent(matchingUniqueOutcome):
                     
                 ## Set the canvas id as the value for the outcome title in the uniqueOutcomeInfoDictOfDicts
-                uniqueOutcomeInfoDictOfDicts[outcomeTitle]["Outcome_Id"] = responseOjbect["outcome"]["id"]
+                uniqueOutcomeInfoDictOfDicts[matchingUniqueOutcome]["Outcome_Id"] = responseOjbect["outcome"]["id"]
 
         ## Get the outcome results df for the target designator
         targetOutcomeResultsDf = CanvasReport.getOutcomeResultsDf(localSetup, p1_inputTerm, targetAccountName, p1_targetDesignator)

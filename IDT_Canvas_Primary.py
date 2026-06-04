@@ -62,142 +62,30 @@ decade = localSetup.dateDict["decade"]
 
         
 ## Run Outcome Related Scripts
-def outcomeReportsAndActions (p1_relaventTerm):
+def outcomeReportsAndActions (p1_relaventTerm, p1_targetDesignator):
+    """
+    Run outcome reports and actions for a single term and target designator.
+
+    Args:
+        p1_relaventTerm (str): The term code to process.
+        p1_targetDesignator (str): The target designator to process.
+
+    Returns:
+        None
+    """
     
     functionName = "Outcome Reports and Actions"
     
     try:
-    
-        ## Retrieve the Automated Outcome Tool Variables excel file as a df
-        automatedOutcomeToolVariablesDf = getAutomatedOutcomeToolVariablesDf(localSetup)
         
-        ## Define the output threading objects
-        ongoingOutcomeOutput1Threads = []
+        ## Step 1: Run outcome attachment report for this term and target designator
+        termOutcomeAttachmentReport(p1_relaventTerm, p1_targetDesignator)
 
-        ## Define a variable to track whether the term is a grad term
-        gradTerm = False
+        ## Step 2: Run outcome results processing for this term and target designator
+        termProcessOutcomeResults(p1_relaventTerm, p1_targetDesignator)
 
-        ## If the term is a grad term
-        if p1_relaventTerm[:2].upper() in ["GS", "SG", "GF"]:
-            gradTerm = True
-        
-        ## For each Target Designator and Course Level in the Automated Outcome Tool Variables
-        for targetDesignator, courseLevel in zip(
-            automatedOutcomeToolVariablesDf["Target Designator"],
-            automatedOutcomeToolVariablesDf["Course Level"]
-        ):
-
-
-            ## If the courseLevel is Undergraduate
-            if courseLevel == "Undergraduate":
-
-                ## If the term is a grad term
-                if gradTerm:
-
-                    ## Continue
-                    continue
-
-            ## Otherwise if the courseLevel is Graduate
-            elif courseLevel == "Graduate":
-
-                ## If the term is not a grad term
-                if not gradTerm:
-
-                    ## Continue
-                    continue
-
-            ## Define the outcome attachment and outcome result report threads
-            threadOutcomeAttachment = threading.Thread(target=termOutcomeAttachmentReport, args=(p1_relaventTerm, targetDesignator))
-            
-            ## Start the threads
-            threadOutcomeAttachment.start()
-            
-            ## Add the threads to the ongoingOutcomeOutputThreads list
-            ongoingOutcomeOutput1Threads.append(threadOutcomeAttachment)
-    
-        ## Wait until all ongoingOutcomeOutputThreads threads have completed
-        for thread in ongoingOutcomeOutput1Threads:
-            thread.join()
-
-        ## Define the output threading objects
-        ongoingOutcomeOutput2Threads = []
-
-        ## For each Target Designator in the Automated Outcome Tool Variables
-        for targetDesignator, courseLevel in zip(
-            automatedOutcomeToolVariablesDf["Target Designator"],
-            automatedOutcomeToolVariablesDf["Course Level"]
-        ):
-
-            ## If the courseLevel is Undergraduate
-            if courseLevel == "Undergraduate":
-
-                ## If the term is a grad term
-                if gradTerm:
-
-                    ## Continue
-                    continue
-
-            ## Otherwise if the courseLevel is Graduate
-            elif courseLevel == "Graduate":
-
-                ## If the term is not a grad term
-                if not gradTerm:
-
-                    ## Continue
-                    continue
-
-            ## Define the outcome attachment and outcome result report threads
-            threadOutcomeResult = threading.Thread(target=termProcessOutcomeResults, args=(p1_relaventTerm, targetDesignator))
-            
-            ## Start the threads
-            threadOutcomeResult.start()
-            
-            ## Add the threads to the ongoingOutcomeOutputThreads list
-            ongoingOutcomeOutput2Threads.append(threadOutcomeResult)
-    
-        ## Wait until all ongoingOutcomeOutputThreads threads have completed
-        for thread in ongoingOutcomeOutput2Threads:
-            thread.join()
-            
-        ## Define the action threading objects
-        ongoingOutcomeActionThreads = []
-        
-        ## For each Target Designator in the Automated Outcome Tool Variables
-        for targetDesignator, courseLevel in zip(
-            automatedOutcomeToolVariablesDf["Target Designator"],
-            automatedOutcomeToolVariablesDf["Course Level"]
-        ):
-
-            ## If the courseLevel is Undergraduate
-            if courseLevel == "Undergraduate":
-
-                ## If the term is a grad term
-                if gradTerm:
-
-                    ## Continue
-                    continue
-
-            ## Otherwise if the courseLevel is Graduate
-            elif courseLevel == "Graduate":
-
-                ## If the term is not a grad term
-                if not gradTerm:
-
-                    ## Continue
-                    continue
-            
-            ## Define the outcome action threads
-            threadOutcomeAction = threading.Thread(target=termDetermineAndPerformRelevantActions, args=(p1_relaventTerm, targetDesignator))
-            
-            ## Start the threads
-            threadOutcomeAction.start()
-            
-            ## Add the threads to the ongoingOutcomeActionThreads list
-            ongoingOutcomeActionThreads.append(threadOutcomeAction)
-            
-        ## Wait until all ongoingOutcomeActionThreads threads have completed
-        for thread in ongoingOutcomeActionThreads:
-            thread.join()
+        ## Step 3: Run outcome actions for this term and target designator
+        termDetermineAndPerformRelevantActions(p1_relaventTerm, p1_targetDesignator)
  
     except Exception as Error:
         errorHandler.sendError (functionName, Error)
@@ -460,20 +348,43 @@ def oneTimeDaily (p1_currentTerm, p1_relaventTerms):
         else:
             outcomeTargetTermCodesList = list(currentTermCodes)
             
+        ## Retrieve the Automated Outcome Tool Variables excel file as a df
+        automatedOutcomeToolVariablesDf = getAutomatedOutcomeToolVariablesDf(localSetup)
+
         ## For each term in the relavent terms
         for term in outcomeTargetTermCodesList:
 
-            ## Define a outcome reports and actions thread
-            outcomeReportsAndActionsThread = threading.Thread(target=outcomeReportsAndActions, args=(term,))
-                
-            ## Start the outcome reports and actions thread
-            outcomeReportsAndActionsThread.start()
-                
-            ## Add the outcome reports and actions thread to the list of ongoing threads
-            ongoingOutcomeThreads.append(outcomeReportsAndActionsThread)
-                
-            ## Wait a second to ensure there is a gap before the next thread
-            time.sleep(1)
+            ## Define a variable to track whether the term is a grad term
+            gradTerm = term[:2].upper() in ["GS", "SG", "GF"]
+
+            ## For each Target Designator and Course Level in the Automated Outcome Tool Variables
+            for targetDesignator, courseLevel in zip(
+                automatedOutcomeToolVariablesDf["Target Designator"],
+                automatedOutcomeToolVariablesDf["Course Level"]
+            ):
+
+                ## If the courseLevel is Undergraduate and term is grad, skip
+                if courseLevel == "Undergraduate" and gradTerm:
+                    continue
+
+                ## If the courseLevel is Graduate and term is not grad, skip
+                if courseLevel == "Graduate" and not gradTerm:
+                    continue
+
+                ## Define an outcome reports and actions thread
+                outcomeReportsAndActionsThread = threading.Thread(
+                    target=outcomeReportsAndActions,
+                    args=(term, targetDesignator)
+                )
+
+                ## Start the outcome reports and actions thread
+                outcomeReportsAndActionsThread.start()
+
+                ## Add the outcome reports and actions thread to the list of ongoing threads
+                ongoingOutcomeThreads.append(outcomeReportsAndActionsThread)
+
+                ## Wait a second to ensure there is a gap before the next thread
+                time.sleep(1)
         
         ## Check if all ongoing outcome threads have completed
         for thread in ongoingOutcomeThreads:
