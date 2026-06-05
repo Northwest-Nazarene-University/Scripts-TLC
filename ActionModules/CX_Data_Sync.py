@@ -91,16 +91,23 @@ def importCXData():
         ## Make a list of the CSV files in the SISResourcePath directory
         sisImportFilesList = os.listdir(SISResourcePath)
 
+        ## Define CSV files to skip during SIS pull/processing and zip packaging
+        excludedSisCsvFiles = {"canvas_dept.csv", "grades_li.csv"}
+
         ## For each file
         for sisImportFile in sisImportFilesList:
 
-            ## Define an empty DataFrame to hold the file data
-            fileDataDf = pd.DataFrame()
+            ## Skip excluded SIS csv files
+            if sisImportFile in excludedSisCsvFiles:
+                continue
 
-            ## Open it as a pd.DataFrame
-            if sisImportFile.endswith('.csv'):
-                filePath = os.path.join(SISResourcePath, sisImportFile)
-                fileDataDf = pd.read_csv(filePath)
+            ## Skip non-csv files
+            if not sisImportFile.endswith('.csv'):
+                continue
+
+            ## Open the CSV as a DataFrame
+            filePath = os.path.join(SISResourcePath, sisImportFile)
+            fileDataDf = pd.read_csv(filePath)
 
             ## If there are start_date and an end_date columns
             if isPresent(fileDataDf) and ('start_date' in fileDataDf.columns and 'end_date' in fileDataDf.columns):
@@ -121,7 +128,7 @@ def importCXData():
         ## Create a zip file from all CSVs in the directory
         with zipfile.ZipFile(zipFilePath, 'w') as zipf:
             for file in os.listdir(SISResourcePath):
-                if file.endswith('.csv') and file != "canvas_dept.csv":
+                if file.endswith('.csv') and file not in excludedSisCsvFiles:
                     filePath = os.path.join(SISResourcePath, file)
                     zipf.write(filePath, arcname=file)
 

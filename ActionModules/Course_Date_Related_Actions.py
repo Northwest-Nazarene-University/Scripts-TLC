@@ -369,12 +369,8 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
 
     try:
 
-        ## Run schedule-driven department communications for this term/designator.
-        # sendDepartmentCommunication(
-        #     inputTerm=p1_inputTerm,
-        #     targetDesignator=p1_targetDesignator,
-        #     enforceOptIn=True,
-        # )
+        ## Track whether department communication should run for U-CTCM this cycle.
+        shouldRunDepartmentCommunication = False
 
         ## Retrieve the data for determining and sending out relevant communication
         completeActiveCanvasCoursesDF, auxiliaryDfDict = retrieveDataForRelevantCommunication(
@@ -434,6 +430,28 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
             
                 ## Define a variable to track what email, if any, needs to be sent to the instructors of the course
                 relevantEmailList = []
+
+                ## Determine whether to run department communication for U-CTCM at
+                ## the same timing windows used for midterm, finals, and grades due checks.
+                if str(p1_targetDesignator).strip().upper() == "U-CTCM":
+
+                    ## Midterm window: Monday of week before midpoint.
+                    if (row['Course Week'] == (int(row["Course Final Week"] / 2) - 1)
+                        and localSetup.initialDateTime.weekday() == 0
+                        ):
+                        shouldRunDepartmentCommunication = True
+
+                    ## Finals window: Monday of week before final week.
+                    elif (row['Course Week'] == (row["Course Final Week"] - 1)
+                          and localSetup.initialDateTime.weekday() == 0
+                          ):
+                        shouldRunDepartmentCommunication = True
+
+                    ## Grades due window: Wednesday of week after finals.
+                    elif (row['Course Week'] == (row["Course Final Week"] + 1)
+                          and localSetup.initialDateTime.weekday() == 2
+                          ):
+                        shouldRunDepartmentCommunication = True
             
                 ## If it is the monday before the courses's week 0 and it is an outcome course
                 if (row['Course Week'] == 0
@@ -529,6 +547,14 @@ def termDetermineAndPerformRelevantActions (p1_inputTerm
                     executor.submit(craftAndSendRelevantEmail, p1_inputTerm, relevantEmail, targetRow, auxiliaryDfDict)
 
         ## ThreadPoolExecutor context manager waits for all submitted tasks before exiting
+
+        ## Run department communication when U-CTCM is in one of the target windows.
+        if shouldRunDepartmentCommunication:
+            sendDepartmentCommunication(
+                inputTerm=p1_inputTerm,
+                targetDesignator=p1_targetDesignator,
+                enforceOptIn=True,
+            )
 
     except Exception as Error:
         errorHandler.sendError(functionName, Error)
