@@ -18,7 +18,7 @@ This is the primary configuration file imported by nearly every module. Create i
 # ─── Core Canvas Configuration ───────────────────────────────────────────────
 scriptLibrary = "TLC"                          # Library identifier (used in path construction)
 coreCanvasApiUrl = "https://your-institution.instructure.com/api/v1"
-canvasAccessToken = "your-canvas-api-token"     # ****** with admin permissions
+canvasAccessToken = "your-canvas-api-token"     # Canvas API token with admin permissions
 
 # ─── Service & Contact Info ───────────────────────────────────────────────────
 serviceEmailAccount = "service-account@institution.edu"   # Used for error emails
@@ -26,7 +26,7 @@ authorContactInformation = "Contact: Your Name - email@institution.edu"
 
 # ─── File Paths ───────────────────────────────────────────────────────────────
 # Root path to the script library on disk (parent of Scripts_TLC folder)
-scriptLibrary = "TLC"
+# scriptLibrary defined above as "TLC"
 
 # Paths to external shared drive resources
 # Keys used: "SIS", "IE", "TLC"

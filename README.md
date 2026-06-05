@@ -49,7 +49,7 @@ If you are new to this project, familiarize yourself with the following terms:
 |------|---------|
 | **Canvas LMS** | The learning management system (by Instructure) used by NNU. All courses, enrollments, and grades live here. API docs: [Canvas REST API](https://canvas.instructure.com/doc/api/) |
 | **SIS (Student Information System)** | The institutional system of record for students, courses, and enrollments. SIS data is synced to Canvas via CSV feeds. |
-| **Term codes** | 4-character codes identifying academic terms. Format: `{prefix}{2-digit year}`. Undergraduate: `FA25` (Fall 2025), `SP26` (Spring 2026), `SU26` (Summer 2026). Graduate: `GF25` (Grad Fall), `GS26` (Grad Spring), `SG26` (Summer Grad). |
+| **Term codes** | 4-character codes identifying academic terms. Format: `{2-letter prefix}{2-digit year}` (e.g., `FA25`). Undergraduate prefixes: `FA` (Fall), `SP` (Spring), `SU` (Summer). Graduate prefixes: `GF` (Grad Fall), `GS` (Grad Spring), `SG` (Summer Grad). Note: SIS course IDs may use 4-digit years (e.g., `FA2026_ACCT2065_01`), but term codes always use 2-digit years. |
 | **Target designator** | An identifier from the Automated Outcome Tool Variables file that groups related outcomes (e.g., "GE" for General Education, program-specific codes). |
 | **TUG** | Traditional Undergraduate — on-campus undergraduate students |
 | **GPS** | Graduate & Professional Studies — graduate and adult learner students |
