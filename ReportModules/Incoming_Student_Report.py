@@ -582,7 +582,8 @@ def studentTypeGetIncomingStudentsInfo(p1_targetOrientation, p1_slateFile, p1_in
         sisFeedEnrollmentDf = rawSisFeedEnrollmentDf[rawSisFeedEnrollmentDf['role'] == "student"]
 
         ## Define the target term as undergrad or grad according to the target orientation
-        targetTerm = p1_inputTerm if "TUG" in p1_targetOrientation else p1_inputTerm.replace('FA', 'GF').replace('SP', 'GS')
+        ## For grad/prof orientation, map undergrad term prefixes to grad term prefixes
+        targetTerm = p1_inputTerm if "TUG" in p1_targetOrientation else p1_inputTerm.replace('FA', 'GF').replace('SP', 'GS').replace('SU', 'SG')
 
         ## Filter the SIS Feed Course DF to only contain the input term and the grad version of the input term
         sisFeedCourseDf = rawSisFeedCourseDf[(rawSisFeedCourseDf['term_id'] == targetTerm)]
