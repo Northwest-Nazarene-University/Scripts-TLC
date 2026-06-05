@@ -11,7 +11,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ResourceModules")
 
 ## New resource modules
 from Local_Setup import LocalSetup
-from TLC_Common import makeApiCall, isPresent, runThreadedRows
+from TLC_Common import makeApiCall, isPresent, runThreadedRows, runUnthreadedRows
 from Canvas_Report import CanvasReport
 from Common_Configs import coreCanvasApiUrl, canvasAccessToken, undgTermsCodesToWordsDict, gradTermsCodesToWordsDict
 from Error_Email import errorEmail
@@ -226,7 +226,7 @@ def getTargetIncomingStudentInfo (row
                     localSetup.logger.error (f"{studentSisId} enrollment in {p1_targetOrientation} failed: {enrollMajorSectionObject.text}")
 
                 ## Send out an error email
-                errorHandler.sendError(f"{scriptName} - {functionName}", f"Error enrolling {studentSisId} in {p1_targetOrientation}", sendOnce = True)
+                errorHandler.sendError(f"{scriptName} - {functionName}", f"Error enrolling {studentSisId} in {p1_targetOrientation}")
 
                 return
 
@@ -316,7 +316,19 @@ def getTargetIncomingStudentInfo (row
     except Exception as Error:
         errorHandler.sendError(functionName, Error)
 
-def studentTypeGetIncomingStudentsInfo(p1_targetOrientation, p1_slateFile, p1_inputTerm):
+def studentTypeGetIncomingStudentsInfo(p1_targetOrientation, p1_slateFile, p1_inputTerm, p1_useThreading = True):
+    """
+    Build and upload incoming-student Canvas data for one Slate file.
+
+    Args:
+        p1_targetOrientation: Orientation course name/SIS target for this student type.
+        p1_slateFile: Full path to the source Slate CSV file.
+        p1_inputTerm: SIS term code in 4-character format.
+        p1_useThreading: True to process student rows with threads, False for sequential test runs.
+
+    Returns:
+        None.
+    """
     functionName = "Term Get Incoming Undergrad Student Info"
 
     try:
@@ -587,25 +599,28 @@ def studentTypeGetIncomingStudentsInfo(p1_targetOrientation, p1_slateFile, p1_in
         ## Open up the enrollment data activity file
         enrollmentDataActivityDF = pd.read_csv(f"{localSetup.getExternalResourcePath('SIS')}output\\pharos\\Enrollment_Data_Activity.csv", delimiter='|')
  
-        ## Process each student row concurrently
-        runThreadedRows(
+        ## Step 1: Define the per-row worker used by both threading modes
+        rowWorker = lambda row: getTargetIncomingStudentInfo(
+            row,
+            row.name,
+            p1_inputTerm,
+            p1_targetOrientation,
+            p1_targetOrientationStudents,
+            p1_targetOrientationSections,
+            p1_targetOrientationFinalQuizSubmissionDatesAndIds,
+            orientationCourseApiUrl,
+            header,
             slateDataDF,
-            lambda row: getTargetIncomingStudentInfo(
-                row,
-                row.name,
-                p1_inputTerm,
-                p1_targetOrientation,
-                p1_targetOrientationStudents,
-                p1_targetOrientationSections,
-                p1_targetOrientationFinalQuizSubmissionDatesAndIds,
-                orientationCourseApiUrl,
-                header,
-                slateDataDF,
-                sisFeedCourseDf,
-                sisFeedEnrollmentDf,
-                enrollmentDataActivityDF,
-            ),
+            sisFeedCourseDf,
+            sisFeedEnrollmentDf,
+            enrollmentDataActivityDF,
         )
+
+        ## Step 2: Run threaded for production speed, or unthreaded for easier test/debug runs
+        if p1_useThreading:
+            runThreadedRows(slateDataDF, rowWorker)
+        else:
+            runUnthreadedRows(slateDataDF, rowWorker)
 
         ## Save the updated slate undergrad data DF
         slateDataDF.to_csv(updatedSlateFilePathWithName, index=False)
@@ -687,7 +702,17 @@ def studentTypeGetIncomingStudentsInfo(p1_targetOrientation, p1_slateFile, p1_in
     except Exception as Error:
         errorHandler.sendError(functionName, Error)
 
-def termGetIncomingStudentsInfo(inputTerm = ""):
+def termGetIncomingStudentsInfo(inputTerm = "", p1_useThreading = True):
+    """
+    Run incoming-student processing for all Slate files in a target term.
+
+    Args:
+        inputTerm: SIS term code in 4-character format.
+        p1_useThreading: True to run file and row processing with threads, False for sequential test runs.
+
+    Returns:
+        None.
+    """
     functionName = "Term Get Incoming Student Information"
 
     try:
@@ -712,9 +737,25 @@ def termGetIncomingStudentsInfo(inputTerm = ""):
 
         ## If the input term is undg
         if termCodePrefix in undgTermsCodesToWordsDict.keys():
+
+            ## If it is still the 2025-2026 school year
+            if targetSchoolYear == "2025-2026":
             
-            ## Set the target orientation to the undergraduate orientation course    
-            targetOrientation = f"{termWord} {str(localSetup.dateDict['year'])} - NNU Pre-Launch Orientation"
+                ## Set the target orientation to the undergraduate orientation course    
+                targetOrientation = f"{termWord} {str(localSetup.dateDict['year'])} - NNU Pre-Launch Orientation"
+
+            ## Otherwise
+            else:
+                
+                ## Define the static tug orientation course sis id
+                tugOrientationSisId = "TUG_Student_Orientation"
+
+                ## Retrieve the name of the orientation course with the tug orientation sis id from the course df
+                courseDf = CanvasReport.getCoursesDf(localSetup, "All")
+
+                ## If the tug orientation sis id is in the course df, set the target orientation to its name
+                if tugOrientationSisId in courseDf['course_id'].values:
+                    targetOrientation = courseDf.loc[courseDf['course_id'] == tugOrientationSisId, 'long_name'].values[0]
 
         ## Otherwise
         else:
@@ -754,16 +795,22 @@ def termGetIncomingStudentsInfo(inputTerm = ""):
             if ("grad" in slateFile or "prof" in slateFile) and ("Grad" in targetOrientation or "GPS" in targetOrientation):
                 
                 ## Target the graduate orientation course/s
-                getStudentInfoThread = threading.Thread(target=studentTypeGetIncomingStudentsInfo, args=(targetOrientation, slateFile, inputTerm))
+                if p1_useThreading:
+                    getStudentInfoThread = threading.Thread(target=studentTypeGetIncomingStudentsInfo, args=(targetOrientation, slateFile, inputTerm, p1_useThreading))
+                else:
+                    studentTypeGetIncomingStudentsInfo(targetOrientation, slateFile, inputTerm, p1_useThreading)
 
             ## If the target slate file contains undergraduate students and the target orientation is an undergraduate course
-            elif "conf" in slateFile and "Launch" in targetOrientation:
+            elif "conf" in slateFile and ("Launch" in targetOrientation or "TUG" in targetOrientation):
 
                 ## Target the undergraduate orientation course
-                getStudentInfoThread = threading.Thread(target=studentTypeGetIncomingStudentsInfo, args=(targetOrientation, slateFile, inputTerm))
+                if p1_useThreading:
+                    getStudentInfoThread = threading.Thread(target=studentTypeGetIncomingStudentsInfo, args=(targetOrientation, slateFile, inputTerm, p1_useThreading))
+                else:
+                    studentTypeGetIncomingStudentsInfo(targetOrientation, slateFile, inputTerm, p1_useThreading)
 
             ## If a threading object was created
-            if getStudentInfoThread:
+            if getStudentInfoThread and p1_useThreading:
 
                 ## Start the get student info report thread
                 getStudentInfoThread.start()
@@ -797,8 +844,14 @@ def termGetIncomingStudentsInfo(inputTerm = ""):
 
 if __name__ == "__main__":
 
-    ## Start and download the Canvas report
-    termGetIncomingStudentsInfo (inputTerm = input("Enter the desired term in \
-four character format (FA20, SU20, SP20): "))
+    ## Step 1: Collect the target term for the run
+    userInputTerm = input("Enter the desired term in four character format (FA20, SU20, SP20): ").strip().upper()
+
+    ## Step 2: Allow easy unthreaded mode for test runs
+    runModeInput = input("Run threaded? (Y/n): ").strip().lower()
+    useThreading = runModeInput not in ["n", "no", "false", "0", "unthreaded"]
+
+    ## Step 3: Run the report with the selected mode
+    termGetIncomingStudentsInfo(inputTerm = userInputTerm, p1_useThreading = useThreading)
 
     input("Press enter to exit")

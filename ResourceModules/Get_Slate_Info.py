@@ -8,9 +8,11 @@ import traceback, paramiko, os, logging, json, re, time ## External Installation
 try: ## If the module is run directly
     from Error_Email import errorEmail
     from Local_Setup import LocalSetup
+    from TLC_Common import isFileRecent
 except ImportError: ## Otherwise as a relative import if the module is imported
     from .Error_Email import errorEmail  ## Import errorEmailApi
     from .Local_Setup import LocalSetup
+    from .TLC_Common import isFileRecent
 
 from Common_Configs import undgTermsCodesToWordsDict, gradTermsCodesToWordsDict
 
@@ -33,9 +35,26 @@ errorHandler = errorEmail(__scriptName, scriptPurpose, externalRequirements, loc
 
 ## This function calls the GE Council's Outcome course code list Google Sheet and saves it as a csv
 def getSlateInfo (p1_inputTerm):
+    """
+    Download Slate incoming-student CSV files for a term when local files are stale.
+
+    Args:
+        p1_inputTerm: SIS term code in 4-character format (for example, FA26).
+
+    Returns:
+        List of local file paths available for processing (downloaded or still recent).
+    """
     functionName = "Get Slate Info"
 
     try:
+
+        ## Step 1: Determine and prepare the local output folder for this term
+        termCodePrefix = p1_inputTerm[:2]
+        termWord = gradTermsCodesToWordsDict[termCodePrefix] if termCodePrefix in gradTermsCodesToWordsDict.keys() else undgTermsCodesToWordsDict[termCodePrefix]
+        targetSchoolYear = localSetup.getSchoolYear(termWord, localSetup.dateDict["year"])
+        incomingSchoolYearInputPath = os.path.join(localSetup.getInternalResourcePaths("Slate"), targetSchoolYear)
+        termOutputPath = os.path.join(incomingSchoolYearInputPath, p1_inputTerm, "Incoming")
+        os.makedirs(termOutputPath, exist_ok=True)
 
         ## Define a veriable to hold the slate creds json file
         slateCreds = None
@@ -61,6 +80,9 @@ def getSlateInfo (p1_inputTerm):
         ## Create an SSH client
         ssh_client = paramiko.SSHClient()
         ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+        ## Create an sftp client
+        sftp_client = None
         
         # try to connect to the SFTP server
         while attempt < retries:
@@ -97,22 +119,12 @@ def getSlateInfo (p1_inputTerm):
                     return None
        
 
-        ## List the contents of the remote directory
+        ## Step 2: List the contents of the remote Slate output folder
         fileList = sftp_client.listdir("./Outgoing//canvas")
 
         ## Specify the remote file path
         remoteBasePath = "./Outgoing//Canvas//"
 
-        ## Determine and save the term's school year
-        termCodePrefix = p1_inputTerm[:2]
-        termWord = gradTermsCodesToWordsDict[termCodePrefix] if termCodePrefix in gradTermsCodesToWordsDict.keys() else undgTermsCodesToWordsDict[termCodePrefix]
-        targetSchoolYear = localSetup.getSchoolYear(termWord, localSetup.dateDict["year"])
-
-        ## Define the incoming School Year input path  
-        incomingSchoolYearInputPath = os.path.join(localSetup.getInternalResourcePaths("Slate"), targetSchoolYear)
-        termOutputPath = os.path.join(incomingSchoolYearInputPath, p1_inputTerm, "Incoming")
-        os.makedirs(termOutputPath, exist_ok=True)
-        
         ## If the incomingSchoolYearInputPath doesn't already exist, create it
         if not (os.path.exists(incomingSchoolYearInputPath)):
             os.makedirs(incomingSchoolYearInputPath, mode=0o777, exist_ok=False)
@@ -121,14 +133,21 @@ def getSlateInfo (p1_inputTerm):
         if not (os.path.exists(termOutputPath)):
             os.makedirs(termOutputPath, mode=0o777, exist_ok=False)
 
-        ## Make a list of the downloaded file paths
+        ## Step 3: Build the list of local files to return to callers
         downloadedFiles = []
 
         try: ## Irregular try clause, do not comment out in testing
-            ## Download the file from the SFTP server
+            ## Step 4: Download only files that are not recent
             for file in fileList:
                 fullRemotePath = os.path.join(remoteBasePath, file)
                 fullLocalPath = os.path.join(termOutputPath, file)
+
+                ## If the local file is still recent, skip downloading and keep it for processing
+                if isFileRecent(localSetup, fullLocalPath, maxAgeHours=3.5):
+                    localSetup.logger.info(f"Skipping download for recent file: {fullLocalPath}")
+                    downloadedFiles.append(fullLocalPath)
+                    continue
+
                 sftp_client.get(fullRemotePath, fullLocalPath)
 
                 ## Define a variable to hold the file contents
@@ -159,8 +178,8 @@ def getSlateInfo (p1_inputTerm):
                     ## Add the downloaded file to the list of downloaded files
                     downloadedFiles.append(fullLocalPath)
 
-            ## Log that the files were downloaded successfully
-            localSetup.logger.info("Files downloaded successfully.")
+            ## Log that file sync completed
+            localSetup.logger.info("Slate file sync completed successfully.")
         finally:
             ## Close the SFTP client and SSH connection
             sftp_client.close()
